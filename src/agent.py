@@ -215,8 +215,76 @@ _TOOL_FUNCS = {
 }
 
 
+_ARGS_PREVIEW_CAP = 500
+
+
 def _preview(tool_input: dict[str, Any]) -> str:
-    return json.dumps(tool_input)[:200]
+    """Bounded rendering of a tool's arguments for TOOL_START. Capped at
+    500 rather than the original 200 so a real aggregation query's SQL is
+    visible end-to-end in the Flow Diagram (a typical one runs ~140 chars,
+    but a multi-CTE comparison exceeded the old cap and got truncated
+    mid-statement, which is exactly when you most want to read it)."""
+    return json.dumps(tool_input)[:_ARGS_PREVIEW_CAP]
+
+
+_SUMMARY_LIST_CAP = 5
+
+
+def _summarize_tool_result(
+    name: str,
+    result_payload: dict[str, Any],
+    is_error: bool,
+    error_detail: str | None,
+) -> dict[str, Any]:
+    """Bounded, user-safe summary of what a tool call actually returned,
+    carried on TOOL_END so the Flow Diagram / Trace Logging tabs can show
+    *what ran and what came back*, not just a name and a duration.
+
+    Two properties this must hold:
+    1. **User-safe.** This is client-facing. On an error it uses the
+       already-sanitized `error_detail` track, never `result_payload["error"]`
+       — that one deliberately carries the raw exception for the model's
+       benefit (it needs real detail to self-correct), and leaking it to the
+       client is the exact defect issue #12's review caught on recovery
+       messages (src/app.py:28-30's convention).
+    2. **Bounded.** A search can return many hits and a query up to
+       SQL_ROW_LIMIT rows; every list here is capped so a debug panel can
+       never turn into an unbounded payload.
+    """
+    if is_error:
+        return {"error": error_detail}
+
+    if name == "search_census_variables":
+        hits = result_payload.get("hits", []) or []
+        return {
+            "hits": len(hits),
+            "top": [h.get("variable_id") for h in hits[:_SUMMARY_LIST_CAP]],
+            "labels": [(h.get("label") or "")[:60] for h in hits[:3]],
+            "truncated": bool(result_payload.get("truncated")),
+        }
+
+    if name == "resolve_geography":
+        candidates = result_payload.get("candidates", []) or []
+        return {
+            "candidates": len(candidates),
+            "ambiguous": bool(result_payload.get("ambiguous")),
+            "resolved": [
+                f"{c.get('name')} ({c.get('geo_id')})" for c in candidates[:_SUMMARY_LIST_CAP]
+            ],
+        }
+
+    if name == "run_census_sql":
+        rows = result_payload.get("rows", []) or []
+        return {
+            "row_count": result_payload.get("row_count", 0),
+            "columns": result_payload.get("columns", []) or [],
+            # One row only — enough to see the actual answer the model is
+            # grounding on, without streaming 200 rows to a debug panel.
+            "first_row": rows[0] if rows else None,
+            "truncated": bool(result_payload.get("truncated")),
+        }
+
+    return {}
 
 
 def _run_tool(name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
@@ -478,7 +546,17 @@ async def agent_turn(
                 )
                 yield ChatEvent(
                     type=EventType.TOOL_END,
-                    data={"tool": block.name, "ok": False, "elapsed_ms": 0},
+                    data={
+                        "tool": block.name,
+                        "ok": False,
+                        "elapsed_ms": 0,
+                        "summary": {
+                            "error": (
+                                "blocked: an ambiguous geography from this turn "
+                                "is still unresolved"
+                            )
+                        },
+                    },
                 )
                 spans.append(
                     TraceSpan(
@@ -497,6 +575,7 @@ async def agent_turn(
             )
             tool_start = time.monotonic()
             is_error = False
+            recovery_detail: str | None = None
             # Two different error text tracks, deliberately kept separate:
             # `result_payload["error"]` goes back to the model as tool_result
             # content (private model context — fine to include real detail so
@@ -525,16 +604,24 @@ async def agent_turn(
                 logger.warning("Tool %s raised an unexpected exception", block.name, exc_info=exc)
             elapsed_ms = int((time.monotonic() - tool_start) * 1000)
 
+            result_summary = _summarize_tool_result(
+                block.name, result_payload, is_error, recovery_detail
+            )
             yield ChatEvent(
                 type=EventType.TOOL_END,
-                data={"tool": block.name, "ok": not is_error, "elapsed_ms": elapsed_ms},
+                data={
+                    "tool": block.name,
+                    "ok": not is_error,
+                    "elapsed_ms": elapsed_ms,
+                    "summary": result_summary,
+                },
             )
             spans.append(
                 TraceSpan(
                     name=f"tool:{block.name}",
                     latency_ms=elapsed_ms,
                     ok=not is_error,
-                    meta={"args_preview": _preview(block.input)},
+                    meta={"args_preview": _preview(block.input), **result_summary},
                 )
             )
             tool_results.append(

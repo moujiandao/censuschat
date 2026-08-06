@@ -126,7 +126,12 @@ class EventType(str, Enum):
 
     TOKEN = "token"            # data: {"text": str}
     TOOL_START = "tool_start"  # data: {"tool": str, "args_preview": str}
-    TOOL_END = "tool_end"      # data: {"tool": str, "ok": bool, "elapsed_ms": int}
+    # `summary` is a bounded, USER-SAFE per-tool result digest (hit counts,
+    # resolved geo_ids, row_count/columns/first_row, or a sanitized error) —
+    # additive to this free-form `data` dict, not a signature change. It
+    # powers the Flow Diagram / Trace Logging tabs; see
+    # src/agent.py:_summarize_tool_result for the safety and bounding rules.
+    TOOL_END = "tool_end"      # data: {"tool": str, "ok": bool, "elapsed_ms": int, "summary": dict}
     STATUS = "status"          # data: {"message": str}  e.g. "warehouse resuming"
     ERROR = "error"            # data: {"message": str}  user-safe text only
     DONE = "done"              # data: {"elapsed_ms": int}

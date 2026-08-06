@@ -245,6 +245,38 @@ def test_allow_verdict_runs_tool_round_trip_before_final_answer(monkeypatch):
     assert events[1].data["ok"] is True
 
 
+def test_tool_end_events_carry_a_result_summary(monkeypatch):
+    """Wiring test: _summarize_tool_result's output must actually reach
+    the client on TOOL_END (that's what the Flow Diagram renders), not
+    just exist as a pure function. Covers both a successful tool and a
+    failing one, since they take different branches."""
+    monkeypatch.setattr(agent, "classify_input", _allow_verdict)
+    success_payload = {
+        "columns": ["POP"], "rows": [{"POP": 42}], "row_count": 1, "truncated": False, "elapsed_ms": 5,
+    }
+    monkeypatch.setattr(agent, "_run_tool", _QueuedRunTool([success_payload, _REJECTED]))
+
+    first = SimpleNamespace(stop_reason="tool_use", content=[_sql_tool_block("t1")])
+    second = SimpleNamespace(stop_reason="tool_use", content=[_sql_tool_block("t2")])
+    final = SimpleNamespace(stop_reason="end_turn", content=[])
+    _install_fake_client(
+        monkeypatch,
+        [_FakeStream([], first), _FakeStream([], second), _FakeStream(["done"], final)],
+    )
+
+    events = _collect("s-tool-summary", "total population?")
+    tool_ends = [e for e in events if e.type == EventType.TOOL_END]
+
+    assert tool_ends[0].data["summary"] == {
+        "row_count": 1,
+        "columns": ["POP"],
+        "first_row": {"POP": 42},
+        "truncated": False,
+    }
+    # The failing call reports the gate's own sanitized vocabulary.
+    assert tool_ends[1].data["summary"]["error"] == "table not allowed"
+
+
 def test_allow_verdict_records_a_trace_with_guardrail_model_and_tool_spans(monkeypatch):
     """Wiring test for src/tracing.py (Trace Logging tab): exercises the
     real agent_turn body, not the tracing module in isolation, to prove

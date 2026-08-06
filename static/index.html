@@ -206,23 +206,44 @@
   .flow-turn h3 { margin: 0 0 8px; font-size: 13.5px; }
   .flow-steps { list-style: none; margin: 0; padding: 0; }
   .flow-steps li {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 0;
+    padding: 6px 0 6px 12px;
     font-size: 12.5px;
     border-left: 2px solid var(--border);
-    padding-left: 10px;
     margin-left: 4px;
+  }
+  .flow-steps li .head {
+    display: flex; align-items: center; gap: 8px;
   }
   .flow-steps li .dot {
     width: 8px; height: 8px; border-radius: 50%;
-    background: var(--muted); flex-shrink: 0; margin-left: -15px;
+    background: var(--muted); flex-shrink: 0; margin-left: -17px;
     border: 2px solid var(--bg);
   }
   .flow-steps li.ok .dot { background: var(--ok); }
   .flow-steps li.fail .dot { background: var(--error); }
-  .flow-steps li .ms { color: var(--muted); font-size: 11px; margin-left: auto; }
+  .flow-steps li .ms { color: var(--muted); font-size: 11px; margin-left: auto; flex-shrink: 0; }
+  .flow-detail {
+    margin: 4px 0 0 0;
+    font-size: 11.5px;
+    color: var(--muted);
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 10px;
+  }
+  .flow-detail dt { font-weight: 600; white-space: nowrap; }
+  .flow-detail dd {
+    margin: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    /* min-width:0 is required — a grid item defaults to min-width:auto, so
+       a long unbroken SQL string overflows the column instead of wrapping. */
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    color: var(--fg);
+    opacity: 0.85;
+  }
+  .flow-detail dd.err { color: var(--error); opacity: 1; }
 
   /* Trace logging panel */
   .trace-turn {
@@ -425,9 +446,78 @@
   function addFlowStep(stepsEl, label, status) {
     const li = document.createElement("li");
     if (status) li.classList.add(status);
-    li.innerHTML = '<span class="dot"></span><span>' + escapeHtml(label) + "</span>";
+    li.innerHTML =
+      '<div class="head"><span class="dot"></span><span class="label">' +
+      escapeHtml(label) + "</span></div>";
     stepsEl.appendChild(li);
     return li;
+  }
+
+  /** Attaches a definition list of detail rows under a flow step. */
+  function setFlowDetail(li, rows) {
+    const existing = li.querySelector(".flow-detail");
+    if (existing) existing.remove();
+    const visible = rows.filter(function (r) {
+      return r[1] !== null && r[1] !== undefined && r[1] !== "";
+    });
+    if (!visible.length) return;
+    const dl = document.createElement("dl");
+    dl.className = "flow-detail";
+    dl.innerHTML = visible
+      .map(function (r) {
+        const cls = r[0] === "error" ? ' class="err"' : "";
+        return "<dt>" + escapeHtml(r[0]) + "</dt><dd" + cls + ">" + escapeHtml(r[1]) + "</dd>";
+      })
+      .join("");
+    li.appendChild(dl);
+  }
+
+  /** Human-readable args from a tool_start's args_preview JSON blob. */
+  function describeArgs(tool, argsPreview) {
+    let parsed;
+    try {
+      parsed = JSON.parse(argsPreview);
+    } catch (e) {
+      // args_preview is truncated at a fixed cap, so a long SQL statement
+      // can arrive as invalid JSON — show the raw text rather than nothing.
+      return [["args", argsPreview]];
+    }
+    if (tool === "run_census_sql") return [["sql requested", parsed.sql]];
+    if (tool === "search_census_variables") {
+      return [["query", parsed.query], ["limit", parsed.limit]];
+    }
+    if (tool === "resolve_geography") {
+      return [["name", parsed.name], ["level hint", parsed.level_hint]];
+    }
+    return Object.entries(parsed).map(function (e) { return [e[0], String(e[1])]; });
+  }
+
+  /** Human-readable result rows from a tool_end's summary. */
+  function describeResult(tool, summary) {
+    if (!summary) return [];
+    if (summary.error) return [["error", summary.error]];
+    if (tool === "search_census_variables") {
+      return [
+        ["hits", String(summary.hits)],
+        ["top ids", (summary.top || []).join(", ")],
+        ["labels", (summary.labels || []).join(" | ")],
+      ];
+    }
+    if (tool === "resolve_geography") {
+      return [
+        ["candidates", String(summary.candidates)],
+        ["ambiguous", summary.ambiguous ? "yes — must ask the user" : "no"],
+        ["resolved", (summary.resolved || []).join(", ")],
+      ];
+    }
+    if (tool === "run_census_sql") {
+      return [
+        ["rows", String(summary.row_count) + (summary.truncated ? " (truncated)" : "")],
+        ["columns", (summary.columns || []).join(", ")],
+        ["first row", summary.first_row ? JSON.stringify(summary.first_row) : null],
+      ];
+    }
+    return [];
   }
 
   // ---------- Trace Logging tab ----------
@@ -587,19 +677,28 @@
           } else if (event.type === "tool_start") {
             toolStepsSeen = true;
             setStatus("using " + event.data.tool + "…");
-            addFlowStep(flowSteps, event.data.tool + " — running…");
+            const step = addFlowStep(flowSteps, event.data.tool + " — running…");
+            step._tool = event.data.tool;
+            step._argRows = describeArgs(event.data.tool, event.data.args_preview || "");
+            setFlowDetail(step, step._argRows);
           } else if (event.type === "tool_end") {
             setStatus(event.data.ok ? "" : "a tool call failed, recovering…");
             const items = flowSteps.querySelectorAll("li");
             const last = items[items.length - 1];
             if (last) {
               last.classList.add(event.data.ok ? "ok" : "fail");
-              const label = last.querySelector("span:last-of-type");
+              const label = last.querySelector(".label");
               label.textContent = label.textContent.replace(" — running…", event.data.ok ? " — ok" : " — failed");
               const ms = document.createElement("span");
               ms.className = "ms";
               ms.textContent = event.data.elapsed_ms + "ms";
-              last.appendChild(ms);
+              last.querySelector(".head").appendChild(ms);
+              // Args first, then what came back — the whole point of the
+              // finer view is seeing both halves of each call together.
+              setFlowDetail(
+                last,
+                (last._argRows || []).concat(describeResult(last._tool, event.data.summary))
+              );
             }
           } else if (event.type === "error") {
             ended = true;
@@ -614,11 +713,24 @@
             setStatus("");
           } else if (event.type === "done") {
             ended = true;
-            if (!toolStepsSeen) {
-              addFlowStep(flowSteps, "Guardrail refused — no tools called", "fail");
-            } else {
-              addFlowStep(flowSteps, "Final answer streamed", "ok");
-            }
+            const finalStep = toolStepsSeen
+              ? addFlowStep(flowSteps, "Final answer streamed", "ok")
+              : addFlowStep(flowSteps, "Short-circuited — no tools called", "fail");
+            const ms = document.createElement("span");
+            ms.className = "ms";
+            ms.textContent = event.data.elapsed_ms + "ms total";
+            finalStep.querySelector(".head").appendChild(ms);
+            setFlowDetail(finalStep, [
+              ["answer chars", String(assistantText.length)],
+              [
+                "answer",
+                assistantText.slice(0, 160) + (assistantText.length > 160 ? "…" : ""),
+              ],
+              // A turn that reaches DONE without ever calling a tool was
+              // stopped by the guardrail or the degraded-mode check — both
+              // return a canned message before the loop starts.
+              toolStepsSeen ? null : ["reason", "guardrail refusal or degraded mode"],
+            ].filter(Boolean));
             setStatus("");
           }
         }
