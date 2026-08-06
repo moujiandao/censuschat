@@ -121,3 +121,46 @@ def test_verdict_latency_is_recorded(monkeypatch):
     result = guardrail.classify_input("population of Wyoming?", [])
     assert result.latency_ms is not None
     assert result.latency_ms >= 0
+
+
+def test_unknown_subject_verdict_allows(monkeypatch):
+    """The off_topic split (D-019). A Census-shaped question about a subject
+    that may not exist in the data ("What's the population of Atlantis?") is
+    NOT off-topic — it belongs in the tool loop, where resolve_geography's
+    zero-candidate path already produces an honest "not found". Routing it to
+    REFUSE returns a scope rejection that misstates why the question failed.
+    """
+    monkeypatch.setattr(guardrail, "_call_classifier_model", _stub("unknown_subject"))
+    result = guardrail.classify_input("What's the population of Atlantis?", [])
+    assert result.action == GuardrailAction.ALLOW
+    assert result.category is None
+
+
+def test_unrecognized_verdict_fails_open_and_is_observable(monkeypatch):
+    """Rule 6 fail-open still holds for a label neither set knows, but the
+    verdict must say so rather than masquerading as a clean allow — otherwise
+    a schema/routing drift is invisible in the guardrail span."""
+    monkeypatch.setattr(guardrail, "_call_classifier_model", _stub("brand_new_label"))
+    result = guardrail.classify_input("anything", [])
+    assert result.action == GuardrailAction.ALLOW
+    assert result.category is None
+    assert result.reason == "unrecognized_verdict"
+
+
+def test_every_schema_verdict_has_explicit_routing():
+    """Drift guard. Every label the classifier is allowed to emit must be
+    consciously placed in exactly one of the two routing sets. Without this,
+    adding a label to the output schema silently routes it to ALLOW via the
+    fall-through — which is how a refusal category could be introduced and
+    never actually enforced.
+    """
+    schema_verdicts = set(
+        guardrail._OUTPUT_SCHEMA["properties"]["verdict"]["enum"]
+    )
+    routed = set(guardrail._REFUSAL_VERDICTS) | set(guardrail._ALLOW_VERDICTS)
+
+    assert schema_verdicts == routed, (
+        f"unrouted: {schema_verdicts - routed}; "
+        f"routed but not emittable: {routed - schema_verdicts}"
+    )
+    assert not (set(guardrail._REFUSAL_VERDICTS) & set(guardrail._ALLOW_VERDICTS))

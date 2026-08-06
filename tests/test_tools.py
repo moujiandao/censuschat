@@ -183,6 +183,60 @@ def test_search_no_matches_returns_empty_hits_not_truncated(monkeypatch):
     assert result.truncated is False
 
 
+def _and_or_variable_rows():
+    """A corpus where token-AND and token-OR give provably different answers:
+    "total" appears only in the households row, "population" only in the
+    population row, "number" only in the rooms row."""
+    return [
+        ("B01003e1", "B01003", "Total Population", "Population", "population text"),
+        ("B11001e1", "B11001", "Household Type", "Households", "total households text"),
+        ("B25018e1", "B25018", "Median Number Of Rooms", "Housing units", "number rooms text"),
+    ]
+
+
+def test_search_falls_back_to_or_when_and_yields_nothing(monkeypatch):
+    """PM-04's root cause. `_fts_match_query` ANDs every token, so one token
+    that co-occurs with nothing zeroes the whole query — the live agent burned
+    7 of its 8 tool-loop iterations on searches like "number of households"
+    that returned 0 hits while B11001 sat in the snapshot the whole time. An
+    empty result gives the model no signal to refine against; a ranked list,
+    even an imperfect one, does."""
+    _seed_snapshot(monkeypatch, variable_rows=_and_or_variable_rows())
+    result = tools.search_census_variables("number of households")
+    assert [h.variable_id for h in result.hits] != []
+    assert "B11001e1" in [h.variable_id for h in result.hits]
+
+
+def test_search_does_not_widen_to_or_when_and_matches(monkeypatch):
+    """The fallback is strictly additive — it fires only on zero hits. If it
+    widened a query that already worked, precision would drop everywhere to
+    fix the dead-end case. "total population" AND-matches only the population
+    row; an OR would also drag in the households row on "total" alone."""
+    _seed_snapshot(monkeypatch, variable_rows=_and_or_variable_rows())
+    result = tools.search_census_variables("total population")
+    assert [h.variable_id for h in result.hits] == ["B01003e1"]
+
+
+def test_search_or_fallback_still_returns_nothing_for_absent_terms(monkeypatch):
+    """The fallback must not invent hits — a query whose tokens are simply not
+    in the corpus stays honestly empty, which is what lets a genuine
+    "not in this dataset" answer happen."""
+    _seed_snapshot(monkeypatch, variable_rows=_and_or_variable_rows())
+    result = tools.search_census_variables("nonexistenttermxyz alsoabsentterm")
+    assert result.hits == []
+    assert result.truncated is False
+
+
+def test_search_or_fallback_respects_limit_and_truncated(monkeypatch):
+    """The fallback path builds its own result set, so it has to apply the
+    same limit/truncated bookkeeping as the primary path rather than leaking
+    limit+1 rows to the caller."""
+    _seed_snapshot(monkeypatch, variable_rows=_and_or_variable_rows())
+    result = tools.search_census_variables("number of households population", limit=1)
+    assert len(result.hits) == 1
+    assert result.truncated is True
+
+
 def test_search_excludes_b99_and_moe_rows(monkeypatch):
     _seed_snapshot(monkeypatch)
 

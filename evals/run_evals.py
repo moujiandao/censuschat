@@ -20,6 +20,7 @@ as an explicit "not implemented" failure rather than silently skipped.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import subprocess
@@ -210,11 +211,41 @@ def _git_sha() -> str:
         return "unknown"
 
 
+def _select(scenario_ids: list[str]) -> list[str]:
+    """Resolve --only ids, failing loudly on a typo. Silently running 4 of the
+    5 ids you asked for is worse than not running at all: the missing one looks
+    like it was checked."""
+    from evals.scenarios import GOLDEN_SCENARIOS
+
+    known = {s.id for s in GOLDEN_SCENARIOS}
+    unknown = [i for i in scenario_ids if i not in known]
+    if unknown:
+        raise SystemExit(f"--only: unknown scenario id(s) {unknown}; known: {sorted(known)}")
+    return scenario_ids
+
+
 async def main() -> int:
     from evals.scenarios import GOLDEN_SCENARIOS
 
+    parser = argparse.ArgumentParser(prog="python -m evals.run_evals")
+    parser.add_argument(
+        "--only",
+        default="",
+        help=(
+            "Comma-separated scenario ids to run instead of the full executed "
+            "set. A filtered run writes NOTHING to evals/results/ — see below."
+        ),
+    )
+    args = parser.parse_args()
+    only = _select([i.strip() for i in args.only.split(",") if i.strip()])
+
     executed = [s for s in GOLDEN_SCENARIOS if s.status == "executed"]
     pending = [s for s in GOLDEN_SCENARIOS if s.status == "pending"]
+    if only:
+        # A filtered run is a debugging aid, not a result. It deliberately
+        # ignores `status` so a pending row can be tried without promoting it.
+        executed = [s for s in GOLDEN_SCENARIOS if s.id in only]
+        pending = []
 
     results: list[EvalResult] = []
     for scenario in executed:
@@ -289,18 +320,26 @@ async def main() -> int:
         by_category={k: sum(v) / len(v) for k, v in by_category.items()},
     )
 
-    RESULTS_DIR.mkdir(exist_ok=True)
-    payload = json.loads(run.model_dump_json())
-    stamp = run.run_at.strftime("%Y%m%dT%H%M%SZ")
-    (RESULTS_DIR / f"{stamp}.json").write_text(json.dumps(payload, indent=2))
-    (RESULTS_DIR / "latest.json").write_text(json.dumps(payload, indent=2))
-
     print(f"\n{n_passed}/{n_executed} executed passed ({pass_rate:.0%})"
           f" — {len(pending)} pending, excluded from the denominator")
     for r in results:
         if r.status == "executed" and not r.passed:
             failed = [c.check.type.value for c in r.checks if not c.passed]
             print(f"  RED  {r.scenario_id:8s} {', '.join(failed)}")
+
+    # A filtered run must never touch evals/results/. Its pass rate is over a
+    # hand-picked subset, so writing it would overwrite the committed artifact
+    # with a number that looks like a full run and isn't. Rule 20's "red rows
+    # are kept" only means anything if latest.json is always a whole run.
+    if only:
+        print("\n--only: filtered run, nothing written to evals/results/")
+        return 0
+
+    RESULTS_DIR.mkdir(exist_ok=True)
+    payload = json.loads(run.model_dump_json())
+    stamp = run.run_at.strftime("%Y%m%dT%H%M%SZ")
+    (RESULTS_DIR / f"{stamp}.json").write_text(json.dumps(payload, indent=2))
+    (RESULTS_DIR / "latest.json").write_text(json.dumps(payload, indent=2))
     print(f"wrote evals/results/{stamp}.json and latest.json")
     return 0
 

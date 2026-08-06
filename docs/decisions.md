@@ -693,3 +693,107 @@ that must refuse; judging the accumulated tool list would have failed
 every multi-turn refusal by construction rather than on merit.
 `GEO_RESOLVED`/`VARIABLE_RESOLVED` still use accumulated evidence, because
 MT-01 depends on that.
+
+---
+
+## D-019 — Splitting `off_topic`, because it was doing two jobs (2026-08-06)
+
+**Status:** in-scope change. No rule deviation; recorded because it changes
+what the guardrail refuses.
+
+The guardrail classifier had one `off_topic` label that `_REFUSAL_VERDICTS`
+mapped to a hard refusal. Reproduced live (`evals/scenarios.py:UN-08`),
+"What's the population of Atlantis?" was refused in 1.5s with zero tool
+calls and the canned "I can only help with questions about US Census
+demographic data" — which is not what went wrong. The question was a
+Census question; the *subject* wasn't in the data.
+
+**The classifier already knew the difference and the code threw it away.**
+Its own `reason` fields, from the reproduction:
+
+- Atlantis → `off_topic`, *"Atlantis is a mythical location and not a real
+  US geography that Census Bureau covers"*
+- Weather in SF → `off_topic`, *"This is a weather question unrelated to
+  Census demographics data"*
+
+One is a coverage judgment, the other a topic judgment. Both routed to the
+same hard refusal, so the coverage case never reached the tool loop where
+the honest not-found paths (zero geography candidates, zero rows, bounded
+recovery) already exist and are already deterministic.
+
+**The fix is a second label, `unknown_subject`, routed to ALLOW.**
+Enforcement stays exactly where CLAUDE.md rule 5 puts it — the routing
+dict in `src/guardrail.py`, in code. The classifier reports a distinction;
+code decides what it means. `RefusalCategory` and `GuardrailAction` are
+untouched, so rule 12's contract freeze is not involved.
+
+**Rejected alternative: a code-side heuristic** that detects
+"demographic-shaped" text before honoring an `off_topic` refusal. That is
+not more deterministic than a classifier label — it relocates the same
+semantic guess to a worse guesser, and would be most brittle on exactly
+the inputs it exists to catch. Determinism of *enforcement* means code
+owns what a label does, not that code owns the judgment.
+
+**Also added:** an explicit `_ALLOW_VERDICTS` set. Previously any label not
+in `_REFUSAL_VERDICTS` fell through to ALLOW, so adding a refusal category
+to the output schema and forgetting to route it would silently allow it
+forever. Every schema label must now appear in exactly one set, pinned by
+`test_every_schema_verdict_has_explicit_routing`. Rule 6's fail-open still
+holds for an unknown label, but now carries `reason="unrecognized_verdict"`
+so drift is visible in the guardrail span instead of silent.
+
+**Cost accepted:** a question naming a fictional or non-US place now costs
+a full agent turn (~5s) instead of a 1.5s refusal. Bounded by the existing
+8-round tool cap and 50s watchdog. Verified not to weaken the cases that
+matter: OT-01 (weather) and INJ-02 (prompt extraction) both still refuse.
+
+---
+
+## D-020 — FTS falls back to token-OR only when token-AND finds nothing (2026-08-06)
+
+**Status:** in-scope change. Fixes the defect `docs/reflection.md` ranked
+first among unfixed issues.
+
+`_fts_match_query` ANDed every token of a search query. Reproduced live
+(`evals/scenarios.py:PM-08`, "What's the average household income in
+Texas?"), the agent burned 7 consecutive `search_census_variables` calls
+that each returned **0 hits** — "number of households", "total households
+B11001", "households total count" — and died on the tool-round cap while
+`B11001`/`B11012` sat in the snapshot the whole time.
+
+The tokens all existed individually ("number" 54 docs, "of" 1734,
+"households" 805). Their *conjunction* was empty. Under AND, one token
+that co-occurs with nothing zeroes the entire result.
+
+reflection.md had guessed the cause was the model "taking too many
+exploratory calls." It wasn't: the model's queries were reasonable and the
+retrieval layer was returning nothing.
+
+**Why AND looked fine originally.** The Appendix A probe that validated
+token-AND at 7/7 recall drew its queries from in-corpus vocabulary. Real
+agent queries carry framing words ("number of", "count", "distribution")
+and guessed table ids that Census labels never contain. `variable_id` is
+also `UNINDEXED` in the FTS schema, so "total households B11001" can never
+match by id — a second reason a plausible query returns nothing.
+
+**The fix is strictly additive:** try AND; if and only if it returns zero
+rows, retry the same query with OR. Measured on the real snapshot, every
+query where AND matched returned an *identical top-3 in the same order*
+under OR — which empirically refutes the concern in the original
+docstring ("OR would rank a single-rare-term match above the true
+multi-term hit"). AND-first is kept anyway because it costs nothing and is
+the validated path.
+
+**Known imperfection, accepted:** OR ranks badly for some queries —
+"number of households" surfaces *Median Number Of Rooms*, because "number"
+is rare and BM25 rewards it. That is the docstring's concern, and it is
+real. It is still a large improvement: a mediocre ranked list is something
+the model can refine against, where an empty result gives it no signal and
+costs a whole round. Observed live in PM-08's passing run — one search
+still ranked badly, two others returned `B11012e1`, and the turn completed.
+
+**Not fixed here:** PM-08 remains flaky (2 of 3 live runs green). The
+binding constraint moved from retrieval to the 8-round
+`_MAX_TOOL_LOOP_ITERATIONS` cap. Raising it trades against the 50s
+watchdog and was left out of scope deliberately; the row is committed red
+with that triage cause in its `notes`.

@@ -189,3 +189,66 @@ def test_scenario_ids_are_unique():
 
     ids = [s.id for s in GOLDEN_SCENARIOS]
     assert len(ids) == len(set(ids)), [i for i in ids if ids.count(i) > 1]
+
+
+# ---------------------------------------------------------------------------
+# --only filtered runs
+# ---------------------------------------------------------------------------
+
+
+def test_select_rejects_unknown_scenario_id():
+    """Loud failure on a typo. Silently running 4 of the 5 ids you asked for
+    is worse than not running: the missing one looks like it was checked."""
+    import pytest
+
+    from evals.run_evals import _select
+
+    with pytest.raises(SystemExit):
+        _select(["DF-01", "NOPE-99"])
+
+
+def test_select_accepts_known_ids():
+    from evals.run_evals import _select
+
+    assert _select(["DF-01", "UN-08"]) == ["DF-01", "UN-08"]
+
+
+def test_filtered_run_writes_nothing_to_results(tmp_path, monkeypatch):
+    """The load-bearing property of --only. A filtered run's pass rate is over
+    a hand-picked subset; writing it would overwrite the committed artifact
+    with a number that looks like a full run and isn't. Rule 20's "red rows are
+    kept and triaged" only means something if latest.json is always a whole run.
+    """
+    import asyncio
+    import sys
+
+    import evals.run_evals as run_evals
+
+    async def _fake_run(scenario):
+        return _obs(answer="stub", terminal="done"), 0.1
+
+    monkeypatch.setattr(run_evals, "RESULTS_DIR", tmp_path)
+    monkeypatch.setattr(run_evals, "_run_scenario", _fake_run)
+    monkeypatch.setattr(sys, "argv", ["run_evals", "--only", "DF-01"])
+
+    assert asyncio.run(run_evals.main()) == 0
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_unfiltered_run_does_write_results(tmp_path, monkeypatch):
+    """Guards the guard: proves the assertion above is about --only and not
+    about the fake harness silently failing to write in either case."""
+    import asyncio
+    import sys
+
+    import evals.run_evals as run_evals
+
+    async def _fake_run(scenario):
+        return _obs(answer="stub", terminal="done"), 0.1
+
+    monkeypatch.setattr(run_evals, "RESULTS_DIR", tmp_path)
+    monkeypatch.setattr(run_evals, "_run_scenario", _fake_run)
+    monkeypatch.setattr(sys, "argv", ["run_evals"])
+
+    assert asyncio.run(run_evals.main()) == 0
+    assert (tmp_path / "latest.json").exists()

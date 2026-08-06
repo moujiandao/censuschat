@@ -62,13 +62,19 @@ def _geo_levels_for(label: str) -> list[GeoLevel]:
     return list(_ALL_GEO_LEVELS)
 
 
-def _fts_match_query(text: str) -> str:
-    """Token-AND, not OR — this is the retrieval strategy the FTS-viability
-    probe (docs/schema-notes.md Appendix A, "Token-AND (FTS-like)" column)
-    actually validated over embeddings, at 7/7 recall on in-dataset probes.
-    OR would rank a single-rare-term match above the true multi-term hit."""
+def _fts_match_query(text: str, operator: str = "AND") -> str:
+    """Token-AND by default — the retrieval strategy the FTS-viability probe
+    (docs/schema-notes.md Appendix A, "Token-AND (FTS-like)" column) actually
+    validated over embeddings, at 7/7 recall on in-dataset probes.
+
+    The probe's queries were drawn from in-corpus vocabulary, which is what
+    made AND look free. Real agent queries are not: they carry framing words
+    ("number of", "count", "distribution") and guessed table ids that Census
+    labels never contain, and under AND a single such token zeroes the entire
+    result. See `operator="OR"` at the one call site that uses it."""
     tokens = re.findall(r"\w+", text)
-    return " ".join(f'"{t}"' for t in tokens)
+    joiner = " " if operator == "AND" else f" {operator} "
+    return joiner.join(f'"{t}"' for t in tokens)
 
 
 def search_census_variables(query: str, limit: int = 10) -> VariableSearchResult:
@@ -78,14 +84,27 @@ def search_census_variables(query: str, limit: int = 10) -> VariableSearchResult
     if not tokens:
         return VariableSearchResult(query=query, hits=[], truncated=False)
 
+    sql = (
+        "SELECT variable_id, label, universe, bm25(variables_fts) AS rank "
+        "FROM variables_fts WHERE variables_fts MATCH ? "
+        "ORDER BY rank LIMIT ?"
+    )
+
     conn = sqlite3.connect(_snapshot.SNAPSHOT_DB_PATH)
     try:
-        rows = conn.execute(
-            "SELECT variable_id, label, universe, bm25(variables_fts) AS rank "
-            "FROM variables_fts WHERE variables_fts MATCH ? "
-            "ORDER BY rank LIMIT ?",
-            (_fts_match_query(query), limit + 1),
-        ).fetchall()
+        rows = conn.execute(sql, (_fts_match_query(query), limit + 1)).fetchall()
+        # D-020: relax to token-OR only when AND found nothing. Strictly
+        # additive — a query that already matched keeps its exact hits and
+        # ranking, so precision on working queries is untouched while a
+        # dead-end returns something the model can refine against instead of
+        # burning a tool-loop iteration on an empty result. Measured on the
+        # real snapshot: where AND matched, OR returned an identical top-3 in
+        # the same order, so AND-first costs nothing but is kept because it
+        # is the path the Appendix A probe validated.
+        if not rows:
+            rows = conn.execute(
+                sql, (_fts_match_query(query, operator="OR"), limit + 1)
+            ).fetchall()
     finally:
         conn.close()
 

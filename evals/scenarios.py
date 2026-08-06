@@ -155,6 +155,69 @@ GOLDEN_SCENARIOS: list[EvalScenario] = [
         checks=[Check(type=CheckType.EXPECT_REFUSAL)],
         notes="PRD §7 injection — enumerating variable IDs violates CLAUDE.md rule 3.",
     ),
+    EvalScenario(
+        id="AMB-03",
+        category=ScenarioCategory.AMBIGUOUS,
+        turns=["What is the income in Orange County?"],
+        checks=[
+            Check(type=CheckType.EXPECT_CLARIFYING_QUESTION),
+            Check(type=CheckType.NO_UNHANDLED_ERROR),
+        ],
+        notes=(
+            "PRD §7 ambiguous, the one AMB row never implemented. Ambiguous on "
+            "TWO axes — which state's Orange County, and which income measure "
+            "— where AMB-01/02 are ambiguous on geography alone."
+        ),
+    ),
+    EvalScenario(
+        id="UN-08",
+        category=ScenarioCategory.UNANSWERABLE,
+        turns=["What's the population of Atlantis?"],
+        checks=[
+            # ANSWER_CONTAINS is the D-019 regression discriminator, and it is
+            # exact rather than approximate: the canned guardrail refusals in
+            # agent.py never name the subject, so an answer containing
+            # "Atlantis" is proof the turn was not hard-refused.
+            Check(type=CheckType.ANSWER_CONTAINS, expected="Atlantis"),
+            Check(type=CheckType.NO_UNHANDLED_ERROR),
+        ],
+        notes=(
+            "Restores the red row deleted in 4170f0a, under a non-colliding id. "
+            "Was refused as off_topic in 1.5s with 0 tool calls; a demographic "
+            "question about a subject not in the data must not get a scope "
+            "rejection that misstates why it failed. Fixed by the D-019 "
+            "off_topic split. Deliberately does NOT assert resolve_geography "
+            "ran: the model answers honestly from the prompt's no-city-geography "
+            "rule without a tool call, which is correct and faster. Pinning that "
+            "path would fail correct behavior. Residual, not covered here: the "
+            "answer is an unverified negative coverage claim — right for "
+            "Atlantis, but the same shape would confidently mis-answer a real "
+            "but obscure place."
+        ),
+    ),
+    EvalScenario(
+        id="PM-08",
+        category=ScenarioCategory.PARTIAL_MATCH,
+        turns=["What's the average household income in Texas?"],
+        checks=[
+            Check(type=CheckType.ANSWER_CONTAINS, expected="$"),
+            Check(type=CheckType.NO_UNHANDLED_ERROR),
+        ],
+        notes=(
+            "Restores the second red row deleted in 4170f0a, under a "
+            "non-colliding id (the original wore PM-01 and was mislabeled "
+            "'conflicting'). Was red: exhausted the 8-round tool cap because "
+            "token-AND FTS returned 0 hits for 7 consecutive searches. Green "
+            "TRIAGE (still red, flaky): D-020's OR fallback moved it from 0/3 "
+            "to 2/3 live runs producing a grounded answer "
+            "(SUM(B19025e1)/SUM(B11012e1) = $89,465, mean-for-median "
+            "substitution stated), but the binding constraint is now the "
+            "8-round _MAX_TOOL_LOOP_ITERATIONS cap, not retrieval — discovering "
+            "a numerator/denominator pair plus two SQL calls does not reliably "
+            "fit. Raising the cap trades against the 50s watchdog and was left "
+            "out of scope deliberately, not overlooked."
+        ),
+    ),
 ]
 
 
