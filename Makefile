@@ -24,12 +24,18 @@ deploy:
 
 # What is actually live right now, read through Caddy rather than from the
 # host, so it exercises the same path a reviewer's browser takes.
+#
+# NOTE: the sha below is the commit the EVAL RUN was recorded at, read out of
+# the committed artifact — NOT the commit the container was built from. It
+# only advances when evals are re-run, so it will legitimately trail main.
+# There is no deployed-code version endpoint; the honest signal that a
+# rebuild took is content that changed with it (row count, UI).
 deploy-status:
 	@echo "--- deployed ---"
 	@curl -s -u snowflake:census --max-time 15 https://censuschat.brianmar.com/api/health || echo "(health unreachable)"
 	@echo
 	@curl -s -u snowflake:census --max-time 15 https://censuschat.brianmar.com/api/evals \
-		| python3 -c "import sys,json; l=(json.load(sys.stdin).get('latest') or {}); print('serving git_sha:', l.get('git_sha'), '| eval rows:', len(l.get('results',[])))" \
+		| python3 -c "import sys,json; l=(json.load(sys.stdin).get('latest') or {}); print('eval artifact sha:', l.get('git_sha'), '| eval rows:', len(l.get('results',[])))" \
 		|| echo "(evals unreachable)"
 	@echo "--- local main ---"
 	@git log --oneline -1
