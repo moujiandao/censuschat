@@ -216,3 +216,40 @@ def test_evals_endpoint_returns_previous_run_when_two_distinct_runs_exist(tmp_pa
     body = response.json()
     assert body["latest"]["git_sha"] == "new222"
     assert body["previous"]["git_sha"] == "old111"
+
+
+def test_traces_endpoint_returns_empty_list_for_unknown_session():
+    response = client.get("/api/traces", params={"session_id": "s-unknown"})
+    assert response.status_code == 200
+    assert response.json() == {"traces": []}
+
+
+def test_traces_endpoint_returns_recorded_traces(monkeypatch):
+    from collections import defaultdict
+    from datetime import datetime, timezone
+
+    from src.tracing import TraceSpan, TurnTrace, record_turn_trace
+
+    monkeypatch.setattr("src.tracing._traces", defaultdict(list))
+    record_turn_trace(
+        TurnTrace(
+            session_id="s-with-traces",
+            user_message="population of Wyoming?",
+            started_at=datetime.now(timezone.utc),
+            total_ms=250,
+            spans=[TraceSpan(name="guardrail", latency_ms=10, ok=True, meta={"verdict": "allow"})],
+        )
+    )
+
+    response = client.get("/api/traces", params={"session_id": "s-with-traces"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["traces"]) == 1
+    assert body["traces"][0]["user_message"] == "population of Wyoming?"
+    assert body["traces"][0]["spans"][0]["name"] == "guardrail"
+
+
+def test_traces_endpoint_requires_session_id_query_param():
+    response = client.get("/api/traces")
+    assert response.status_code == 422

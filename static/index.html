@@ -223,6 +223,33 @@
   .flow-steps li.ok .dot { background: var(--ok); }
   .flow-steps li.fail .dot { background: var(--error); }
   .flow-steps li .ms { color: var(--muted); font-size: 11px; margin-left: auto; }
+
+  /* Trace logging panel */
+  .trace-turn {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 14px;
+    overflow: hidden;
+  }
+  .trace-turn summary {
+    padding: 10px 14px;
+    cursor: pointer;
+    font-size: 13.5px;
+    background: var(--card);
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .trace-turn summary .trace-meta { color: var(--muted); font-size: 12px; }
+  table.trace-spans { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.trace-spans th, table.trace-spans td { text-align: left; padding: 7px 14px; border-top: 1px solid var(--border); vertical-align: top; }
+  table.trace-spans th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+  table.trace-spans code { font-size: 11.5px; background: var(--card); padding: 1px 5px; border-radius: 4px; }
+  .refresh-row { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+  .refresh-row button {
+    background: none; color: var(--bubble-user); border: 1px solid var(--border);
+    padding: 6px 12px; font-size: 12.5px; border-radius: 8px;
+  }
 </style>
 </head>
 <body>
@@ -234,6 +261,7 @@
       <button type="button" data-tab="chat" class="active">Chat</button>
       <button type="button" data-tab="evals">Evals</button>
       <button type="button" data-tab="flow">Flow Diagram</button>
+      <button type="button" data-tab="trace">Trace Logging</button>
     </nav>
   </header>
 
@@ -255,6 +283,14 @@
   <section class="panel" id="panel-flow">
     <div class="scroll-area" id="flow-content">
       <p class="empty-state">Send a chat message to see its flow through the agent here — guardrail decision, each tool call, and timing.</p>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-trace">
+    <div class="scroll-area" id="trace-content">
+      <div class="refresh-row"><button type="button" id="trace-refresh">Refresh</button></div>
+      <p class="empty-state" id="trace-empty">Send a chat message to see its trace here — one span per guardrail check, model call, and tool call, with latency and token counts. A lightweight in-app stand-in for full Langfuse tracing (see docs/reflection.md).</p>
+      <div id="trace-list"></div>
     </div>
   </section>
 
@@ -280,6 +316,9 @@
   const bannerEl = document.getElementById("banner");
   const evalsContentEl = document.getElementById("evals-content");
   const flowContentEl = document.getElementById("flow-content");
+  const traceListEl = document.getElementById("trace-list");
+  const traceEmptyEl = document.getElementById("trace-empty");
+  const traceRefreshBtn = document.getElementById("trace-refresh");
 
   // ---------- Tabs ----------
   const tabButtons = document.querySelectorAll("nav.tabs button");
@@ -287,6 +326,7 @@
     chat: document.getElementById("panel-chat"),
     evals: document.getElementById("panel-evals"),
     flow: document.getElementById("panel-flow"),
+    trace: document.getElementById("panel-trace"),
   };
   let evalsLoaded = false;
 
@@ -298,6 +338,9 @@
       panels[btn.dataset.tab].classList.add("active");
       if (btn.dataset.tab === "evals" && !evalsLoaded) {
         loadEvals();
+      }
+      if (btn.dataset.tab === "trace") {
+        loadTraces();
       }
     });
   });
@@ -386,6 +429,61 @@
     stepsEl.appendChild(li);
     return li;
   }
+
+  // ---------- Trace Logging tab ----------
+  function renderSpanRow(span) {
+    const badge = span.ok
+      ? '<span class="badge pass">ok</span>'
+      : '<span class="badge fail">failed</span>';
+    const metaEntries = Object.entries(span.meta || {})
+      .filter(function (e) { return e[1] !== null && e[1] !== undefined; })
+      .map(function (e) { return e[0] + "=" + JSON.stringify(e[1]); })
+      .join("  ");
+    return (
+      "<tr><td><code>" + escapeHtml(span.name) + "</code></td>" +
+      "<td>" + badge + "</td>" +
+      "<td>" + span.latency_ms + "ms</td>" +
+      "<td>" + escapeHtml(metaEntries) + "</td></tr>"
+    );
+  }
+
+  function renderTrace(trace, index) {
+    const rows = (trace.spans || []).map(renderSpanRow).join("");
+    const time = new Date(trace.started_at).toLocaleTimeString();
+    const details = document.createElement("details");
+    details.className = "trace-turn";
+    if (index === 0) details.open = true;
+    details.innerHTML =
+      "<summary><span>" + escapeHtml(trace.user_message) + "</span>" +
+      '<span class="trace-meta">' + time + " · " + trace.total_ms + "ms · " + (trace.spans || []).length + " spans</span></summary>" +
+      "<table class='trace-spans'><thead><tr><th>Span</th><th>Result</th><th>Latency</th><th>Detail</th></tr></thead>" +
+      "<tbody>" + rows + "</tbody></table>";
+    return details;
+  }
+
+  async function loadTraces() {
+    try {
+      const res = await fetch("/api/traces?session_id=" + encodeURIComponent(sessionId));
+      const data = await res.json();
+      const items = data.traces || [];
+      if (!items.length) {
+        traceEmptyEl.style.display = "";
+        traceListEl.innerHTML = "";
+        return;
+      }
+      traceEmptyEl.style.display = "none";
+      traceListEl.innerHTML = "";
+      // Most recent turn first.
+      items.slice().reverse().forEach(function (trace, i) {
+        traceListEl.appendChild(renderTrace(trace, i));
+      });
+    } catch (e) {
+      traceEmptyEl.style.display = "";
+      traceEmptyEl.textContent = "Couldn't load traces.";
+    }
+  }
+
+  traceRefreshBtn.addEventListener("click", loadTraces);
 
   // ---------- Chat ----------
   function addRow(role) {
@@ -538,6 +636,9 @@
       }
       setBusy(false);
       inputEl.focus();
+      // Refresh in the background so the Trace Logging tab is current
+      // whenever the user next opens it, without waiting on this turn.
+      loadTraces();
     }
   }
 

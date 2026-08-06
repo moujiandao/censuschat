@@ -14,12 +14,14 @@ module.
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
 from types import SimpleNamespace
 
 import pytest
 
 import src.agent as agent
 import src.sessions as sessions
+import src.tracing as tracing
 from src.contracts import (
     MAX_RECOVERY_RETRIES,
     ChatMessage,
@@ -241,6 +243,75 @@ def test_allow_verdict_runs_tool_round_trip_before_final_answer(monkeypatch):
     ]
     assert events[0].data["tool"] == "search_census_variables"
     assert events[1].data["ok"] is True
+
+
+def test_allow_verdict_records_a_trace_with_guardrail_model_and_tool_spans(monkeypatch):
+    """Wiring test for src/tracing.py (Trace Logging tab): exercises the
+    real agent_turn body, not the tracing module in isolation, to prove
+    spans actually get recorded through the real call sites — guardrail,
+    each model call, each tool call — not just that record_turn_trace
+    itself works when called directly."""
+    monkeypatch.setattr(tracing, "_traces", defaultdict(list))
+    monkeypatch.setattr(
+        agent,
+        "classify_input",
+        lambda message, recent_turns: GuardrailVerdict(
+            action=GuardrailAction.ALLOW, category=None, reason=None, latency_ms=8
+        ),
+    )
+    monkeypatch.setattr(
+        agent, "_run_tool", lambda name, tool_input: {"hits": [{"variable_id": "B01001e1"}]}
+    )
+
+    tool_block = SimpleNamespace(
+        type="tool_use", name="search_census_variables", input={"query": "population"}, id="tool-1"
+    )
+    first_response = SimpleNamespace(stop_reason="tool_use", content=[tool_block])
+    second_response = SimpleNamespace(stop_reason="end_turn", content=[])
+    _install_fake_client(
+        monkeypatch,
+        [_FakeStream([], first_response), _FakeStream(["found it."], second_response)],
+    )
+
+    _collect("s-trace-tool", "total population?")
+
+    traces = tracing.get_traces("s-trace-tool")
+    assert len(traces) == 1
+    span_names = [s.name for s in traces[0].spans]
+    assert span_names == ["guardrail", "model_call_1", "tool:search_census_variables", "model_call_2"]
+    assert traces[0].spans[0].meta["verdict"] == "allow"
+    assert traces[0].spans[2].ok is True
+
+
+def test_refuse_verdict_still_records_a_trace(monkeypatch):
+    """Every exit point must record a trace, not just the normal
+    completion path — the Trace Logging tab should show a refused turn
+    too, not silently drop it."""
+    monkeypatch.setattr(tracing, "_traces", defaultdict(list))
+    monkeypatch.setattr(
+        agent,
+        "classify_input",
+        lambda message, recent_turns: GuardrailVerdict(
+            action=GuardrailAction.REFUSE,
+            category=RefusalCategory.OFF_TOPIC,
+            reason="weather is not census data",
+            latency_ms=12,
+        ),
+    )
+    def _stream_should_not_be_called(**kwargs):
+        raise AssertionError("Sonnet must never be called on a REFUSE verdict")
+
+    monkeypatch.setattr(
+        agent, "_client", SimpleNamespace(messages=SimpleNamespace(stream=_stream_should_not_be_called))
+    )
+
+    _collect("s-trace-refuse", "what's the weather?")
+
+    traces = tracing.get_traces("s-trace-refuse")
+    assert len(traces) == 1
+    assert [s.name for s in traces[0].spans] == ["guardrail"]
+    assert traces[0].spans[0].meta["verdict"] == "refuse"
+    assert traces[0].spans[0].meta["category"] == "off_topic"
 
 
 def _allow_verdict(message, recent_turns):

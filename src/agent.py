@@ -25,6 +25,13 @@ runs out) — the stream still always ends in DONE.
 No agent framework (CLAUDE.md rule 14) — a hand-written loop over the
 Anthropic SDK's async streaming client, so tool_start/tool_end/token events
 can be emitted as they happen (rule 11) rather than after the fact.
+
+Every exit point records a TurnTrace (src/tracing.py) — an in-app,
+in-memory stand-in for the full Langfuse integration rule 17 calls for
+(issue #18, deferred; see docs/reflection.md). Spans cover the guardrail
+decision, every model call's token usage, and every tool call's latency,
+so the Trace Logging tab has a real record regardless of which path a
+turn took.
 """
 
 from __future__ import annotations
@@ -34,6 +41,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator
+from datetime import datetime, timezone
 from typing import Any
 
 import anthropic
@@ -54,6 +62,7 @@ from src.guardrail import classify_input
 from src.health import is_degraded
 from src.model_config import AGENT_MODEL
 from src.sessions import append_message, get_session
+from src.tracing import TraceSpan, TurnTrace, record_turn_trace
 
 logger = logging.getLogger(__name__)
 
@@ -289,12 +298,28 @@ def _build_ambiguous_geo_clarification(unresolved: list[dict[str, Any]]) -> str:
     return "\n\n".join(sections) + "\n\nWhich one did you mean?"
 
 
-def _trace_turn_stub(session_id: str) -> None:
-    """Wiring point for issue #18 (Langfuse). One trace per agent_turn
-    invocation, session_id in metadata, spans for guardrail/tool/model
-    calls — deliberately a no-op here; #18 owns the langfuse dependency,
-    LANGFUSE_HOST config, and span instrumentation. Never allowed to raise
-    or block the turn regardless of what #18 adds."""
+def _finish_trace(
+    session_id: str,
+    user_message: str,
+    spans: list[TraceSpan],
+    started_at: datetime,
+    turn_start: float,
+) -> None:
+    """In-app trace logging (src/tracing.py) — a lightweight stand-in for
+    the full Langfuse integration (issue #18, deferred; see
+    docs/reflection.md). Called at every exit point of agent_turn so the
+    Trace Logging tab has a record regardless of which path a turn took.
+    record_turn_trace never raises, so this can never affect what the
+    user sees."""
+    record_turn_trace(
+        TurnTrace(
+            session_id=session_id,
+            user_message=user_message,
+            started_at=started_at,
+            total_ms=int((time.monotonic() - turn_start) * 1000),
+            spans=spans,
+        )
+    )
 
 
 async def agent_turn(
@@ -305,7 +330,8 @@ async def agent_turn(
     from this turn's run_census_sql results; the stream always terminates
     with DONE (src/app.py converts any raised exception here into ERROR)."""
     turn_start = time.monotonic()
-    _trace_turn_stub(session_id)
+    turn_started_at = datetime.now(timezone.utc)
+    spans: list[TraceSpan] = []
 
     session = await asyncio.to_thread(get_session, session_id)
     recent_turns = session.messages[-2:]
@@ -322,23 +348,38 @@ async def agent_turn(
     # short-circuits its own live Snowflake probe whenever a snapshot
     # exists, so this costs nothing extra on a healthy turn.
     if await asyncio.to_thread(is_degraded):
+        spans.append(TraceSpan(name="degraded_check", latency_ms=0, ok=False))
         yield ChatEvent(type=EventType.TOKEN, data={"text": _DEGRADED_MESSAGE})
         await asyncio.to_thread(
             append_message, session_id, ChatMessage(role="assistant", content=_DEGRADED_MESSAGE)
         )
+        _finish_trace(session_id, user_message, spans, turn_started_at, turn_start)
         yield ChatEvent(
             type=EventType.DONE,
             data={"elapsed_ms": int((time.monotonic() - turn_start) * 1000)},
         )
         return
 
+    guardrail_start = time.monotonic()
     verdict = await asyncio.to_thread(classify_input, user_message, recent_turns)
+    spans.append(
+        TraceSpan(
+            name="guardrail",
+            latency_ms=verdict.latency_ms or int((time.monotonic() - guardrail_start) * 1000),
+            ok=True,
+            meta={
+                "verdict": verdict.action.value,
+                "category": verdict.category.value if verdict.category else None,
+            },
+        )
+    )
     if verdict.action == GuardrailAction.REFUSE:
         refusal = _REFUSAL_MESSAGES.get(verdict.category, _REFUSAL_MESSAGES[None])
         yield ChatEvent(type=EventType.TOKEN, data={"text": refusal})
         await asyncio.to_thread(
             append_message, session_id, ChatMessage(role="assistant", content=refusal)
         )
+        _finish_trace(session_id, user_message, spans, turn_started_at, turn_start)
         yield ChatEvent(
             type=EventType.DONE,
             data={"elapsed_ms": int((time.monotonic() - turn_start) * 1000)},
@@ -360,6 +401,7 @@ async def agent_turn(
     ambiguity_blocked = False
     collected_query_results: list[dict[str, Any]] = []
     watchdog_fired = False
+    model_call_index = 0
 
     for _ in range(_MAX_TOOL_LOOP_ITERATIONS):
         # Watchdog (CLAUDE.md rule 11, issue #14): TURN_DEADLINE_S is a
@@ -372,6 +414,8 @@ async def agent_turn(
             watchdog_fired = True
             break
 
+        model_call_index += 1
+        model_call_start = time.monotonic()
         async with _client.messages.stream(
             model=AGENT_MODEL,
             max_tokens=_MAX_TOKENS,
@@ -383,6 +427,23 @@ async def agent_turn(
                 streamed_text_parts.append(text)
                 yield ChatEvent(type=EventType.TOKEN, data={"text": text})
             response = await stream.get_final_message()
+
+        # getattr throughout: the test harness's faked responses
+        # (SimpleNamespace) don't set `usage`, so this must degrade to
+        # None rather than raise on a mocked turn.
+        usage = getattr(response, "usage", None)
+        spans.append(
+            TraceSpan(
+                name=f"model_call_{model_call_index}",
+                latency_ms=int((time.monotonic() - model_call_start) * 1000),
+                ok=True,
+                meta={
+                    "input_tokens": getattr(usage, "input_tokens", None),
+                    "output_tokens": getattr(usage, "output_tokens", None),
+                    "stop_reason": response.stop_reason,
+                },
+            )
+        )
 
         if response.stop_reason != "tool_use":
             break
@@ -418,6 +479,14 @@ async def agent_turn(
                 yield ChatEvent(
                     type=EventType.TOOL_END,
                     data={"tool": block.name, "ok": False, "elapsed_ms": 0},
+                )
+                spans.append(
+                    TraceSpan(
+                        name=f"tool:{block.name}",
+                        latency_ms=0,
+                        ok=False,
+                        meta={"blocked": "ambiguous_geography"},
+                    )
                 )
                 ambiguity_blocked = True
                 break
@@ -459,6 +528,14 @@ async def agent_turn(
             yield ChatEvent(
                 type=EventType.TOOL_END,
                 data={"tool": block.name, "ok": not is_error, "elapsed_ms": elapsed_ms},
+            )
+            spans.append(
+                TraceSpan(
+                    name=f"tool:{block.name}",
+                    latency_ms=elapsed_ms,
+                    ok=not is_error,
+                    meta={"args_preview": _preview(block.input)},
+                )
             )
             tool_results.append(
                 {
@@ -536,6 +613,7 @@ async def agent_turn(
         await asyncio.to_thread(
             append_message, session_id, ChatMessage(role="assistant", content=failure_text)
         )
+        _finish_trace(session_id, user_message, spans, turn_started_at, turn_start)
         yield ChatEvent(
             type=EventType.DONE,
             data={"elapsed_ms": int((time.monotonic() - turn_start) * 1000)},
@@ -548,6 +626,7 @@ async def agent_turn(
             append_message, session_id, ChatMessage(role="assistant", content=final_answer)
         )
 
+    _finish_trace(session_id, user_message, spans, turn_started_at, turn_start)
     yield ChatEvent(
         type=EventType.DONE,
         data={"elapsed_ms": int((time.monotonic() - turn_start) * 1000)},

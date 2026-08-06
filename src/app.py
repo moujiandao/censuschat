@@ -31,6 +31,7 @@ from src.agent import agent_turn
 from src.contracts import ChatEvent, EventType, SnapshotError
 from src.health import check_snowflake_reachability, health_report
 from src.snapshot import build_snapshot
+from src.tracing import get_traces
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,16 @@ async def evals() -> dict:
     # File I/O only (no Snowflake) — off the event loop for consistency
     # with every other blocking call in this app, even though it's cheap.
     return await asyncio.to_thread(_load_evals)
+
+
+@app.get("/api/traces")
+async def traces(session_id: str) -> dict:
+    """Trace Logging tab (src/tracing.py, a lightweight stand-in for the
+    full Langfuse integration in issue #18 — see docs/reflection.md).
+    In-memory, non-blocking read — no asyncio.to_thread needed, unlike
+    /api/health and /api/evals, since this never touches the filesystem
+    or Snowflake."""
+    return {"traces": [json.loads(t.model_dump_json()) for t in get_traces(session_id)]}
 
 
 @app.post("/api/chat")
