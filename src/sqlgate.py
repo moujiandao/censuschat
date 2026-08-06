@@ -289,18 +289,60 @@ def _visible_cte_names(table: exp.Table) -> set[str]:
     that reference against the physical 2019 table — defeating D-003, which
     is the whole reason the allowlist is 2020-only.
     """
+    ancestors = {id(node) for node in _ancestors(table)}
+
     names: set[str] = set()
     node: exp.Expression | None = table
     while node is not None:
         # sqlglot 30 spells the arg `with_`; older versions used `with`.
         with_clause = node.args.get("with_") or node.args.get("with")
         if isinstance(with_clause, exp.With):
-            for cte in with_clause.expressions:
-                alias = cte.args.get("alias")
-                if isinstance(alias, exp.TableAlias):
-                    names.add(_identifier_text(alias.this))
+            names.update(_cte_names_in_scope(with_clause, ancestors))
         node = node.parent
     return names
+
+
+def _cte_names_in_scope(
+    with_clause: exp.With, ancestors: set[int]
+) -> set[str]:
+    """CTE names from one WITH list that are visible at a reference inside it.
+
+    Visibility follows declaration order: a CTE sees the ones declared before
+    it, not the ones after. Ignoring that is the same bypass one level down —
+
+        WITH leak AS (SELECT cbg FROM "2019_CBG_B01"),
+             "2019_CBG_B01" AS (SELECT 1 AS cbg)     -- declared AFTER
+        SELECT ... WHERE cbg IN (SELECT cbg FROM leak)
+
+    `leak` cannot see a CTE declared after it, so Snowflake resolves that bare
+    name against the physical 2019 table. Only `WITH RECURSIVE` lets a CTE see
+    itself.
+    """
+    names: set[str] = set()
+    recursive = bool(with_clause.args.get("recursive"))
+
+    for cte in with_clause.expressions:
+        alias = cte.args.get("alias")
+        containing = id(cte) in ancestors
+        if containing and not recursive:
+            # The reference lives inside this CTE's body: everything declared
+            # from here on is not yet in scope.
+            break
+        if isinstance(alias, exp.TableAlias):
+            names.add(_identifier_text(alias.this))
+        if containing:
+            break
+
+    return names
+
+
+def _ancestors(node: exp.Expression) -> list[exp.Expression]:
+    chain: list[exp.Expression] = []
+    current = node.parent
+    while current is not None:
+        chain.append(current)
+        current = current.parent
+    return chain
 
 
 def _table_key(table: exp.Table) -> str | None:

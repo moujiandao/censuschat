@@ -310,14 +310,6 @@ def test_limit_is_injected_on_a_bare_parenthesized_query() -> None:
     assert row_bound(result.sql) == SQL_ROW_LIMIT
 
 
-def test_parenthesised_top_level_query_is_bounded() -> None:
-    """A bare parenthesised query is still a query, and still has to be
-    bounded — the LIMIT lands on the Subquery wrapper, not the inner SELECT."""
-    result = validate_sql(f"(SELECT a FROM {B01})")
-    assert result.ok is True
-    assert row_bound(result.sql) == SQL_ROW_LIMIT
-
-
 def test_existing_smaller_limit_is_preserved_unmodified() -> None:
     result = validate_sql(f"SELECT a FROM {B01} LIMIT 5")
     assert result.ok is True
@@ -408,6 +400,35 @@ def test_a_cte_shadowing_a_forbidden_name_in_its_own_scope_is_still_read_as_a_ct
     result = validate_sql(sql)
     assert result.ok is False
     assert "does not read any allowed table" in result.detail
+
+
+def test_a_forward_reference_to_a_later_cte_is_not_treated_as_a_cte() -> None:
+    """Within one WITH list, only CTEs declared earlier are in scope.
+
+    The second half of the scoping bypass: declare the decoy CTE *after* the
+    one that references its name. Snowflake resolves that forward reference
+    against the physical table, so treating it as a CTE reference lets the
+    2019 data through. Scope is declaration order, not membership.
+    """
+    sql = (
+        f'WITH leak AS (SELECT cbg FROM "2019_CBG_B01"), '
+        f'     "2019_CBG_B01" AS (SELECT 1 AS cbg) '
+        f'SELECT a.CENSUS_BLOCK_GROUP FROM {B01} AS a '
+        f'WHERE a.CENSUS_BLOCK_GROUP IN (SELECT cbg FROM leak)'
+    )
+    assert_rejected(validate_sql(sql), SqlViolation.TABLE_NOT_ALLOWED)
+
+
+def test_a_cte_may_reference_an_earlier_cte() -> None:
+    """The legitimate direction still works — this is the ordinary way a
+    multi-step aggregation gets written."""
+    sql = (
+        f"WITH base AS (SELECT SUBSTR(CENSUS_BLOCK_GROUP, 1, 5) AS county, B01001e1 AS pop FROM {B01}), "
+        f"rolled AS (SELECT county, SUM(pop) AS pop FROM base GROUP BY county) "
+        f"SELECT county, pop FROM rolled"
+    )
+    result = validate_sql(sql)
+    assert result.ok is True, result.detail
 
 
 def test_multiple_ctes_pass() -> None:
