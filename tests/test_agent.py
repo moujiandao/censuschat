@@ -1,4 +1,4 @@
-"""Tests for the agent loop — src/contracts.py:agent_turn (issues #7, #11, #12).
+"""Tests for the agent loop — src/contracts.py:agent_turn (issues #7, #11, #12, #13, #14).
 
 Exercises the real function body (test_app.py stubs agent_turn entirely, so
 none of this is covered there). The Anthropic client is faked rather than
@@ -640,3 +640,199 @@ def test_recent_turns_passed_to_guardrail_is_last_two_messages(monkeypatch):
     _collect("s-context", "turn 2")
 
     assert [m.content for m in captured["recent_turns"]] == ["turn 1", "answer 1"]
+
+
+class _FakeClock:
+    """Fakes time.monotonic with a mutable 'now' that test-controlled tool
+    stubs advance as a side effect of 'running', simulating wall-clock
+    passage without depending on the exact number of time.monotonic() call
+    sites inside agent_turn. Patches the real time module for the test's
+    duration (monkeypatch reverts it on teardown) — no clock-injection
+    abstraction exists in agent.py, and adding one just for this would be
+    more machinery than the deterministic-timing TDD target (issue #14)
+    actually needs."""
+
+    def __init__(self, start: float = 0.0) -> None:
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _search_tool_block(tool_id: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        type="tool_use", name="search_census_variables", input={"query": "population"}, id=tool_id
+    )
+
+
+def test_watchdog_stops_further_tool_calls_once_deadline_exceeded(monkeypatch):
+    """issue #14 / CLAUDE.md rule 11: TURN_DEADLINE_S is a wall-clock budget
+    checked once per round boundary. Once elapsed time crosses it, no
+    further model or tool calls are issued — a clean cutoff between rounds,
+    never an abort of a call already in flight."""
+    monkeypatch.setattr(agent, "classify_input", _allow_verdict)
+    clock = _FakeClock()
+    monkeypatch.setattr(agent.time, "monotonic", clock)
+
+    def _slow_tool(name, tool_input):
+        clock.advance(30)  # each round "burns" 30s of wall clock
+        return {"hits": []}
+
+    monkeypatch.setattr(agent, "_run_tool", _slow_tool)
+
+    responses = [
+        SimpleNamespace(stop_reason="tool_use", content=[_search_tool_block(f"g{i}")])
+        for i in range(3)
+    ]
+    factory = _install_fake_client(monkeypatch, [_FakeStream([], r) for r in responses])
+
+    events = _collect("s-watchdog", "total population of many places?")
+
+    # 30s -> 60s after round 2, crossing TURN_DEADLINE_S (50s); round 3's
+    # model call must never happen.
+    assert len(factory.calls) == 2
+    assert events[-1].type == EventType.DONE
+    assert events[-2].type == EventType.TOKEN
+
+
+def test_watchdog_partial_answer_uses_only_this_turns_query_rows(monkeypatch):
+    """CLAUDE.md rule 2: a partial answer must never fabricate a number —
+    it can only use rows this turn's run_census_sql calls actually
+    returned."""
+    monkeypatch.setattr(agent, "classify_input", _allow_verdict)
+    clock = _FakeClock()
+    monkeypatch.setattr(agent.time, "monotonic", clock)
+
+    success_payload = {
+        "columns": ["c"], "rows": [{"c": 42}], "row_count": 1, "truncated": False, "elapsed_ms": 5,
+    }
+
+    def _slow_tool(name, tool_input):
+        clock.advance(55)  # already over budget after this single round
+        return success_payload
+
+    monkeypatch.setattr(agent, "_run_tool", _slow_tool)
+
+    responses = [SimpleNamespace(stop_reason="tool_use", content=[_sql_tool_block("t1")])]
+    factory = _install_fake_client(monkeypatch, [_FakeStream([], r) for r in responses])
+
+    events = _collect("s-watchdog-rows", "total population?")
+
+    assert len(factory.calls) == 1  # the deadline was already blown before round 2
+    partial_text = events[-2].data["text"]
+    assert "42" in partial_text
+
+    session = sessions.get_session("s-watchdog-rows")
+    assert session.messages[-1].content == partial_text
+
+
+def test_watchdog_honest_message_when_no_rows_collected(monkeypatch):
+    """The 'or an honest ran-out-of-time message if none' half of issue
+    #14's exit criteria — no query ever succeeded this turn, so there's
+    nothing groundable to report."""
+    monkeypatch.setattr(agent, "classify_input", _allow_verdict)
+    clock = _FakeClock()
+    monkeypatch.setattr(agent.time, "monotonic", clock)
+
+    def _slow_tool(name, tool_input):
+        clock.advance(55)
+        return {"hits": []}
+
+    monkeypatch.setattr(agent, "_run_tool", _slow_tool)
+
+    responses = [SimpleNamespace(stop_reason="tool_use", content=[_search_tool_block("g1")])]
+    _install_fake_client(monkeypatch, [_FakeStream([], r) for r in responses])
+
+    events = _collect("s-watchdog-empty", "total population?")
+
+    partial_text = events[-2].data["text"]
+    assert "ran out of time" in partial_text.lower()
+
+
+def test_watchdog_does_not_affect_a_turn_well_under_the_deadline(monkeypatch):
+    """Regression guard against premature cutoff: a normal, fast turn must
+    complete exactly as it would without the watchdog."""
+    monkeypatch.setattr(agent, "classify_input", _allow_verdict)
+    clock = _FakeClock()
+    monkeypatch.setattr(agent.time, "monotonic", clock)
+    monkeypatch.setattr(agent, "_run_tool", lambda name, tool_input: {"hits": []})
+
+    tool_response = SimpleNamespace(stop_reason="tool_use", content=[_search_tool_block("g1")])
+    final_response = SimpleNamespace(stop_reason="end_turn", content=[])
+    factory = _install_fake_client(
+        monkeypatch, [_FakeStream([], tool_response), _FakeStream(["done."], final_response)]
+    )
+
+    events = _collect("s-watchdog-fast", "total population?")
+
+    assert len(factory.calls) == 2
+    assert events[-2].data["text"] == "done."
+
+
+def test_watchdog_fires_before_any_tool_round_when_deadline_already_exceeded(monkeypatch):
+    """Edge case not covered by the other watchdog tests, which all reach
+    the deadline via at least one completed round: if wall-clock time is
+    already past TURN_DEADLINE_S before the very first model call, the
+    watchdog must fire immediately — zero tool calls, zero model calls, the
+    honest no-rows-collected fallback."""
+    clock = _FakeClock()
+    monkeypatch.setattr(agent.time, "monotonic", clock)
+
+    def _allow_and_burn_time(message, recent_turns):
+        clock.advance(60)  # simulates wall-clock time already spent before the loop starts
+        return GuardrailVerdict(action=GuardrailAction.ALLOW, category=None, reason=None, latency_ms=1)
+
+    monkeypatch.setattr(agent, "classify_input", _allow_and_burn_time)
+
+    def _tool_should_not_run(name, tool_input):
+        raise AssertionError("no tool should ever run once the deadline is already blown")
+
+    monkeypatch.setattr(agent, "_run_tool", _tool_should_not_run)
+
+    def _stream_should_not_be_called(**kwargs):
+        raise AssertionError("no model call should ever happen once the deadline is already blown")
+
+    monkeypatch.setattr(
+        agent, "_client", SimpleNamespace(messages=SimpleNamespace(stream=_stream_should_not_be_called))
+    )
+
+    events = _collect("s-watchdog-zero-round", "total population?")
+
+    assert events[-1].type == EventType.DONE
+    partial_text = events[-2].data["text"]
+    assert "ran out of time" in partial_text.lower()
+
+
+def test_watchdog_takes_precedence_over_the_tool_loop_iteration_cap(monkeypatch):
+    """If the deadline is crossed right as the loop would otherwise be
+    about to hit _MAX_TOOL_LOOP_ITERATIONS, the watchdog's honest partial
+    answer must win — not the infra cap's generic '[Stopped after reaching
+    this turn's tool-call limit.]' text, which carries no grounded
+    information."""
+    monkeypatch.setattr(agent, "classify_input", _allow_verdict)
+    clock = _FakeClock()
+    monkeypatch.setattr(agent.time, "monotonic", clock)
+
+    per_round = 50.0 / (agent._MAX_TOOL_LOOP_ITERATIONS - 1)
+
+    def _slow_tool(name, tool_input):
+        clock.advance(per_round)
+        return {"hits": []}
+
+    monkeypatch.setattr(agent, "_run_tool", _slow_tool)
+
+    responses = [
+        SimpleNamespace(stop_reason="tool_use", content=[_search_tool_block(f"g{i}")])
+        for i in range(agent._MAX_TOOL_LOOP_ITERATIONS)
+    ]
+    factory = _install_fake_client(monkeypatch, [_FakeStream([], r) for r in responses])
+
+    events = _collect("s-watchdog-last-iter", "total population of many places?")
+
+    assert len(factory.calls) == agent._MAX_TOOL_LOOP_ITERATIONS - 1
+    partial_text = events[-2].data["text"]
+    assert "tool-call limit" not in partial_text
+    assert "ran out of time" in partial_text.lower()

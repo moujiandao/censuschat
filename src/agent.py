@@ -1,4 +1,4 @@
-"""Agent loop — src/contracts.py:agent_turn (issues #7, #11, #12, #13).
+"""Agent loop — src/contracts.py:agent_turn (issues #7, #11, #12, #13, #14).
 
 Pipeline: guardrail -> session replay -> Sonnet tool loop with exactly the
 three tools (CLAUDE.md rule 4) -> grounded, streamed answer. A REFUSE
@@ -12,9 +12,12 @@ not a request the model can decline. An unresolved ambiguous
 `resolve_geography` result gets the same code-enforced treatment
 (CLAUDE.md rule 10): if the model tries `run_census_sql` anyway instead of
 asking, the turn is force-terminated with a deterministic clarifying
-question before Snowflake is ever touched.
-Still deliberately excludes the 50s watchdog (issue #14) — M3; nothing here
-needs restructuring to add it.
+question before Snowflake is ever touched. `TURN_DEADLINE_S` is a soft
+wall-clock watchdog checked once per round boundary (never mid-call); once
+crossed, no further model or tool calls are issued and the turn ends with a
+deterministic partial answer built only from rows this turn's queries
+actually returned (rule 2's grounding guarantee still holds even when time
+runs out) — the stream still always ends in DONE.
 
 No agent framework (CLAUDE.md rule 14) — a hand-written loop over the
 Anthropic SDK's async streaming client, so tool_start/tool_end/token events
@@ -35,6 +38,7 @@ import anthropic
 from src import tools as census_tools
 from src.contracts import (
     MAX_RECOVERY_RETRIES,
+    TURN_DEADLINE_S,
     ChatEvent,
     ChatMessage,
     EventType,
@@ -216,6 +220,43 @@ def _build_recovery_failure_message(recovery_log: list[str]) -> str:
     )
 
 
+_WATCHDOG_PARTIAL_ROW_CAP = 50
+
+
+def _build_watchdog_partial_message(collected_query_results: list[dict[str, Any]]) -> str:
+    """Deterministic, code-generated partial answer (CLAUDE.md rule 11,
+    issue #14: TURN_DEADLINE_S watchdog). Never asks the model to summarize
+    — that would spend more of the very budget that's already exhausted,
+    and risks the model narrating a number that isn't actually grounded in
+    a row from this turn. Uses only rows this turn's run_census_sql calls
+    actually returned (rule 2) — never fabricates a number to fill the gap.
+    Capped at _WATCHDOG_PARTIAL_ROW_CAP: successful run_census_sql calls
+    aren't bounded by MAX_RECOVERY_RETRIES (only failures/zero-row results
+    spend that budget), so up to _MAX_TOOL_LOOP_ITERATIONS rounds of
+    full-width SQL_ROW_LIMIT results could otherwise accumulate into one
+    unbounded client-facing message."""
+    rows = [row for payload in collected_query_results for row in payload.get("rows", [])]
+    if not rows:
+        return (
+            "I ran out of time before finding an answer to this. Try a "
+            "narrower or more specific question."
+        )
+    shown = rows[:_WATCHDOG_PARTIAL_ROW_CAP]
+    lines = "\n".join(
+        "- " + ", ".join(f"{key}: {value}" for key, value in row.items()) for row in shown
+    )
+    truncation_note = (
+        f"\n(showing the first {_WATCHDOG_PARTIAL_ROW_CAP} of {len(rows)} rows collected)"
+        if len(rows) > _WATCHDOG_PARTIAL_ROW_CAP
+        else ""
+    )
+    return (
+        "I ran out of time before finishing, but here's what this turn's "
+        f"queries found:\n{lines}{truncation_note}\n\nThis may be incomplete — "
+        "try asking again or narrowing the question."
+    )
+
+
 def _build_ambiguous_geo_clarification(unresolved: list[dict[str, Any]]) -> str:
     """Deterministic, code-generated stop (CLAUDE.md rule 10 / issue #13:
     ambiguous geography MUST prompt a clarifying question, never a silent
@@ -288,8 +329,20 @@ async def agent_turn(
     # for the rest of the turn.
     unresolved_ambiguous_geo: list[dict[str, Any]] = []
     ambiguity_blocked = False
+    collected_query_results: list[dict[str, Any]] = []
+    watchdog_fired = False
 
     for _ in range(_MAX_TOOL_LOOP_ITERATIONS):
+        # Watchdog (CLAUDE.md rule 11, issue #14): TURN_DEADLINE_S is a
+        # wall-clock budget checked once per round boundary, never mid-call
+        # — a call already in flight always finishes and its tool_results
+        # get appended normally; this only stops the *next* round from
+        # starting. A soft budget under the assignment's 60s cap, not a
+        # hard kill: the stream always still ends in DONE.
+        if time.monotonic() - turn_start >= TURN_DEADLINE_S:
+            watchdog_fired = True
+            break
+
         async with _client.messages.stream(
             model=AGENT_MODEL,
             max_tokens=_MAX_TOKENS,
@@ -402,6 +455,12 @@ async def agent_turn(
                 elif result_payload.get("row_count") == 0:
                     recovery_attempts += 1
                     recovery_log.append("run_census_sql returned zero rows")
+                else:
+                    # Tracked for the watchdog (issue #14): if TURN_DEADLINE_S
+                    # fires before a final answer, the partial message can
+                    # only use rows a query in this turn actually returned
+                    # (CLAUDE.md rule 2) — never a fabricated number.
+                    collected_query_results.append(result_payload)
             elif block.name == "resolve_geography" and not is_error and result_payload.get("ambiguous"):
                 unresolved_ambiguous_geo.append(result_payload)
 
@@ -430,12 +489,20 @@ async def agent_turn(
             data={"text": streamed_text_parts[-1]},
         )
 
-    if recovery_exhausted or ambiguity_blocked:
-        failure_text = (
-            _build_ambiguous_geo_clarification(unresolved_ambiguous_geo)
-            if ambiguity_blocked
-            else _build_recovery_failure_message(recovery_log)
-        )
+    # Mutually exclusive by construction, not just by convention: ambiguity_blocked
+    # and recovery_exhausted are only ever set after a round's tool
+    # processing, and both immediately break the loop — so neither can
+    # co-occur with watchdog_fired, which is only ever set at the very top
+    # of an iteration, before that round's tool processing runs. The
+    # if/elif order below is therefore never actually a tie-break between
+    # them; it only matters as a readable priority list.
+    if recovery_exhausted or ambiguity_blocked or watchdog_fired:
+        if ambiguity_blocked:
+            failure_text = _build_ambiguous_geo_clarification(unresolved_ambiguous_geo)
+        elif watchdog_fired:
+            failure_text = _build_watchdog_partial_message(collected_query_results)
+        else:
+            failure_text = _build_recovery_failure_message(recovery_log)
         yield ChatEvent(type=EventType.TOKEN, data={"text": failure_text})
         await asyncio.to_thread(
             append_message, session_id, ChatMessage(role="assistant", content=failure_text)
