@@ -298,6 +298,18 @@ def test_limit_is_injected_on_a_union() -> None:
     assert f"LIMIT {SQL_ROW_LIMIT}" in result.sql.upper()
 
 
+def test_limit_is_injected_on_a_bare_parenthesized_query() -> None:
+    """`(SELECT ...)` with no CTE/UNION is a parse-tree shape distinct from
+    a plain SELECT. Confirmed against real Snowflake (not just sqlglot's
+    printer) that `(SELECT ...) LIMIT N` is valid syntax and the LIMIT
+    genuinely bounds the row count, not just cosmetically present in the
+    string: `python scripts/sf_query.py '(SELECT "B01001e1" FROM
+    US_CENSUS.PUBLIC."2020_CBG_B01") LIMIT 200'` returned exactly 200 rows."""
+    result = validate_sql(f"(SELECT a FROM {B01})")
+    assert result.ok is True
+    assert row_bound(result.sql) == SQL_ROW_LIMIT
+
+
 def test_parenthesised_top_level_query_is_bounded() -> None:
     """A bare parenthesised query is still a query, and still has to be
     bounded — the LIMIT lands on the Subquery wrapper, not the inner SELECT."""

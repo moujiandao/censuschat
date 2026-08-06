@@ -196,3 +196,32 @@ prompt that the model may or may not honor.
 **Cost accepted:** `normalize_value` gains an optional `variable_id`
 parameter to look up top-codes. That is a signature widening, not a break —
 existing single-argument calls still work.
+
+---
+
+## D-010 — `validate_sql`: three gate behaviors beyond issue #1's spec (2026-08-05)
+
+**Status:** refinement, not a deviation — no approval required, same class
+as D-007/D-008. Recorded because it changes what the gate rejects, and
+because all three interpretations trend strictly toward *more* restrictive
+— never toward permissiveness, which is the correct default whenever the
+spec is silent on a security boundary (CLAUDE.md rule 5).
+
+1. **An explicit `LIMIT` above `SQL_ROW_LIMIT` is clamped down, not
+   preserved.** Issue #1 specifies preserving a smaller explicit `LIMIT`
+   and is silent on a larger one. Honoring `LIMIT 100000` would turn the
+   cap into a default rather than a bound, and let the model lift its own
+   ceiling by asking for it.
+2. **A statement referencing zero tables is `TABLE_NOT_ALLOWED`.** Table
+   functions (`SELECT SYSTEM$...()`, `TABLE(RESULT_SCAN(...))`) produce no
+   `Table` node, so an allowlist that only walks table references would
+   never run against them. Every legitimate census answer reads a census
+   table, so the empty case is rejected by default.
+3. **`OBJECT_CONSTRUCT(*)` / `ARRAY_CONSTRUCT(*)` / `HASH(*)` are rejected
+   alongside `SELECT *`; `COUNT(*)` is the sole exemption.** D-007's star
+   rule is stated over the star token itself, not over the outermost
+   projection list — so any construct that reads all columns is banned,
+   and the one star that reads no columns (`COUNT(*)`) is let through.
+
+All three, and their reasoning, are recorded in the implementation commit
+(`4642e36`) as well as here.
