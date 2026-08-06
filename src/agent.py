@@ -1,12 +1,16 @@
-"""Agent loop — src/contracts.py:agent_turn (issues #7 and #11).
+"""Agent loop — src/contracts.py:agent_turn (issues #7, #11, #12).
 
 Pipeline: guardrail -> session replay -> Sonnet tool loop with exactly the
 three tools (CLAUDE.md rule 4) -> grounded, streamed answer. A REFUSE
 verdict short-circuits before the tool loop — Sonnet and Snowflake are
-never touched for a refused turn. Still deliberately excludes the bounded
-recovery loop (issue #12) and 50s watchdog (issue #14) — both M3; the tool
-loop below is their eventual hookup point, nothing here needs restructuring
-to add them.
+never touched for a refused turn. Any `run_census_sql` failure (gate
+rejection or a genuine execution error) or a zero-row result counts against
+a per-turn recovery budget (MAX_RECOVERY_RETRIES, CLAUDE.md rule 9); once
+spent, the loop stops asking the model and emits a deterministic
+honest-failure message naming what was tried — code-enforced termination,
+not a request the model can decline.
+Still deliberately excludes the 50s watchdog (issue #14) — M3; nothing here
+needs restructuring to add it.
 
 No agent framework (CLAUDE.md rule 14) — a hand-written loop over the
 Anthropic SDK's async streaming client, so tool_start/tool_end/token events
@@ -17,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -25,6 +30,7 @@ import anthropic
 
 from src import tools as census_tools
 from src.contracts import (
+    MAX_RECOVERY_RETRIES,
     ChatEvent,
     ChatMessage,
     EventType,
@@ -36,6 +42,8 @@ from src.contracts import (
 from src.guardrail import classify_input
 from src.model_config import AGENT_MODEL
 from src.sessions import append_message, get_session
+
+logger = logging.getLogger(__name__)
 
 _client = anthropic.AsyncAnthropic()
 
@@ -186,6 +194,19 @@ def _run_tool(name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
     return result.model_dump(mode="json")
 
 
+def _build_recovery_failure_message(recovery_log: list[str]) -> str:
+    """Deterministic, code-generated honest failure (CLAUDE.md rule 9) —
+    never LLM-generated, so exhaustion is a code-enforced stop rather than
+    a request the model can decline. Lists exactly what was tried so the
+    user (or an eval) can see it wasn't a silent empty response."""
+    tried = "\n".join(f"- {entry}" for entry in recovery_log)
+    return (
+        f"I tried {len(recovery_log)} times to get a grounded answer to this "
+        f"and couldn't:\n{tried}\n\nRather than guess, I'm stopping here — "
+        "try rephrasing the question or naming the geography more specifically."
+    )
+
+
 def _trace_turn_stub(session_id: str) -> None:
     """Wiring point for issue #18 (Langfuse). One trace per agent_turn
     invocation, session_id in metadata, spans for guardrail/tool/model
@@ -228,6 +249,9 @@ async def agent_turn(
         return
 
     streamed_text_parts: list[str] = []
+    recovery_attempts = 0
+    recovery_log: list[str] = []
+    recovery_exhausted = False
 
     for _ in range(_MAX_TOOL_LOOP_ITERATIONS):
         async with _client.messages.stream(
@@ -258,6 +282,19 @@ async def agent_turn(
             )
             tool_start = time.monotonic()
             is_error = False
+            # Two different error text tracks, deliberately kept separate:
+            # `result_payload["error"]` goes back to the model as tool_result
+            # content (private model context — fine to include real detail so
+            # the model can self-correct, e.g. an unquoted-identifier hint).
+            # `recovery_detail` is what code-generated recovery_log entries
+            # use, which _build_recovery_failure_message streams to the
+            # client and persists verbatim (src/app.py:28-30's "user-safe
+            # text only" convention). A SqlRejected message is our own gate's
+            # controlled vocabulary (validate_sql violations) — safe either
+            # way. A bare `Exception` is a real driver/Snowflake error and
+            # may carry internal detail, so it's sanitized before it can
+            # reach recovery_detail; the raw exception is only logged
+            # server-side.
             try:
                 result_payload = await asyncio.to_thread(
                     _run_tool, block.name, block.input
@@ -265,9 +302,12 @@ async def agent_turn(
             except SqlRejected as exc:
                 is_error = True
                 result_payload = {"error": str(exc)}
+                recovery_detail = str(exc)
             except Exception as exc:  # noqa: BLE001 — surfaced to the model as a tool error, not raised
                 is_error = True
                 result_payload = {"error": f"{block.name} failed: {exc}"}
+                recovery_detail = f"{block.name} raised an internal error"
+                logger.warning("Tool %s raised an unexpected exception", block.name, exc_info=exc)
             elapsed_ms = int((time.monotonic() - tool_start) * 1000)
 
             yield ChatEvent(
@@ -283,7 +323,35 @@ async def agent_turn(
                 }
             )
 
+            # Bounded recovery (CLAUDE.md rule 9): any run_census_sql failure
+            # (gate rejection or a genuine Snowflake execution error — e.g. a
+            # bad column reference inside an allowlisted table) or a
+            # zero-row result spends the turn's recovery budget. Widened
+            # from SqlRejected-only after a live run showed a real execution
+            # error going uncounted, leaving the loop free to keep retrying
+            # against Snowflake at full latency/cost — the exact thing rule
+            # 9 bounds (D-013). Other tools don't count.
+            if block.name == "run_census_sql":
+                if is_error:
+                    recovery_attempts += 1
+                    recovery_log.append(f"run_census_sql failed: {recovery_detail}")
+                elif result_payload.get("row_count") == 0:
+                    recovery_attempts += 1
+                    recovery_log.append("run_census_sql returned zero rows")
+
         messages.append({"role": "user", "content": tool_results})
+
+        # Checked once per model response, not per tool_use block: the
+        # Anthropic API requires every tool_use in a response to get a
+        # matching tool_result before the next request, so a batch
+        # containing more than one failing run_census_sql call can push
+        # recovery_attempts past MAX_RECOVERY_RETRIES by the size of that
+        # batch before this check runs. Accepted as an unavoidable
+        # consequence of that API contract, not a bug — MAX_RECOVERY_RETRIES
+        # bounds attempts, it doesn't guarantee an exact cutoff mid-batch.
+        if recovery_attempts >= MAX_RECOVERY_RETRIES:
+            recovery_exhausted = True
+            break
     else:
         streamed_text_parts.append(
             "\n\n[Stopped after reaching this turn's tool-call limit.]"
@@ -292,6 +360,18 @@ async def agent_turn(
             type=EventType.TOKEN,
             data={"text": streamed_text_parts[-1]},
         )
+
+    if recovery_exhausted:
+        failure_text = _build_recovery_failure_message(recovery_log)
+        yield ChatEvent(type=EventType.TOKEN, data={"text": failure_text})
+        await asyncio.to_thread(
+            append_message, session_id, ChatMessage(role="assistant", content=failure_text)
+        )
+        yield ChatEvent(
+            type=EventType.DONE,
+            data={"elapsed_ms": int((time.monotonic() - turn_start) * 1000)},
+        )
+        return
 
     final_answer = "".join(streamed_text_parts).strip()
     if final_answer:

@@ -349,3 +349,37 @@ behind it would be worse than an honest exclusion.
 golden scenario; the abbreviation fix is a pure correctness fix with no
 tradeoff — `resolve_geography("Alameda County, California")` returned zero
 candidates before it, `06001` after.
+
+---
+
+## D-013 — Bounded recovery counts every `run_census_sql` failure, not just `SqlRejected` (2026-08-06)
+
+**Status:** refinement of issue #12's exit-criteria wording, not a deviation
+from CLAUDE.md — no approval required. CLAUDE.md rule 9 reads "after a SQL
+error or zero-row result, at most 2 retries"; issue #12's exit criteria
+narrow that to literally "a `SqlRejected` error or a zero-row `QueryResult`".
+Implemented the narrow reading first, then found it wrong via live
+verification against real Snowflake.
+
+A genuine Snowflake execution error — e.g. an unquoted mixed-case column
+identifier Snowflake folds to uppercase and can't resolve
+(`B01003e1` unquoted → `B01003E1`, invalid) — is caught by `agent_turn`'s
+generic `except Exception` branch, not `SqlRejected` (which only fires on
+`validate_sql` gate rejections, before any Snowflake call). Under the narrow
+reading this class of failure spent no recovery budget, so a model stuck
+guessing bad SQL against real Snowflake could retry indefinitely at full
+network/warehouse cost — the exact unbounded-cost outcome rule 9 exists to
+prevent, and the SqlRejected-only reading is bounded by nothing on this
+path.
+
+**Fix:** any `is_error` outcome from `run_census_sql` (gate rejection or
+execution error) now counts toward `MAX_RECOVERY_RETRIES`, alongside
+zero-row results. Live-verified twice: a genuine repeated column-naming
+error now stops at 2 attempts with an honest failure naming both errors
+(previously ran a 3rd attempt); an unrelated unquoted-identifier failure
+followed by a successful quoted retry still completes normally on retry 1,
+confirming a real self-correction isn't penalized.
+
+**Cost accepted:** none — this is strictly more conservative (tighter
+bound) than the literal exit-criteria reading, and the only reading
+consistent with rule 9's actual wording.
