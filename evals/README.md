@@ -2,38 +2,63 @@
 
 ## What this is
 
-`scenarios.py` holds **11 of the 30 golden scenarios designed in
-`docs/plans/02-prd.md` §7** — verbatim: the PRD's own IDs, its own turn
-text, its own expectations. `run_evals.py` drives them against the real
-`agent_turn` (real Anthropic, real Snowflake, real guardrail), scores the
-deterministic checks, and writes an `EvalRun` (`src/contracts.py`) to
-`results/`.
+`scenarios.py` holds **36 scenarios of two distinct provenances**, and the
+distinction is load-bearing enough that the file separates them and the
+Evals tab renders them differently:
+
+| | Count | Status | Provenance |
+|---|---|---|---|
+| **Executed** | 11 | run, results recorded | Verbatim from `docs/plans/02-prd.md` §7 — the PRD's IDs, turns, expectations |
+| **Pending** | 25 | **never run** | Authored 2026-08-06, after the system existed |
+
+`run_evals.py` drives the executed rows against the real `agent_turn` (real
+Anthropic, real Snowflake, real guardrail), scores the deterministic checks,
+and writes an `EvalRun` (`src/contracts.py`) to `results/`.
 
 ```bash
 make eval          # needs .env credentials — this is a live-call harness
 ```
 
-The Evals tab in the web UI renders `results/latest.json` directly.
+The Evals tab renders `results/latest.json` directly.
 
 ## Provenance, stated plainly
 
-The scenario *design* — all 30, across 9 categories, each grounded in a
-verified dataset fact — predates implementation. It was authored in commit
-`ef2dd43` ("Scaffold repo: recon tooling, schema notes, and PRD") during
-project scaffolding, before any agent code existed. That ordering matters:
-the test cases were not reverse-engineered from a working system.
+**The 11 executed rows.** The scenario *design* — all 30 in PRD §7, across
+9 categories, each grounded in a verified dataset fact — predates
+implementation. It was authored in commit `ef2dd43` ("Scaffold repo: recon
+tooling, schema notes, and PRD"), before any agent code existed. That
+ordering matters: those test cases were not reverse-engineered from a
+system that already passed them. The 11 here are transcriptions of that
+design, though the *checks* attached to each are mine.
 
-The *harness* and these 11 executable scenarios were written afterward, in
-the final build session. The scenarios are transcriptions, not new
-invention — but the checks attached to each one are mine, and they are
-where the judgment (and the room for bias) lives. See "How much to trust a
-100% pass rate" below.
+**The 25 pending rows.** Authored after the code existed, to cover classes
+the assignment emphasises that PRD §7 left thin: injection beyond one
+shape, malformed input, NULL and top-coded values, multi-turn drift, and a
+worst-case comparison against the 60s bound. They carry a bias risk the
+PRD rows do not — I wrote both the system and these cases — and they are
+**unverified in both directions**: never run, so neither their expected
+behaviour nor their checks have met reality. They are a specification, not
+evidence. `status="pending"` exists precisely so that cannot be blurred
+(D-018).
 
-An earlier version of this directory held 7 ad hoc scenarios I wrote
-myself that **reused PRD scenario IDs for different questions** (e.g. a
-`PM-01` that was actually closer to the PRD's `PM-02`, and a `GRD-01` that
-doesn't exist in the PRD at all). That was misleading and has been deleted
-outright rather than renamed — the current set is the real one.
+**A prior mistake, recorded because it is the kind that survives.** An
+earlier version of this directory held 7 ad hoc scenarios that **reused
+PRD ids for different questions** (a `PM-01` nearer the PRD's `PM-02`, a
+`GRD-01` absent from the PRD entirely). It looked like the golden set and
+was not. It surfaced only because someone asked directly who wrote the
+golden set. Deleted outright rather than renamed. The current id scheme
+starts above the PRD's maximum in every category, so a new row can never
+collide with a PRD one — including the 19 PRD rows still unimplemented.
+
+## Pass rate excludes pending rows
+
+`pass_rate` and `by_category` are computed from executed rows **before**
+pending ones are appended to the artifact. An unrun backlog must not move a
+real number in either direction: 25 pending scenarios dragging a genuine
+11/11 down to 11/36 would be as dishonest as hiding them. A pending row is
+serialized with `passed: false` and no checks, which means *no evidence*,
+not *failed* — the `status` field is what distinguishes them, and the UI
+renders on that, not on `passed`.
 
 ## What's implemented, and what isn't
 

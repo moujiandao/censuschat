@@ -150,6 +150,11 @@ class ScenarioCategory(str, Enum):
     UNANSWERABLE = "unanswerable"
     OFF_TOPIC = "off_topic"
     INJECTION = "injection"
+    # Added post-PRD (D-018): malformed/hostile *input shape* rather than
+    # hostile intent — empty, whitespace-only, very long, non-English,
+    # emoji-only, embedded control characters. The assignment's production
+    # bar asks that none of these crash or hang.
+    STRESS = "stress"
 
 
 class CheckType(str, Enum):
@@ -308,6 +313,12 @@ class EvalScenario(BaseModel):
     category: ScenarioCategory
     turns: list[str]                 # 1..n user turns, driven sequentially
     checks: list[Check]
+    # D-018. "pending" = authored but never executed: a specification of
+    # intended behaviour, not evidence of it. run_evals skips these and
+    # excludes them from the pass-rate denominator, so an unrun backlog can
+    # never dilute or inflate a real result. Defaulted so every pre-existing
+    # scenario stays "executed" without being touched.
+    status: Literal["pending", "executed"] = "executed"
     notes: str | None = None
 
 
@@ -324,6 +335,11 @@ class EvalResult(BaseModel):
     checks: list[CheckResult]
     answer_final: str = ""
     elapsed_s: float = 0.0
+    # D-018. Mirrors EvalScenario.status so the Evals tab can render the
+    # unrun backlog alongside real results without either being mistaken
+    # for the other. A "pending" row always has passed=False and no
+    # CheckResults — absence of evidence, not a failure.
+    status: Literal["pending", "executed"] = "executed"
 
 
 class EvalRun(BaseModel):

@@ -77,7 +77,12 @@
     display: flex;
     gap: 4px;
     border-bottom: 1px solid var(--border);
+    /* Five tabs no longer fit on a phone. Scroll the bar rather than wrap it,
+       so the active-tab underline always sits on the nav's own border. */
+    overflow-x: auto;
+    scrollbar-width: none;
   }
+  nav.tabs::-webkit-scrollbar { display: none; }
   nav.tabs button {
     background: none;
     border: none;
@@ -87,6 +92,8 @@
     cursor: pointer;
     border-bottom: 2px solid transparent;
     margin-bottom: -1px;
+    flex: 0 0 auto;
+    white-space: nowrap;
   }
   nav.tabs button.active {
     color: var(--fg);
@@ -210,6 +217,10 @@
   .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
   .badge.pass { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
   .badge.fail { background: color-mix(in srgb, var(--error) 20%, transparent); color: var(--error); }
+  /* Neither pass nor fail — authored but never executed (D-018). */
+  .badge.pending { background: color-mix(in srgb, var(--muted) 18%, transparent); color: var(--muted); }
+  .pending-row td { opacity: 0.62; }
+  .muted-cell { color: var(--muted); font-style: italic; }
   .answer-preview { color: var(--muted); font-size: 12.5px; max-width: 320px; }
   .empty-state { color: var(--muted); font-size: 13.5px; padding: 8px 4px; }
 
@@ -289,6 +300,62 @@
     background: none; color: var(--bubble-user); border: 1px solid var(--border);
     padding: 6px 12px; font-size: 12.5px; border-radius: 8px;
   }
+
+  /* Data Source panel */
+  .ds-section { margin-bottom: 28px; }
+  .ds-section h3 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted); margin: 0 0 10px; font-weight: 700;
+  }
+  .ds-section p { font-size: 13.5px; line-height: 1.55; margin: 0 0 10px; }
+  .ds-section p:last-child { margin-bottom: 0; }
+  .ds-section code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px; background: var(--card); padding: 1px 5px; border-radius: 4px;
+  }
+  .ds-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 14px;
+  }
+  .ds-note { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+
+  /* CBG key decomposition */
+  .ds-fips { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 12px; }
+  .ds-fips .seg {
+    flex: 1 1 auto; min-width: 80px; text-align: center;
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 6px; background: var(--card);
+  }
+  .ds-fips .seg .d {
+    display: block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 16px; font-weight: 600; letter-spacing: 0.08em;
+  }
+  .ds-fips .seg .l {
+    display: block; margin-top: 4px; font-size: 10.5px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .ds-fips .seg .v { display: block; font-size: 11.5px; margin-top: 2px; }
+
+  /* Reused table skin for allowlist / taxonomy / traps */
+  table.ds { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.ds th, table.ds td {
+    text-align: left; padding: 7px 10px;
+    border-bottom: 1px solid var(--border); vertical-align: top;
+  }
+  table.ds th {
+    color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase;
+  }
+  table.ds td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table.ds td.mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px; white-space: nowrap;
+  }
+  .ds-tablelist {
+    columns: 2; column-gap: 20px; margin: 0; padding: 0; list-style: none;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+  }
+  .ds-tablelist li { padding: 2px 0; break-inside: avoid; }
+  @media (max-width: 560px) { .ds-tablelist { columns: 1; } }
 </style>
 </head>
 <body>
@@ -301,6 +368,7 @@
       <button type="button" data-tab="evals">Evals</button>
       <button type="button" data-tab="flow">Flow Diagram</button>
       <button type="button" data-tab="trace">Trace Logging</button>
+      <button type="button" data-tab="datasource">Data Source</button>
     </nav>
   </header>
 
@@ -330,6 +398,223 @@
       <div class="refresh-row"><button type="button" id="trace-refresh">Refresh</button></div>
       <p class="empty-state" id="trace-empty">Send a chat message to see its trace here — one span per guardrail check, model call, and tool call, with latency and token counts. A lightweight in-app stand-in for full Langfuse tracing (see docs/reflection.md).</p>
       <div id="trace-list"></div>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-datasource">
+    <div class="scroll-area">
+
+      <div class="eval-summary">
+        <div class="eval-stat"><div class="n">31</div><div class="l">Queryable tables</div></div>
+        <div class="eval-stat"><div class="n">3,782</div><div class="l">Searchable variables</div></div>
+        <div class="eval-stat"><div class="n">242,335</div><div class="l">Block groups</div></div>
+        <div class="eval-stat"><div class="n">3,273</div><div class="l">Named geographies</div></div>
+      </div>
+
+      <div class="ds-section">
+        <h3>Where the data comes from</h3>
+        <p>
+          Every number this assistant reports is read live from Snowflake, from the
+          <code>US_CENSUS.PUBLIC</code> schema. That database was imported from a Snowflake
+          data share published by <strong>SafeGraph</strong> — their "Open Census Data" product,
+          which repackages US Census Bureau ACS and decennial releases joined at the
+          census-block-group grain. It is Census-sourced data, redistributed by SafeGraph.
+        </p>
+        <p>
+          The assistant is pinned to the <strong>2020 vintage</strong>, which is the
+          <strong>ACS 2016–2020 5-year estimates</strong>. Block-group-level ACS is only ever
+          published as a 5-year rolling estimate — the Census Bureau does not release 1-year
+          estimates for populations under roughly 65,000 — so every figure is a five-year
+          average, not a point-in-time count for 2020.
+        </p>
+        <p class="ds-note">
+          A 2019 vintage (ACS 2015–2019) also exists in the same schema but is deliberately
+          excluded. The 2020 decennial census redrew block-group boundaries, so 2019 and 2020
+          block groups are not the same physical areas and must never be compared row-to-row.
+          Restricting to one vintage makes that mistake unrepresentable.
+        </p>
+      </div>
+
+      <div class="ds-section">
+        <h3>Grain: everything is a census block group</h3>
+        <p>
+          There are no state, county, or tract tables in this database. Every demographic,
+          geometry, and metadata table has <strong>one row per census block group (CBG)</strong>,
+          keyed by <code>CENSUS_BLOCK_GROUP</code> — a fixed 12-character string. Any county or
+          state answer is computed by aggregating block groups whose key starts with the right
+          prefix.
+        </p>
+        <div class="ds-fips">
+          <div class="seg"><span class="d">42</span><span class="l">State</span><span class="v">Pennsylvania</span></div>
+          <div class="seg"><span class="d">101</span><span class="l">County</span><span class="v">Philadelphia</span></div>
+          <div class="seg"><span class="d">006500</span><span class="l">Tract</span><span class="v">&nbsp;</span></div>
+          <div class="seg"><span class="d">4</span><span class="l">Block grp</span><span class="v">&nbsp;</span></div>
+        </div>
+        <p class="ds-note">
+          Roll-up is string truncation: state = first 2 characters, county = first 5,
+          tract = first 11. Counts are summed; medians and rates cannot be summed and are
+          handled separately, because a median of medians is not a median.
+        </p>
+      </div>
+
+      <div class="ds-section">
+        <h3>Tables the assistant is allowed to query</h3>
+        <p>
+          The SQL gate rejects any query touching a table outside this list, before it reaches
+          Snowflake. 28 demographic tables plus 3 metadata tables:
+        </p>
+        <div class="ds-card">
+          <ul class="ds-tablelist">
+            <li>2020_CBG_B01</li><li>2020_CBG_B02</li><li>2020_CBG_B03</li><li>2020_CBG_B07</li>
+            <li>2020_CBG_B08</li><li>2020_CBG_B09</li><li>2020_CBG_B11</li><li>2020_CBG_B12</li>
+            <li>2020_CBG_B14</li><li>2020_CBG_B15</li><li>2020_CBG_B16</li><li>2020_CBG_B17</li>
+            <li>2020_CBG_B19</li><li>2020_CBG_B20</li><li>2020_CBG_B21</li><li>2020_CBG_B22</li>
+            <li>2020_CBG_B23</li><li>2020_CBG_B24</li><li>2020_CBG_B25</li><li>2020_CBG_B27</li>
+            <li>2020_CBG_B28</li><li>2020_CBG_B29</li><li>2020_CBG_C02</li><li>2020_CBG_C15</li>
+            <li>2020_CBG_C16</li><li>2020_CBG_C17</li><li>2020_CBG_C21</li><li>2020_CBG_C24</li>
+            <li>2020_METADATA_CBG_FIELD_DESCRIPTIONS</li>
+            <li>2020_METADATA_CBG_FIPS_CODES</li>
+            <li>2020_METADATA_CBG_GEOGRAPHIC_DATA</li>
+          </ul>
+        </div>
+        <p class="ds-note" style="margin-top:10px">
+          Deliberately excluded: <code>2019_*</code> (wrong vintage), <code>*_CBG_PATTERNS</code>
+          (SafeGraph commercial foot-traffic data, not Census), <code>*_GEOMETRY*</code> (polygon
+          shapes, nothing to answer with), <code>*_B99*</code> (imputation-rate tables — see
+          taxonomy below), and the decennial redistricting tables.
+        </p>
+      </div>
+
+      <div class="ds-section">
+        <h3>Taxonomy: 28 topic groups</h3>
+        <p>
+          Each physical table packs many ACS tables that share a topic prefix. "Variables" below
+          counts only the estimate fields indexed for search.
+        </p>
+        <table class="ds">
+          <thead>
+            <tr><th>Group</th><th>Topic</th><th class="num">ACS tables</th><th class="num">Variables</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="mono">B01</td><td>Sex by age</td><td class="num">11</td><td class="num">77</td></tr>
+            <tr><td class="mono">B02</td><td>Race</td><td class="num">7</td><td class="num">16</td></tr>
+            <tr><td class="mono">B03</td><td>Hispanic or Latino origin by race</td><td class="num">2</td><td class="num">24</td></tr>
+            <tr><td class="mono">B07</td><td>Geographic mobility / migration</td><td class="num">6</td><td class="num">80</td></tr>
+            <tr><td class="mono">B08</td><td>Commuting to work</td><td class="num">12</td><td class="num">290</td></tr>
+            <tr><td class="mono">B09</td><td>Children and household relationship</td><td class="num">5</td><td class="num">103</td></tr>
+            <tr><td class="mono">B11</td><td>Household and family type</td><td class="num">27</td><td class="num">318</td></tr>
+            <tr><td class="mono">B12</td><td>Marital status</td><td class="num">1</td><td class="num">19</td></tr>
+            <tr><td class="mono">B14</td><td>School enrollment</td><td class="num">11</td><td class="num">249</td></tr>
+            <tr><td class="mono">B15</td><td>Educational attainment</td><td class="num">4</td><td class="num">115</td></tr>
+            <tr><td class="mono">B16</td><td>Language spoken at home, English ability</td><td class="num">1</td><td class="num">67</td></tr>
+            <tr><td class="mono">B17</td><td>Poverty status</td><td class="num">4</td><td class="num">140</td></tr>
+            <tr><td class="mono">B19</td><td>Household income and earnings</td><td class="num">58</td><td class="num">222</td></tr>
+            <tr><td class="mono">B20</td><td>Earnings by sex</td><td class="num">4</td><td class="num">60</td></tr>
+            <tr><td class="mono">B21</td><td>Veteran status</td><td class="num">2</td><td class="num">55</td></tr>
+            <tr><td class="mono">B22</td><td>Food stamps / SNAP receipt</td><td class="num">1</td><td class="num">7</td></tr>
+            <tr><td class="mono">B23</td><td>Employment status</td><td class="num">9</td><td class="num">331</td></tr>
+            <tr><td class="mono">B24</td><td>Occupation, industry, class of worker</td><td class="num">1</td><td class="num">21</td></tr>
+            <tr><td class="mono">B25</td><td>Housing: tenure, value, rent, rooms, plumbing</td><td class="num">84</td><td class="num">867</td></tr>
+            <tr><td class="mono">B27</td><td>Health insurance coverage</td><td class="num">1</td><td class="num">66</td></tr>
+            <tr><td class="mono">B28</td><td>Computer and internet access</td><td class="num">19</td><td class="num">207</td></tr>
+            <tr><td class="mono">B29</td><td>Citizen voting-age population</td><td class="num">4</td><td class="num">17</td></tr>
+            <tr><td class="mono">C02</td><td>Detailed race (collapsed)</td><td class="num">1</td><td class="num">19</td></tr>
+            <tr><td class="mono">C15</td><td>Field of bachelor's degree</td><td class="num">9</td><td class="num">54</td></tr>
+            <tr><td class="mono">C16</td><td>Household language, limited-English status</td><td class="num">1</td><td class="num">14</td></tr>
+            <tr><td class="mono">C17</td><td>Ratio of income to poverty level</td><td class="num">1</td><td class="num">8</td></tr>
+            <tr><td class="mono">C21</td><td>Veteran status by poverty and disability</td><td class="num">1</td><td class="num">31</td></tr>
+            <tr><td class="mono">C24</td><td>Sex by occupation and industry</td><td class="num">11</td><td class="num">305</td></tr>
+          </tbody>
+        </table>
+        <p class="ds-note" style="margin-top:10px">
+          <code>B</code> tables are detailed; <code>C</code> tables are collapsed versions of the
+          same subject with coarser categories. This bundle carries a <em>subset</em> of the full
+          ACS catalog — for example grandparents raising grandchildren (<code>B10050</code>) and
+          unmarried-partner households (<code>B11009</code>) are simply absent, and the correct
+          answer to those questions is that the data isn't here.
+        </p>
+      </div>
+
+      <div class="ds-section">
+        <h3>How a variable is named</h3>
+        <p>
+          A column name like <code>B19013e1</code> is not arbitrary. It decomposes into the ACS
+          table number, an estimate/margin marker, and the field's position within that table.
+        </p>
+        <table class="ds">
+          <tbody>
+            <tr><td class="mono">B19013</td><td>ACS table number. Its first three characters also select the physical Snowflake table (<code>B19</code> → <code>2020_CBG_B19</code>).</td></tr>
+            <tr><td class="mono">e</td><td>Estimate. The value itself.</td></tr>
+            <tr><td class="mono">m</td><td>Margin of error — the 90% confidence half-width, stored as a separate column with an identical numeric type. Every estimate has a paired <code>m</code> sibling.</td></tr>
+            <tr><td class="mono">1</td><td>Field position within the ACS table.</td></tr>
+          </tbody>
+        </table>
+        <p style="margin-top:10px">
+          Each variable also carries a <strong>universe</strong> — the population it is counted
+          against: <code>Total population</code>, <code>Households</code>, <code>Housing units</code>,
+          <code>Workers 16 years and over</code> — 140 distinct universes across the bundle. Two
+          variables from different universes cannot be divided into a meaningful rate. Several
+          hundred block groups have people but zero households (dorms, prisons, barracks), which
+          is exactly where that mistake surfaces.
+        </p>
+      </div>
+
+      <div class="ds-section">
+        <h3>Local lookup snapshots</h3>
+        <p>
+          Variable search and geography resolution never touch Snowflake. They run against a local
+          SQLite file built ahead of time from the two metadata tables, so discovery is fast and
+          offline. At request time Snowflake is contacted exactly once, by the SQL tool.
+        </p>
+        <table class="ds">
+          <thead><tr><th>Snapshot</th><th class="num">Rows</th><th>Contents</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="mono">variables_fts</td><td class="num">3,782</td>
+              <td>SQLite FTS5 index over variable label, universe, and the full breadcrumb path. Ranked with BM25. Estimate fields only — margin-of-error fields and <code>B99*</code> imputation-rate tables are excluded, because "Allocation Of Grandparents Living With Grandchildren" is a data-quality statistic, not an answer about grandparents.</td>
+            </tr>
+            <tr>
+              <td class="mono">geography</td><td class="num">3,273</td>
+              <td>52 states and territories, 3,221 counties, with FIPS codes and county class codes. This is what turns "Travis County, Texas" into the prefix <code>48453</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="ds-section">
+        <h3>Known traps in this data</h3>
+        <table class="ds">
+          <tbody>
+            <tr>
+              <td><strong>NULL is not zero</strong></td>
+              <td>Suppressed values are stored as SQL <code>NULL</code>, not a sentinel like −666666666. Median household income is NULL for a few percent of block groups — too few households to estimate reliably. Those are reported as "not reported," never as 0.</td>
+            </tr>
+            <tr>
+              <td><strong>Top-coded values</strong></td>
+              <td>A median household income of exactly <code>250001</code> means "$250,000 or more," not $250,001. A value sitting exactly at a median column's maximum is usually a top code, not a real median.</td>
+            </tr>
+            <tr>
+              <td><strong>Margins of error are separate columns</strong></td>
+              <td>Estimates and margins have the same data type and differ by one character in the column name, so selecting the wrong one is silent.</td>
+            </tr>
+            <tr>
+              <td><strong>Universe mismatches</strong></td>
+              <td>Dividing a population count by a household count produces a number that looks fine and means nothing.</td>
+            </tr>
+            <tr>
+              <td><strong>Places aren't in the data</strong></td>
+              <td>Cities, ZIP codes, and metro areas have no clean block-group definition here. Questions about "Austin" are answered for Travis County, with the substitution stated, or declined.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="ds-note">
+        This page is a fixed description of the dataset, not a live query. Counts reflect the
+        snapshot built 2026-08-06 from the 2020 vintage. Full exploration notes, including how
+        each figure was verified against Snowflake, are in <code>docs/schema-notes.md</code>.
+      </p>
+
     </div>
   </section>
 
@@ -366,6 +651,7 @@
     evals: document.getElementById("panel-evals"),
     flow: document.getElementById("panel-flow"),
     trace: document.getElementById("panel-trace"),
+    datasource: document.getElementById("panel-datasource"),
   };
   let evalsLoaded = false;
 
@@ -393,28 +679,50 @@
 
   function renderEvalRun(run, label) {
     if (!run) return "";
-    const rows = (run.results || []).map(function (r) {
-      const badge = r.passed
-        ? '<span class="badge pass">pass</span>'
-        : '<span class="badge fail">fail</span>';
-      const checks = (r.checks || [])
-        .map(function (c) { return (c.passed ? "✓ " : "✗ ") + c.check.type; })
-        .join("<br>");
+    const all = run.results || [];
+    // A "pending" row is authored but never executed — a specification of
+    // intended behaviour, not evidence of it. It must never be confused
+    // with a pass or a fail, which is why it gets its own badge and is
+    // counted separately from the pass rate (D-018).
+    const executed = all.filter(function (r) { return r.status !== "pending"; });
+    const pending = all.filter(function (r) { return r.status === "pending"; });
+
+    const rows = all.map(function (r) {
+      const isPending = r.status === "pending";
+      const badge = isPending
+        ? '<span class="badge pending">pending</span>'
+        : (r.passed
+            ? '<span class="badge pass">pass</span>'
+            : '<span class="badge fail">fail</span>');
+      const checks = isPending
+        ? "<span class='muted-cell'>not run</span>"
+        : (r.checks || [])
+            .map(function (c) { return (c.passed ? "✓ " : "✗ ") + c.check.type; })
+            .join("<br>");
       return (
-        "<tr><td>" + escapeHtml(r.scenario_id) + "</td>" +
+        "<tr" + (isPending ? " class='pending-row'" : "") + ">" +
+        "<td>" + escapeHtml(r.scenario_id) + "</td>" +
         "<td>" + escapeHtml(r.category) + "</td>" +
         "<td>" + badge + "</td>" +
         "<td>" + checks + "</td>" +
-        "<td>" + r.elapsed_s.toFixed(1) + "s</td>" +
-        '<td class="answer-preview">' + escapeHtml((r.answer_final || "").slice(0, 140)) + "</td></tr>"
+        "<td>" + (isPending ? "—" : r.elapsed_s.toFixed(1) + "s") + "</td>" +
+        '<td class="answer-preview">' +
+          escapeHtml((r.answer_final || "").slice(0, 140)) + "</td></tr>"
       );
     }).join("");
+
+    const pendingStat = pending.length
+      ? "<div class='eval-stat'><div class='n'>" + pending.length +
+        "</div><div class='l'>pending (not run)</div></div>"
+      : "";
 
     return (
       "<h2 style='font-size:14px;margin:20px 0 8px'>" + label + "</h2>" +
       "<div class='eval-summary'>" +
-        "<div class='eval-stat'><div class='n'>" + (run.pass_rate * 100).toFixed(0) + "%</div><div class='l'>pass rate</div></div>" +
-        "<div class='eval-stat'><div class='n'>" + run.results.length + "</div><div class='l'>scenarios</div></div>" +
+        "<div class='eval-stat'><div class='n'>" + (run.pass_rate * 100).toFixed(0) + "%</div>" +
+          "<div class='l'>pass rate — executed only</div></div>" +
+        "<div class='eval-stat'><div class='n'>" + executed.length + "</div><div class='l'>executed</div></div>" +
+        pendingStat +
         "<div class='eval-stat'><div class='n'>" + escapeHtml(run.git_sha) + "</div><div class='l'>git sha</div></div>" +
       "</div>" +
       "<table class='evals'><thead><tr><th>Scenario</th><th>Category</th><th>Result</th><th>Checks</th><th>Time</th><th>Answer</th></tr></thead>" +

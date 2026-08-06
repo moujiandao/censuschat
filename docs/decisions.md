@@ -580,3 +580,116 @@ reading the Dockerfile before deploying, not by any test, and verified by
 building and running the real image (commit `ffe90ea`). A concrete
 instance of the assignment's own warning that "your local machine doesn't
 count."
+
+---
+
+## D-017 — A fifth tab, Data Source, and rule 15's tab list is descriptive (2026-08-06)
+
+**Status:** deviation from CLAUDE.md rule 15. Requested by Brian.
+
+Rule 15 reads: "Frontend is one static HTML file (vanilla JS, CDN assets
+only, no build step) with three tabs: Chat, Evals, Flow Diagram." The
+enumeration was already stale before this change — the Trace Logging tab
+shipped earlier the same day and was recorded in CHANGELOG.md but never
+flagged here as a rule-15 deviation. That was an oversight; this entry
+covers both it and the new tab.
+
+**The rule's load-bearing half is the first half.** "One static HTML file,
+vanilla JS, CDN assets only, no build step" is the real constraint — it is
+what keeps the frontend inspectable, deployable as a single `FileResponse`,
+and free of a toolchain nobody has time to maintain. The tab list is a
+statement of the minimum surface the assignment needs, not a cap. Both new
+tabs honor the binding half: no build step, no framework, no new asset.
+
+**Data Source is entirely static content.** Brian's explicit instruction
+was that it "should just be a snapshot of it," so it adds **no** endpoint,
+no `fetch`, and no JavaScript beyond one key in the existing `panels` map.
+The alternative considered and rejected was a `GET /api/datasource`
+deriving its counts live from `ALLOWED_TABLES` and `data/snapshot.sqlite3`,
+which would make drift impossible; it was rejected as unnecessary backend
+surface for a page describing a dataset that is itself pinned to one
+vintage and rebuilt rarely.
+
+**Cost accepted, and the mitigation:** hardcoded figures can drift from the
+snapshot. Every number on the page was read out of the live artifacts at
+authoring time rather than copied from prose — `ALLOWED_TABLES` (31),
+`variables_fts` (3,782 across 298 ACS table numbers, 140 universes),
+`geography` (3,273 = 52 states/territories + 3,221 counties), and the
+per-topic-group counts — and the topic labels were confirmed against real
+`variables_fts` rows rather than written from memory of the ACS catalog.
+The panel closes with an explicit "fixed description, not a live query"
+note carrying the snapshot build date, so a reader is never misled into
+thinking it reflects the current database. Two figures from
+`docs/schema-notes.md` that were verified only on the **2019** vintage (the
+462 group-quarters CBGs and the 776 top-coded income CBGs) are stated
+qualitatively rather than numerically, since the page describes 2020.
+
+**Rule 3 is not implicated.** "Never enumerate variable IDs or labels in
+any prompt" governs prompt content, to keep variable discovery a runtime
+retrieval problem. This page is UI, read by humans, and never enters a
+prompt. It enumerates *topic groups and counts*, not the variable
+catalog — the 3,782 labels remain reachable only through
+`search_census_variables`.
+
+---
+
+## D-018 — `status` and a `stress` category added to the frozen contracts (2026-08-06)
+
+**Status:** deviation from CLAUDE.md rule 12. **Approved by Brian before
+implementation**, when the alternative (a parallel untyped file) was
+presented alongside.
+
+Rule 12 makes `src/contracts.py` the interface freeze: "Signatures, field
+names, and enum members change only with a flagged, approved deviation."
+Extending the eval set to 36 scenarios needed three things the contract
+could not express:
+
+1. A way to mark a scenario **authored but never executed**. 25 of the 36
+   rows are specifications of intended behaviour, not evidence of it. With
+   no such marker they would either have to be executed (the user
+   explicitly asked that nothing be run) or hidden from the artifact
+   entirely, and a hidden backlog is how coverage gets overstated.
+2. A category for **malformed input shape** — empty, whitespace-only,
+   8k-character, non-English, emoji-only, embedded control characters.
+   `ScenarioCategory`'s nine members all describe hostile or ambiguous
+   *intent*; none describes input that is merely broken. Forcing these into
+   `off_topic` or `unanswerable` would have mislabelled them, which is the
+   exact defect the previous eval rewrite existed to fix.
+3. The same marker on `EvalResult`, so the Evals tab can render the
+   backlog beside real results without either being mistaken for the other.
+
+**Fix:** `ScenarioCategory` gains `STRESS`. `EvalScenario` and `EvalResult`
+each gain `status: Literal["pending", "executed"] = "executed"`. All three
+changes are **additive with a default**, so every pre-existing scenario,
+every recorded result, and every consumer keeps working untouched — the
+11 executed rows were not edited, and `evals/results/latest.json` was not
+regenerated.
+
+`run_evals.py` computes `pass_rate` and `by_category` from executed rows
+*before* appending pending ones, so an unrun backlog can never move a real
+number in either direction. 25 pending scenarios dragging a genuine 11/11
+down to 11/36 would be as dishonest as hiding them. Four tests in
+`tests/test_eval_scoring.py` pin this, along with id uniqueness and the
+rule that no executed row may carry the unimplemented
+`JUDGE_GROUNDEDNESS`.
+
+**Rejected alternative:** keep the pending rows in a separate
+`evals/scenarios_pending.py` as plain dicts, leaving contracts.py frozen.
+It avoids the deviation but gives up pydantic validation on exactly the
+rows most likely to contain typos (25 hand-authored entries, several with
+verified geo_ids that must not drift), and guarantees the two lists diverge
+the first time `Check` changes shape.
+
+**Cost accepted:** `contracts.py` is no longer literally frozen for the
+eval models. The mitigation is that both additions are defaulted and
+neither changes an existing field's meaning; a reader of an old
+`latest.json` sees no `status` key and the frontend treats its absence as
+"executed", which is the correct reading of a pre-D-018 artifact.
+
+**Related, not part of this deviation:** the scorer's `EXPECT_REFUSAL`
+was scoped to the **final turn** rather than the whole scenario. OT-04
+(slow off-topic drift) has two legitimate tool-using turns before the one
+that must refuse; judging the accumulated tool list would have failed
+every multi-turn refusal by construction rather than on merit.
+`GEO_RESOLVED`/`VARIABLE_RESOLVED` still use accumulated evidence, because
+MT-01 depends on that.

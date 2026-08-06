@@ -48,15 +48,35 @@ _CANNED_REFUSALS = set(_REFUSAL_MESSAGES.values())
 
 
 class Observation:
-    """What one scenario's turns actually produced, accumulated across
-    every turn in the scenario (MT-01 resolves its geography on turn 1 but
-    is judged as a whole)."""
+    """What one scenario's turns actually produced.
+
+    Two scopes, deliberately different, because different checks need
+    different ones:
+
+    - `tool_calls` accumulates across EVERY turn. GEO_RESOLVED and
+      VARIABLE_RESOLVED need this — MT-01 resolves its geography on turn 1
+      and is judged as a whole.
+    - `final_turn_tool_calls` covers only the LAST turn. EXPECT_REFUSAL
+      needs this: on a drift scenario like OT-04, turns 1-2 legitimately
+      call tools and only turn 3 must refuse. Judging that against the
+      accumulated list would fail every multi-turn refusal by construction.
+    """
 
     def __init__(self) -> None:
         self.tool_calls: list[dict] = []
+        self.final_turn_tool_calls: list[dict] = []
         self.final_answer: str = ""
         self.terminal: str | None = None
         self.errored: bool = False
+
+    def start_turn(self) -> None:
+        """Called before each turn — resets the per-turn view while leaving
+        the accumulated one intact."""
+        self.final_turn_tool_calls = []
+
+    def record_tool_call(self, call: dict) -> None:
+        self.tool_calls.append(call)
+        self.final_turn_tool_calls.append(call)
 
     @property
     def tool_evidence(self) -> str:
@@ -81,6 +101,7 @@ async def _run_scenario(scenario: EvalScenario) -> tuple[Observation, float]:
     for turn in scenario.turns:
         text_parts: list[str] = []
         pending_tool: dict | None = None
+        obs.start_turn()
         async for event in agent_turn(session_id, turn):
             if event.type == EventType.TOKEN:
                 text_parts.append(event.data.get("text", ""))
@@ -93,7 +114,7 @@ async def _run_scenario(scenario: EvalScenario) -> tuple[Observation, float]:
                 call = pending_tool or {"tool": event.data.get("tool"), "args": ""}
                 call["ok"] = bool(event.data.get("ok"))
                 call["summary"] = event.data.get("summary", {})
-                obs.tool_calls.append(call)
+                obs.record_tool_call(call)
                 pending_tool = None
             elif event.type in (EventType.DONE, EventType.ERROR):
                 obs.terminal = event.type.value
@@ -139,14 +160,22 @@ def _score_check(check: Check, obs: Observation) -> CheckResult:
         # mechanism is recorded rather than glossed — a canned message from
         # _REFUSAL_MESSAGES means the guardrail fired; anything else means
         # the model self-refused.
-        passed = len(obs.tool_calls) == 0 and obs.terminal == "done"
+        # Scoped to the FINAL turn, not the whole scenario: a drift case
+        # (OT-04) has two legitimate tool-using turns before the one that
+        # must refuse, and judging the accumulated list would fail it by
+        # construction rather than on merit.
+        passed = len(obs.final_turn_tool_calls) == 0 and obs.terminal == "done"
         mechanism = (
             "guardrail" if obs.final_answer in _CANNED_REFUSALS else "model self-refused"
         )
         return CheckResult(
             check=check,
             passed=passed,
-            observed=f"{len(obs.tool_calls)} tool calls, via {mechanism}; {obs.final_answer[:120]}",
+            observed=(
+                f"{len(obs.final_turn_tool_calls)} tool calls on final turn "
+                f"({len(obs.tool_calls)} across scenario), via {mechanism}; "
+                f"{obs.final_answer[:100]}"
+            ),
         )
 
     if check.type == CheckType.EXPECT_CLARIFYING_QUESTION:
@@ -184,8 +213,11 @@ def _git_sha() -> str:
 async def main() -> int:
     from evals.scenarios import GOLDEN_SCENARIOS
 
+    executed = [s for s in GOLDEN_SCENARIOS if s.status == "executed"]
+    pending = [s for s in GOLDEN_SCENARIOS if s.status == "pending"]
+
     results: list[EvalResult] = []
-    for scenario in GOLDEN_SCENARIOS:
+    for scenario in executed:
         print(f"running {scenario.id} ({scenario.category.value})…", flush=True)
         try:
             obs, elapsed = await _run_scenario(scenario)
@@ -221,15 +253,39 @@ async def main() -> int:
         mark = "PASS" if passed else "FAIL"
         print(f"  {mark} ({elapsed:.1f}s)", flush=True)
 
+    # Pass rate and by-category are computed from EXECUTED rows only, before
+    # pending rows are appended. An unrun backlog must never move a real
+    # number in either direction — 25 pending scenarios dragging a genuine
+    # 11/11 down to 11/36 would be as dishonest as hiding them entirely.
     by_category: dict[str, list[bool]] = {}
     for r in results:
         by_category.setdefault(r.category.value, []).append(r.passed)
+
+    n_executed = len(results)
+    n_passed = sum(1 for r in results if r.passed)
+    pass_rate = n_passed / n_executed if n_executed else 0.0
+
+    # Appended AFTER the denominators are fixed, purely so the Evals tab can
+    # show the backlog. passed=False here means "no evidence", not "failed";
+    # the status field is what distinguishes them and the UI renders on that.
+    results = results + [
+        EvalResult(
+            scenario_id=s.id,
+            category=s.category,
+            passed=False,
+            checks=[],
+            answer_final="",
+            elapsed_s=0.0,
+            status="pending",
+        )
+        for s in pending
+    ]
 
     run = EvalRun(
         run_at=datetime.now(timezone.utc),
         git_sha=_git_sha(),
         results=results,
-        pass_rate=sum(1 for r in results if r.passed) / len(results) if results else 0.0,
+        pass_rate=pass_rate,
         by_category={k: sum(v) / len(v) for k, v in by_category.items()},
     )
 
@@ -239,10 +295,10 @@ async def main() -> int:
     (RESULTS_DIR / f"{stamp}.json").write_text(json.dumps(payload, indent=2))
     (RESULTS_DIR / "latest.json").write_text(json.dumps(payload, indent=2))
 
-    n_passed = sum(1 for r in results if r.passed)
-    print(f"\n{n_passed}/{len(results)} passed ({run.pass_rate:.0%})")
+    print(f"\n{n_passed}/{n_executed} executed passed ({pass_rate:.0%})"
+          f" — {len(pending)} pending, excluded from the denominator")
     for r in results:
-        if not r.passed:
+        if r.status == "executed" and not r.passed:
             failed = [c.check.type.value for c in r.checks if not c.passed]
             print(f"  RED  {r.scenario_id:8s} {', '.join(failed)}")
     print(f"wrote evals/results/{stamp}.json and latest.json")
