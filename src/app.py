@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, StreamingResponse
@@ -111,6 +112,34 @@ async def health() -> dict:
     # boot-time-cached Snowflake result) — off the event loop, same as
     # agent_turn's tool calls and session-store I/O.
     return await asyncio.to_thread(health_report)
+
+
+_EVALS_RESULTS_DIR = Path("evals/results")
+
+
+def _load_evals() -> dict:
+    """The Evals tab renders latest vs. previous EvalRun directly (per
+    docs/01-architecture.md) — evals/results/latest.json is always the
+    most recent run; the second-most-recent timestamped file (everything
+    in the directory except latest.json itself) is "previous", or None on
+    a repo with only one run on record."""
+    latest_path = _EVALS_RESULTS_DIR / "latest.json"
+    if not latest_path.exists():
+        return {"latest": None, "previous": None}
+
+    latest = json.loads(latest_path.read_text())
+    timestamped = sorted(
+        p for p in _EVALS_RESULTS_DIR.glob("*.json") if p.name != "latest.json"
+    )
+    previous = json.loads(timestamped[-2].read_text()) if len(timestamped) >= 2 else None
+    return {"latest": latest, "previous": previous}
+
+
+@app.get("/api/evals")
+async def evals() -> dict:
+    # File I/O only (no Snowflake) — off the event loop for consistency
+    # with every other blocking call in this app, even though it's cheap.
+    return await asyncio.to_thread(_load_evals)
 
 
 @app.post("/api/chat")

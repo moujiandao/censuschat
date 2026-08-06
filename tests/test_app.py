@@ -177,3 +177,42 @@ def test_startup_with_healthy_snapshot_does_not_crash(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_evals_endpoint_returns_none_when_no_results_exist(tmp_path, monkeypatch):
+    monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
+    response = client.get("/api/evals")
+    assert response.status_code == 200
+    assert response.json() == {"latest": None, "previous": None}
+
+
+def test_evals_endpoint_returns_latest_run(tmp_path, monkeypatch):
+    monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
+    run = {"run_at": "2026-08-06T00:00:00Z", "git_sha": "abc123", "results": [], "pass_rate": 1.0, "by_category": {}}
+    (tmp_path / "latest.json").write_text(json.dumps(run))
+
+    response = client.get("/api/evals")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["latest"]["git_sha"] == "abc123"
+    assert body["previous"] is None
+
+
+def test_evals_endpoint_returns_previous_run_when_two_distinct_runs_exist(tmp_path, monkeypatch):
+    """latest.json always mirrors the newest timestamped file (that's the
+    invariant evals/build_run_from_manual.py maintains), so distinguishing
+    "one run ever" from "a real previous run" requires two *distinct*
+    timestamped files, not just one alongside latest.json."""
+    monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
+    older = {"run_at": "2026-08-05T00:00:00Z", "git_sha": "old111", "results": [], "pass_rate": 0.5, "by_category": {}}
+    newer = {"run_at": "2026-08-06T00:00:00Z", "git_sha": "new222", "results": [], "pass_rate": 0.9, "by_category": {}}
+    (tmp_path / "20260805T000000Z.json").write_text(json.dumps(older))
+    (tmp_path / "20260806T000000Z.json").write_text(json.dumps(newer))
+    (tmp_path / "latest.json").write_text(json.dumps(newer))
+
+    response = client.get("/api/evals")
+
+    body = response.json()
+    assert body["latest"]["git_sha"] == "new222"
+    assert body["previous"]["git_sha"] == "old111"

@@ -114,8 +114,9 @@ eval harness would have added and why it was cut for time.
 
 See `docs/reflection.md` for the full account. Short version: a working,
 tested, deployed core loop (agent, guardrail, bounded recovery, ambiguity
-handling, degraded mode, a real chat UI) took priority over the
-decennial-redistricting data source, Langfuse tracing, and a fully
-automated 30-scenario eval harness with an LLM judge — all real, all
-scoped and partly designed (see the closed-out GitHub issues), none
-finished.
+handling, degraded mode, a chat UI with Chat/Evals/Flow Diagram tabs) took
+priority over the decennial-redistricting data source, Langfuse tracing,
+and a fully automated 30-scenario eval harness with an LLM judge — all
+real, all scoped and partly designed (see the closed-out GitHub issues),
+none finished. The Evals tab renders a real run, but one built from a
+small manual scenario set (`evals/`), not the full harness.
