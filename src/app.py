@@ -31,7 +31,7 @@ from src.agent import agent_turn
 from src.contracts import ChatEvent, EventType, SnapshotError
 from src.health import check_snowflake_reachability, health_report
 from src.snapshot import build_snapshot
-from src.tracing import get_traces
+from src.tracing import get_traces, list_recent_sessions
 
 logger = logging.getLogger(__name__)
 
@@ -227,12 +227,29 @@ async def evals() -> dict:
 
 @app.get("/api/traces")
 async def traces(session_id: str) -> dict:
-    """Trace Logging tab (src/tracing.py, a lightweight stand-in for the
-    full Langfuse integration in issue #18 — see docs/reflection.md).
-    In-memory, non-blocking read — no asyncio.to_thread needed, unlike
-    /api/health and /api/evals, since this never touches the filesystem
-    or Snowflake."""
-    return {"traces": [json.loads(t.model_dump_json()) for t in get_traces(session_id)]}
+    """Trace Logging + Turn Detail tabs (src/tracing.py, a lightweight
+    stand-in for the full Langfuse integration in issue #18 — see
+    docs/reflection.md).
+
+    Runs on a worker thread: since D-023 this reads SQLite on the mounted
+    volume rather than a process dict, so it touches the filesystem and must
+    not block the event loop — same treatment as /api/health and /api/evals.
+    """
+    records = await asyncio.to_thread(get_traces, session_id)
+    return {"traces": [json.loads(t.model_dump_json()) for t in records]}
+
+
+@app.get("/api/trace-sessions")
+async def trace_sessions() -> dict:
+    """Every session with recorded history, newest first.
+
+    This is what makes history from *previous visits* reachable. `session_id`
+    lives in the browser's localStorage, so without this endpoint a reviewer
+    who opens a private window — or a different machine — can see only the
+    session they are currently in, even though the traces are all durably
+    on disk (D-023).
+    """
+    return {"sessions": await asyncio.to_thread(list_recent_sessions)}
 
 
 @app.post("/api/chat")

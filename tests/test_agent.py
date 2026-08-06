@@ -277,13 +277,13 @@ def test_tool_end_events_carry_a_result_summary(monkeypatch):
     assert tool_ends[1].data["summary"]["error"] == "table not allowed"
 
 
-def test_allow_verdict_records_a_trace_with_guardrail_model_and_tool_spans(monkeypatch):
+def test_allow_verdict_records_a_trace_with_guardrail_model_and_tool_spans(monkeypatch, tmp_path):
     """Wiring test for src/tracing.py (Trace Logging tab): exercises the
     real agent_turn body, not the tracing module in isolation, to prove
     spans actually get recorded through the real call sites — guardrail,
     each model call, each tool call — not just that record_turn_trace
     itself works when called directly."""
-    monkeypatch.setattr(tracing, "_traces", defaultdict(list))
+    monkeypatch.setattr(tracing, "TRACE_DB_PATH", tmp_path / "traces.sqlite3")
     monkeypatch.setattr(
         agent,
         "classify_input",
@@ -315,11 +315,11 @@ def test_allow_verdict_records_a_trace_with_guardrail_model_and_tool_spans(monke
     assert traces[0].spans[2].ok is True
 
 
-def test_refuse_verdict_still_records_a_trace(monkeypatch):
+def test_refuse_verdict_still_records_a_trace(monkeypatch, tmp_path):
     """Every exit point must record a trace, not just the normal
     completion path — the Trace Logging tab should show a refused turn
     too, not silently drop it."""
-    monkeypatch.setattr(tracing, "_traces", defaultdict(list))
+    monkeypatch.setattr(tracing, "TRACE_DB_PATH", tmp_path / "traces.sqlite3")
     monkeypatch.setattr(
         agent,
         "classify_input",

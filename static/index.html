@@ -331,10 +331,27 @@
   table.trace-spans th, table.trace-spans td { text-align: left; padding: 7px 14px; border-top: 1px solid var(--border); vertical-align: top; }
   table.trace-spans th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }
   table.trace-spans code { font-size: 11.5px; background: var(--card); padding: 1px 5px; border-radius: 4px; }
-  .refresh-row { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+  .refresh-row {
+    display: flex; justify-content: flex-end; align-items: center;
+    gap: 8px; margin-bottom: 10px;
+  }
   .refresh-row button {
     background: none; color: var(--bubble-user); border: 1px solid var(--border);
     padding: 6px 12px; font-size: 12.5px; border-radius: 8px;
+  }
+  .refresh-row label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted); margin-right: -2px;
+  }
+  .refresh-row select {
+    background: none; color: var(--bubble-user); border: 1px solid var(--border);
+    padding: 6px 10px; font-size: 12.5px; border-radius: 8px;
+    max-width: 340px;
+  }
+  /* Total for a replayed turn — the live path shows timing per step as it
+     streams, so this only appears on history. */
+  .flow-total {
+    margin: 8px 0 0; font-size: 11.5px; color: var(--muted);
   }
 
   /* Data Source panel */
@@ -424,14 +441,25 @@
   </section>
 
   <section class="panel" id="panel-flow">
-    <div class="scroll-area" id="flow-content">
-      <p class="empty-state">Send a chat message to see its flow through the agent here — guardrail decision, each tool call, and timing.</p>
+    <div class="scroll-area">
+      <div class="refresh-row">
+        <label for="flow-session">History</label>
+        <select id="flow-session"></select>
+        <button type="button" id="flow-refresh">Refresh</button>
+      </div>
+      <div id="flow-content">
+        <p class="empty-state">Send a chat message to see its flow through the agent here — guardrail decision, each tool call, and timing. Past turns are kept, including from earlier visits.</p>
+      </div>
     </div>
   </section>
 
   <section class="panel" id="panel-trace">
     <div class="scroll-area" id="trace-content">
-      <div class="refresh-row"><button type="button" id="trace-refresh">Refresh</button></div>
+      <div class="refresh-row">
+        <label for="trace-session">History</label>
+        <select id="trace-session"></select>
+        <button type="button" id="trace-refresh">Refresh</button>
+      </div>
       <p class="empty-state" id="trace-empty">Send a chat message to see its trace here — one span per guardrail check, model call, and tool call, with latency and token counts. A lightweight in-app stand-in for full Langfuse tracing (see docs/reflection.md).</p>
       <div id="trace-list"></div>
     </div>
@@ -1007,6 +1035,88 @@
   // ---------- Turn Detail tab ----------
   let turnCounter = 0;
 
+  /** Rebuilds one stored turn into the same DOM the live stream produces.
+   *
+   * Spans carry everything the live path renders — a tool span's meta holds
+   * `args_preview` plus the result summary spread alongside it — so a
+   * replayed turn is not a degraded summary of a live one, it is the same
+   * view. The only thing missing is the streamed answer text, which lives
+   * in the chat log rather than here.
+   */
+  function renderStoredTurn(trace, number) {
+    const wrap = document.createElement("div");
+    wrap.className = "flow-turn";
+
+    const title = document.createElement("h3");
+    title.textContent = "Turn " + number + ": " + trace.user_message;
+    wrap.appendChild(title);
+
+    const steps = document.createElement("ul");
+    steps.className = "flow-steps";
+    wrap.appendChild(steps);
+
+    (trace.spans || []).forEach(function (span) {
+      const meta = span.meta || {};
+      const isTool = span.name.indexOf("tool:") === 0;
+      const tool = isTool ? span.name.slice(5) : null;
+      const label = (isTool ? tool : span.name) + (span.ok ? " — ok" : " — failed");
+
+      const li = addFlowStep(steps, label, span.ok ? "ok" : "fail");
+      const ms = document.createElement("span");
+      ms.className = "ms";
+      ms.textContent = span.latency_ms + "ms";
+      li.querySelector(".head").appendChild(ms);
+
+      if (isTool) {
+        const args = meta.args_preview ? describeArgs(tool, meta.args_preview) : [];
+        setFlowDetail(li, args.concat(describeResult(tool, meta)));
+      } else {
+        // guardrail / model_call_N — show whatever the span recorded, minus
+        // the noisy preview blob, so token counts and verdicts stay visible.
+        setFlowDetail(li, Object.keys(meta)
+          .filter(function (k) { return k !== "args_preview"; })
+          .map(function (k) {
+            const v = meta[k];
+            return [k, typeof v === "object" ? JSON.stringify(v) : String(v)];
+          }));
+      }
+    });
+
+    const total = document.createElement("p");
+    total.className = "flow-total";
+    total.textContent = "total " + trace.total_ms + "ms";
+    wrap.appendChild(total);
+    return wrap;
+  }
+
+  /** Loads stored history into Turn Detail. Newest turn first, matching the
+   *  live path, which prepends. */
+  async function hydrateTurnDetail() {
+    let items = [];
+    try {
+      const res = await fetch("/api/traces?session_id=" + encodeURIComponent(historySessionId));
+      items = (await res.json()).traces || [];
+    } catch (e) {
+      flowContentEl.innerHTML =
+        '<p class="empty-state">Couldn\'t load turn history.</p>';
+      return;
+    }
+
+    flowContentEl.innerHTML = "";
+    if (!items.length) {
+      flowContentEl.innerHTML =
+        '<p class="empty-state">No turns recorded for this session yet.</p>';
+      turnCounter = 0;
+      return;
+    }
+    // Number turns in the order they happened, then show newest first.
+    items.forEach(function (trace, i) {
+      flowContentEl.prepend(renderStoredTurn(trace, i + 1));
+    });
+    // A new live turn continues the count rather than restarting at 1.
+    turnCounter = items.length;
+  }
+
   function startFlowTurn(message) {
     turnCounter += 1;
     if (flowContentEl.querySelector(".empty-state")) {
@@ -1134,7 +1244,7 @@
 
   async function loadTraces() {
     try {
-      const res = await fetch("/api/traces?session_id=" + encodeURIComponent(sessionId));
+      const res = await fetch("/api/traces?session_id=" + encodeURIComponent(historySessionId));
       const data = await res.json();
       const items = data.traces || [];
       if (!items.length) {
@@ -1154,7 +1264,74 @@
     }
   }
 
-  traceRefreshBtn.addEventListener("click", loadTraces);
+  // ---------- History (D-023) ----------
+  // Traces are durable on the server, so both technical tabs can show turns
+  // from earlier visits — including from before the last deploy. Which
+  // session is being *viewed* is separate from which session new messages
+  // join: sending a message always uses sessionId, never this.
+  let historySessionId = sessionId;
+
+  const flowSessionEl = document.getElementById("flow-session");
+  const traceSessionEl = document.getElementById("trace-session");
+  const flowRefreshBtn = document.getElementById("flow-refresh");
+
+  function labelForSession(s) {
+    const mine = s.session_id === sessionId ? "This session" : "Earlier session";
+    const msg = (s.last_message || "").slice(0, 44);
+    return mine + " · " + s.turns + " turn" + (s.turns === 1 ? "" : "s") +
+           (msg ? " · " + msg : "");
+  }
+
+  /** Fills both pickers from the durable store, keeping them in lockstep. */
+  async function loadSessionPickers() {
+    let sessions = [];
+    try {
+      const res = await fetch("/api/trace-sessions");
+      sessions = (await res.json()).sessions || [];
+    } catch (e) {
+      // A picker that won't load must not take the tabs down with it; the
+      // current session still renders from /api/traces below.
+      sessions = [];
+    }
+    // The current session may have no recorded turns yet — it still belongs
+    // in the list, so selecting it is always possible.
+    if (!sessions.some(function (s) { return s.session_id === sessionId; })) {
+      sessions.unshift({ session_id: sessionId, turns: 0, last_message: "" });
+    }
+    [flowSessionEl, traceSessionEl].forEach(function (sel) {
+      sel.innerHTML = "";
+      sessions.forEach(function (s) {
+        const opt = document.createElement("option");
+        opt.value = s.session_id;
+        opt.textContent = labelForSession(s);
+        sel.appendChild(opt);
+      });
+      sel.value = historySessionId;
+    });
+  }
+
+  async function selectHistorySession(id) {
+    historySessionId = id;
+    flowSessionEl.value = id;
+    traceSessionEl.value = id;
+    await Promise.all([hydrateTurnDetail(), loadTraces()]);
+  }
+
+  flowSessionEl.addEventListener("change", function () {
+    selectHistorySession(flowSessionEl.value);
+  });
+  traceSessionEl.addEventListener("change", function () {
+    selectHistorySession(traceSessionEl.value);
+  });
+
+  flowRefreshBtn.addEventListener("click", async function () {
+    await loadSessionPickers();
+    await hydrateTurnDetail();
+  });
+  traceRefreshBtn.addEventListener("click", async function () {
+    await loadSessionPickers();
+    await loadTraces();
+  });
 
   // ---------- Chat ----------
   function addRow(role) {
@@ -1213,6 +1390,12 @@
   }
 
   async function sendMessage(message) {
+    // A new turn belongs to THIS session. If the technical tabs are parked
+    // on an earlier session's history, snap them back first — otherwise the
+    // live turn would prepend into a history it isn't part of.
+    if (historySessionId !== sessionId) {
+      await selectHistorySession(sessionId);
+    }
     addRow("user").textContent = message;
     const assistantBubble = addRow("assistant");
     setPending(assistantBubble, "Thinking");
@@ -1368,7 +1551,10 @@
       inputEl.focus();
       // Refresh in the background so the Trace Logging tab is current
       // whenever the user next opens it, without waiting on this turn.
+      // The picker refreshes too, so this session's turn count stays right
+      // and a brand-new session appears in the list after its first turn.
       loadTraces();
+      loadSessionPickers();
     }
   }
 
@@ -1381,6 +1567,10 @@
   });
 
   checkHealth();
+  // Turn history is durable (D-023), so both technical tabs start populated
+  // rather than empty — a reload, or a redeploy, no longer erases what you
+  // were looking at.
+  loadSessionPickers().then(hydrateTurnDetail);
   inputEl.focus();
 })();
 </script>

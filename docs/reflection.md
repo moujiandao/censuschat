@@ -25,7 +25,7 @@ them.
 It also cost me. I reached hour 20 with a fully tested backend and no web
 page, which is a hard requirement. See section 2.
 
-Everything deterministic was built test-first. 356 tests now, 175 of them on
+Everything deterministic was built test-first. 375 tests now, 175 of them on
 the SQL gate alone.
 
 ### How I used Claude Code
@@ -176,7 +176,7 @@ wrong, things my evals cannot see, and things that would break under real
 traffic. The middle group is the one I would read first if I were reviewing
 this, because a limitation you cannot measure is worse than one you can.
 
-### 3a. Wrong answers the system can still produce
+### 3a. Answers the system gets wrong, or cannot give at all
 
 - **Top-coded values reach the user as precise figures.** 776 block groups
   report `B19013e1 = 250001`, which is the Census code for "$250,000 or more",
@@ -203,11 +203,74 @@ this, because a limitation you cannot measure is worse than one you can.
   and were dropped rather than given an invented naming policy (D-012). Asking
   about Guam returns zero candidates. Honest, but the gap is invisible to the
   user.
-- **2020 only.** The allowlist covers 2020 tables (D-003), because block groups
-  were redrawn for 2020 and the 5-year windows overlap 4 of 5 years, so a
-  comparison against 2019 is statistically invalid. I stand by enforcing that at
-  the gate, but "how did this change since 2019" is a reasonable question this
-  system structurally cannot answer.
+
+#### 2020 only, and why I would not widen it
+
+The allowlist covers only the 2020 tables (D-003), so "how did this change
+since 2019" is a reasonable question this system structurally cannot answer. It
+is the limitation a reviewer is most likely to read as laziness, so it is worth
+being specific about why more coverage is not better here.
+
+**"All the years" is one more vintage, not a decade.** The share holds exactly
+two releases. That is the entire time dimension available.
+
+| | 2019 tables | 2020 tables |
+|---|---|---|
+| Actually contains | ACS **2015–2019** 5-year estimates | ACS **2016–2020** 5-year estimates |
+| Block groups | 220,333 | 242,335 |
+
+**The two overlap in four of their five years.** 2015–2019 against 2016–2020
+share 2016, 2017, 2018 and 2019. They are not two independent measurements of
+two moments; they are largely the same survey responses re-averaged. On top of
+that, the 2020 decennial **redrew block group boundaries**, which is why the
+row counts differ by 22,000. Block group codes are not stable across vintages,
+so the two cannot be joined or differenced at the grain this entire system is
+built on.
+
+Put together: adding the 2019 tables would **not** make "how did X change since
+2019" answerable. The honest answer to that question stays an explanation
+either way. I would double the corpus and gain no new answerable question.
+
+**And it would cost three things I currently have.**
+
+1. *Retrieval gets worse.* Variable ids are identical across vintages:
+   `B19013e1` exists in both, with near-identical labels. Every search would
+   return two plausible hits differing only by which table they live in. That
+   is precisely the failure that got margin-of-error rows excluded from the
+   search corpus (D-008), where a plausible-looking wrong variable is worse
+   than no hit at all.
+2. *It adds a silent wrong-number path.* A query mixing vintages returns a
+   number, with no error and nothing that looks wrong. Every other failure in
+   this system is loud. Section 1 defends encoding exactly this class of trap
+   as data rather than prompt text, and this would add one straight back.
+3. *Enforcement would move from code to prompt.* Today a cross-vintage query is
+   not merely discouraged, it is **unrepresentable**: the 2019 tables are not in
+   the allowlist, so no SQL can name them. The trust boundary makes the invalid
+   query impossible. Allow both vintages and the only thing standing between a
+   user and an invalid comparison is an instruction the model may ignore.
+
+**It is not an effort argument.** Adding them is not destructive (the allowlist
+is additive, and the snapshot builder writes to a temp file and atomically
+renames, so a failed rebuild cannot corrupt the existing one) and not slow
+(perhaps 2 to 4 hours done properly). I am not skipping it because it is hard.
+I am skipping it because it trades a guarantee enforced in code for no new
+answerable question.
+
+**If it were ever needed, the choice is not binary.** Both vintages could be
+allowed while still making the invalid comparison impossible in code, by adding
+a gate rule that rejects any single statement referencing tables from two
+different vintages. That is the same shape as the existing CTE-scope check:
+deterministic, testable, and enforced at the boundary rather than in prose. It
+would also need a vintage field on `VariableHit` so retrieval disambiguates
+rather than the model guessing.
+
+**The better spend for the same goal** is the decennial tables I cut (D-004).
+If the point is demonstrating that the agent handles more than one source, that
+gives a genuinely *independent* second source, where "population of Travis
+County" has two defensible answers the agent must surface and explain. That is
+the assignment's conflicting-question requirement, which currently has no
+coverage at all. A second ACS vintage gives a second source that is mostly the
+same data and cannot be validly compared to the first.
 
 ### 3b. What my evals cannot see
 
@@ -295,7 +358,7 @@ works" is "partly, and here is exactly which part."
 
 ### What I test, and what I deliberately don't
 
-356 tests, written test-first, on every layer where being wrong is either a
+375 tests, written test-first, on every layer where being wrong is either a
 security hole or a silently wrong number: the SQL gate (175 on its own),
 guardrail routing and both fail-open paths, recovery counting, the ambiguity
 backstop, the watchdog against a faked clock rather than real sleeps, degraded
@@ -426,3 +489,38 @@ nothing must not produce a file that looks like a catastrophic regression.
    red. A check that has never failed has not been tested. The grounding check
    above is the proof: it had never been seen to fail correctly, and its first
    two failures were both its own.
+
+---
+
+<!-- BEGIN id-reference (generated by scripts/build_id_reference.py) -->
+
+## What the ids on this page mean
+
+Eval scenarios. **live** runs today, so the question shown is the one
+`make eval` actually asks. **designed** was specified but never built.
+**retired** existed once and was deleted.
+
+| id | status | question |
+|---|---|---|
+| `CMP-01` | live | "More people: Travis County TX or Fulton County GA?" |
+| `DF-05` | live | "What is the total population of Wyoming?" |
+| `PM-02` | live | "Median household income in California?" |
+| `PM-08` | live | "What's the average household income in Texas?" |
+| `UN-08` | live | "What's the population of Atlantis?" |
+
+Decisions, recorded in full in [`docs/decisions.md`](decisions.md).
+
+| id | decision |
+|---|---|
+| `D-002` | Two architecture §7 eval exemplars are void |
+| `D-003` | `ALLOWED_TABLES` is 2020-vintage only |
+| `D-004` | Decennial redistricting tables included, phased to M3 |
+| `D-008` | Variable search indexes estimate fields only |
+| `D-012` | Two `2020_METADATA_CBG_FIPS_CODES` shape corrections found via live build |
+| `D-015` | Snowflake reachability checked once at startup, not live per-request |
+| `D-019` | Splitting `off_topic`, because it was doing two jobs |
+| `D-020` | FTS falls back to token-OR only when token-AND finds nothing |
+| `D-021` | Langfuse cut; the span model shipped in-process |
+| `D-022` | The unrun backlog is deleted; the set is 14 examples that all ran |
+
+<!-- END id-reference -->

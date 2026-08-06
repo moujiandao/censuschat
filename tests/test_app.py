@@ -365,13 +365,12 @@ def test_traces_endpoint_returns_empty_list_for_unknown_session():
     assert response.json() == {"traces": []}
 
 
-def test_traces_endpoint_returns_recorded_traces(monkeypatch):
-    from collections import defaultdict
+def test_traces_endpoint_returns_recorded_traces(monkeypatch, tmp_path):
     from datetime import datetime, timezone
 
     from src.tracing import TraceSpan, TurnTrace, record_turn_trace
 
-    monkeypatch.setattr("src.tracing._traces", defaultdict(list))
+    monkeypatch.setattr("src.tracing.TRACE_DB_PATH", tmp_path / "traces.sqlite3")
     record_turn_trace(
         TurnTrace(
             session_id="s-with-traces",
@@ -394,3 +393,48 @@ def test_traces_endpoint_returns_recorded_traces(monkeypatch):
 def test_traces_endpoint_requires_session_id_query_param():
     response = client.get("/api/traces")
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# /api/trace-sessions — history from previous visits (D-023)
+# ---------------------------------------------------------------------------
+
+def test_trace_sessions_empty_when_nothing_recorded(monkeypatch, tmp_path):
+    monkeypatch.setattr("src.tracing.TRACE_DB_PATH", tmp_path / "traces.sqlite3")
+    response = client.get("/api/trace-sessions")
+    assert response.status_code == 200
+    assert response.json() == {"sessions": []}
+
+
+def test_trace_sessions_lists_sessions_newest_first(monkeypatch, tmp_path):
+    from datetime import datetime, timezone
+
+    from src.tracing import TurnTrace, record_turn_trace
+
+    monkeypatch.setattr("src.tracing.TRACE_DB_PATH", tmp_path / "traces.sqlite3")
+    for sid, msg in [("s-old", "older question"), ("s-new", "newer question")]:
+        record_turn_trace(
+            TurnTrace(
+                session_id=sid,
+                user_message=msg,
+                started_at=datetime.now(timezone.utc),
+                total_ms=10,
+                spans=[],
+            )
+        )
+
+    sessions = client.get("/api/trace-sessions").json()["sessions"]
+    assert [s["session_id"] for s in sessions] == ["s-new", "s-old"]
+    assert sessions[0]["last_message"] == "newer question"
+    assert sessions[0]["turns"] == 1
+
+
+def test_trace_sessions_survives_a_broken_store(monkeypatch):
+    """Losing history is a degradation; a 500 on the tab would be an outage."""
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated disk failure")
+
+    monkeypatch.setattr("src.tracing._connect", _boom)
+    response = client.get("/api/trace-sessions")
+    assert response.status_code == 200
+    assert response.json() == {"sessions": []}

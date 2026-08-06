@@ -1,11 +1,20 @@
-.PHONY: test eval deploy deploy-status
+.PHONY: test eval docs deploy deploy-status
 
 test:
 	pytest -q
 
 # Live-call harness: real Anthropic + real Snowflake. Needs .env.
+# --repeat N runs the set N times: with a live model one run is a sample, not
+# a measurement, and the Evals tab shows the ratio per commit.
 eval:
 	python -m evals.run_evals
+
+# Rewrites the "What the ids on this page mean" table at the bottom of each
+# doc, so a bare `DF-05` or `D-020` resolves without opening two other files.
+# tests/test_id_reference.py fails if a doc is stale, so this is not something
+# you have to remember.
+docs:
+	python -m scripts.build_id_reference
 
 # One-command deploy from the laptop: push main, then have the EC2 host pull
 # and rebuild. `static/` and `evals/` are COPY'd into the image, so a pull
