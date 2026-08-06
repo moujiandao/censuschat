@@ -17,7 +17,6 @@ __pycache__/
 # Playwright MCP browser-test scratch output — not part of the repo
 .playwright-mcp/
 
-# Local scratch renders of the solutions write-up. docs/flow-diagram.html IS
-# tracked; these two are generated output, not source.
-docs/solutions.html
-docs/solutions.pdf
+# NOTE: docs/solutions.html and docs/solutions.pdf are deliberately NOT ignored.
+# The PDF is a submission deliverable, and the HTML is its source — a reviewer
+# cloning the repo should get both without needing to render anything.

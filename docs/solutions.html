@@ -1,0 +1,1179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>censuschat — how it actually works</title>
+<style>
+  @page { size: letter; margin: 20mm 24mm 18mm 24mm; }
+
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    font-family: "Charter", "Iowan Old Style", Georgia, serif;
+    font-size: 11.5pt;
+    line-height: 1.62;
+    color: #16191d;
+    margin: 0;
+  }
+
+  h1 { font-size: 22pt; line-height: 1.15; margin: 0 0 5pt; letter-spacing: -0.01em; }
+
+  h2 {
+    font-size: 16pt;
+    margin: 0 0 12pt;
+    padding: 9pt 0 9pt 13pt;
+    border-left: 5pt solid #b3261e;
+    background: #f6f7f8;
+    letter-spacing: -0.005em;
+    line-height: 1.25;
+  }
+
+  /* The five teaching steps */
+  h3 {
+    font-size: 9pt;
+    font-family: "SF Mono", "Menlo", monospace;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: #b3261e;
+    margin: 20pt 0 7pt;
+    padding-bottom: 3pt;
+    border-bottom: 0.7pt solid #e6e9ec;
+  }
+
+  p { margin: 0 0 9pt; }
+  ul, ol { margin: 0 0 10pt; padding-left: 18pt; }
+  li { margin-bottom: 6pt; }
+
+  code {
+    font-family: "SF Mono", "Menlo", monospace;
+    font-size: 9.3pt;
+    background: #eef0f2;
+    padding: 0.5pt 3pt;
+    border-radius: 2.5pt;
+  }
+  pre {
+    font-family: "SF Mono", "Menlo", monospace;
+    font-size: 8.6pt;
+    line-height: 1.55;
+    background: #14171b;
+    color: #e8eaed;
+    padding: 10pt 12pt;
+    border-radius: 4pt;
+    margin: 9pt 0 11pt;
+    white-space: pre-wrap;
+  }
+  pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+  pre .c { color: #8b95a1; }
+  pre .g { color: #7ee2a8; }
+  pre .r { color: #ff9e88; }
+  pre .y { color: #f0d48a; }
+
+  .lede { font-size: 11.2pt; color: #3a4149; margin-bottom: 11pt; }
+
+  .look {
+    background: #fff8e6;
+    border-left: 3pt solid #d99b06;
+    padding: 9pt 12pt;
+    border-radius: 0 4pt 4pt 0;
+    margin: 9pt 0 11pt;
+    page-break-inside: avoid;
+  }
+  .remember {
+    background: #eef2f7;
+    border-left: 3pt solid #2563eb;
+    padding: 10pt 13pt;
+    border-radius: 0 4pt 4pt 0;
+    margin: 13pt 0 0;
+    page-break-inside: avoid;
+  }
+  .note {
+    background: #f2f4f7;
+    border-left: 3pt solid #5b6672;
+    padding: 10pt 13pt;
+    border-radius: 4pt;
+    margin: 11pt 0;
+    page-break-inside: avoid;
+  }
+  .look p:last-child, .remember p:last-child, .note p:last-child,
+  .remember ul:last-child, .note ul:last-child { margin-bottom: 0; }
+
+  .lbl {
+    display: block;
+    font-family: "SF Mono", "Menlo", monospace;
+    font-size: 7.8pt;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    margin-bottom: 5pt;
+    font-weight: 600;
+  }
+  .look .lbl     { color: #9a6f04; }
+  .remember .lbl { color: #2563eb; }
+  .note .lbl     { color: #5b6672; }
+
+  table { border-collapse: collapse; width: 100%; margin: 10pt 0 13pt; font-size: 9.8pt; }
+  th, td { text-align: left; padding: 6pt 9pt; border-bottom: 0.6pt solid #dfe3e7; vertical-align: top; }
+  th { background: #f2f4f7; font-weight: 600; font-size: 8.6pt; text-transform: uppercase; letter-spacing: 0.05em; }
+  td.mono, th.mono { font-family: "SF Mono", "Menlo", monospace; font-size: 8.5pt; }
+
+  .part { page-break-before: always; }
+  .src {
+    font-family: "SF Mono", "Menlo", monospace;
+    font-size: 8.3pt;
+    color: #6b7480;
+    margin: -6pt 0 11pt;
+  }
+  .foot {
+    margin-top: 18pt;
+    padding-top: 11pt;
+    border-top: 0.7pt solid #d3d7dc;
+    font-size: 9.3pt;
+    color: #5b6672;
+  }
+  .toc { font-size: 10.5pt; }
+  .toc td { padding: 5pt 9pt 5pt 0; border-bottom: 0.5pt solid #e6e9ec; }
+  .toc td:first-child { width: 26pt; color: #6b7480; font-family: "SF Mono", "Menlo", monospace; font-size: 9pt; }
+</style>
+</head>
+<body>
+
+<h1>censuschat — how it actually works</h1>
+
+<p class="lede">
+This walks through the seven mechanisms that decide how this system behaves. Each
+one is explained the same way: the mental model, a concrete example, the code that
+implements it, why it was built that way, and what goes wrong.
+</p>
+
+<p class="lede">
+Every trace in this document was produced by running the real code, not written
+from memory.
+</p>
+
+<table class="toc">
+<tr><td>0</td><td><strong>Orientation</strong> — one question, end to end</td></tr>
+<tr><td>1</td><td><strong>Where knowledge lives</strong> — what goes in the prompt, what goes behind search</td></tr>
+<tr><td>2</td><td><strong>The SQL gate</strong> — the only thing standing between the model and the warehouse</td></tr>
+<tr><td>3</td><td><strong>The tool loop</strong> — three separate limits, and why they are separate</td></tr>
+<tr><td>4</td><td><strong>The ambiguity backstop</strong> — and the one-line bug that made it fake</td></tr>
+<tr><td>5</td><td><strong>The guardrail</strong> — why it deliberately fails open</td></tr>
+<tr><td>6</td><td><strong>What an eval run measures</strong> — and what it cannot</td></tr>
+<tr><td>7</td><td><strong>The incident</strong> — when good error handling hides total failure</td></tr>
+<tr><td>—</td><td>Appendix: the assignment's criteria, mapped to these parts</td></tr>
+</table>
+
+<h2 class="part">0 &nbsp;Orientation — one question, end to end</h2>
+
+<p>
+Before any individual mechanism makes sense, you need the sequence they sit in.
+Here is what actually happens when someone types <em>"What is the total population
+of Wyoming?"</em>
+</p>
+
+<pre><code><span class="c">Browser ──POST /api/chat {session_id, message}──▶ Caddy (TLS, basic auth)
+                                                    │
+                                                    ▼
+                                              FastAPI  src/app.py
+                                                    │
+                                                    ▼
+                                           agent_turn  src/agent.py</span>
+
+ 1. <span class="y">degraded?</span>      snapshot + Snowflake checked once at boot     <span class="c">→ no, continue</span>
+
+ 2. <span class="y">guardrail</span>      Haiku classifies the message (1.5s timeout)
+                   <span class="c">verdict: on_topic                             → ALLOW</span>
+
+ 3. <span class="y">model call</span>     Sonnet + full session history + 3 tool defs
+                   <span class="c">decides: resolve_geography("Wyoming")</span>
+
+ 4. <span class="y">tool</span>           <span class="g">local SQLite — no network</span>
+                   <span class="c">→ {geo_id: "56", ambiguous: false}</span>
+
+ 5. <span class="y">model call</span>     <span class="c">decides: search_census_variables("total population")</span>
+
+ 6. <span class="y">tool</span>           <span class="g">local SQLite FTS5 — no network</span>
+                   <span class="c">→ B01003e1, geo_levels: [all five]</span>
+
+ 7. <span class="y">model call</span>     <span class="c">writes SQL, calls run_census_sql(...)</span>
+
+ 8. <span class="r">THE GATE</span>       validate_sql()  ← the trust boundary
+                   <span class="c">parse → single statement → is a query → no banned
+                   construct → tables allowlisted → LIMIT injected</span>
+                   <span class="g">→ approved, rewritten SQL returned</span>
+
+ 9. <span class="y">Snowflake</span>      <span class="c">executes; STATEMENT_TIMEOUT 25s     → 581,348</span>
+
+10. <span class="y">model call</span>     <span class="c">writes the answer using only returned rows</span>
+
+11. <span class="y">persist</span>        <span class="c">both messages to SQLite, keyed by session_id</span>
+                   <span class="c">stream terminates with `done`</span></code></pre>
+
+<p>
+Three things in that sequence explain most of the design, and each gets its own
+part below.
+</p>
+
+<p>
+<strong>Steps 4 and 6 never touch the network.</strong> Two of the three tools read
+a local SQLite snapshot built once at boot. Only step 8–9 reaches Snowflake.
+</p>
+
+<p>
+<strong>Step 8 is the only place a query can reach the warehouse</strong>, and it
+defaults to refusing. Everything above it — the prompt, the classifier — can be
+talked past by a sufficiently creative input. This cannot, because it is code with
+no model in the loop.
+</p>
+
+<p>
+<strong>Steps 3, 5, 7 and 10 are four separate model calls in one turn.</strong>
+That is why the system prompt is cached, and it is why "one question" can take 10
+to 30 seconds.
+</p>
+
+<div class="remember">
+  <span class="lbl">What to remember from part 0</span>
+  <p>
+    A turn is a loop, not a pipeline. The model is re-invoked after every tool
+    result, and it decides what to do next each time. The loop is bounded three
+    different ways (part 3), and the only exit to the outside world is guarded by
+    one function (part 2).
+  </p>
+</div>
+
+<h2 class="part">1 &nbsp;Where knowledge lives</h2>
+<p class="src">src/agent.py <code>SYSTEM_PROMPT</code> · src/tools.py <code>search_census_variables</code></p>
+
+<h3>Mental model</h3>
+
+<p>
+Every data-grounded agent has to answer one question: how does the model find out
+what is in the database?
+</p>
+
+<p>
+There are only two places to put that knowledge — in the prompt, or behind a tool
+call. The useful test for deciding is not "which facts are important." It is
+<strong>is this set closed or open?</strong>
+</p>
+
+<p>
+A closed set is small and never changes, so it fits in a prompt and will not
+drift. An open set is large and unpredictable, so it belongs behind search.
+</p>
+
+<h3>Concrete example</h3>
+
+<p>
+This dataset has both kinds, which is what makes it a clean illustration.
+</p>
+
+<p>
+<strong>Closed:</strong> every table is at census-block-group grain, and the
+12-character block group key splits by position:
+</p>
+
+<pre><code>  <span class="y">560210012001</span>
+  <span class="g">56</span>|<span class="g">021</span>|<span class="g">001200</span>|<span class="g">1</span>
+  │   │    │        └─ block group
+  │   │    └────────── tract
+  │   └─────────────── county  (021 = Laramie)
+  └─────────────────── state   (56 = Wyoming)
+
+  <span class="c">so: state total = SUM over rows WHERE SUBSTR(key,1,2) = '56'</span></code></pre>
+
+<p>
+That is about five facts and they will never change. They go in the prompt.
+</p>
+
+<p>
+<strong>Open:</strong> 8,164 field codes, 3,782 of them indexed estimates, across
+298 ACS tables. Nobody can predict which one a user needs.
+</p>
+
+<p>
+So when the model needs "total population," it does not recall <code>B01003e1</code>
+from its prompt. It calls a tool, and the tool searches.
+</p>
+
+<h3>How the code works</h3>
+
+<p>
+The system prompt carries the key decomposition and one worked aggregation
+pattern. It contains <strong>zero variable IDs</strong>. The only code-looking
+thing in it is <code>B19xxx</code>, which demonstrates how a table number maps to
+a physical table — a pattern, not a field.
+</p>
+
+<p>
+Search is SQLite FTS5 with BM25 ranking, over a snapshot built once at boot. The
+one line that matters is how the query is turned into a match expression:
+</p>
+
+<pre><code><span class="c"># src/tools.py — user types "number of households"</span>
+_fts_match_query("number of households")
+  <span class="g">→ '"number" "of" "households"'</span>      <span class="c"># FTS5: all three required</span>
+
+_fts_match_query("number of households", operator="OR")
+  <span class="g">→ '"number" OR "of" OR "households"'</span>  <span class="c"># any one is enough</span></code></pre>
+
+<h3>Why it was designed this way</h3>
+
+<p>
+Requiring all tokens gives high precision, and a probe measured it at 7/7 recall
+on in-corpus queries. That is why it was chosen.
+</p>
+
+<p>
+<strong>Then it failed in production, and the failure is instructive.</strong> Real
+agent queries carry framing words the Census catalog never uses — "number of,"
+"distribution of," guessed table IDs. Under all-tokens-required, one such word
+drops the result count to zero.
+</p>
+
+<p>
+Observed live: seven searches in a row returning nothing, while the variable the
+agent needed sat in the snapshot the entire time.
+</p>
+
+<p>
+The fix only adds behavior. Try all-tokens. If and only if that returns nothing,
+retry the identical query with any-token.
+</p>
+
+<div class="look">
+  <span class="lbl">The part worth copying</span>
+  <p>
+    The fallback was measured before it was trusted. On the real snapshot, every
+    query that already worked returned <em>the identical top 3, in the same
+    order</em>, under the looser rule.
+  </p>
+  <p>
+    So the relaxation is provably inert on the cases that were already fine. When
+    you loosen a constraint, prove that — do not assume it, and do not assume the
+    opposite either.
+  </p>
+</div>
+
+<h3>Common mistakes and tradeoffs</h3>
+
+<p>
+<strong>The common mistake:</strong> curate twenty "important" variables into the
+system prompt. This demos beautifully, because the demo questions came from the
+same list. It breaks on the twenty-first question, and it breaks quietly — the
+model has been shown a list, so it picks the nearest item instead of saying the
+concept is missing.
+</p>
+
+<p>
+<strong>The subtler mistake,</strong> and this project made it in writing first:
+seeing empty searches and concluding "the model is making too many exploratory
+calls," then raising the tool-call limit. The model's queries were fine. Search
+was returning nothing. Raising the limit buys more empty searches and buries the
+real defect under a higher ceiling.
+</p>
+
+<p>
+<strong>The accepted tradeoff:</strong> any-token ranking is genuinely worse for
+some queries. "Number of households" can surface <em>Median Number Of Rooms</em>,
+because "number" is rare and BM25 rewards rarity. That is real. It is still far
+better than an empty result, because a mediocre ranked list is something the model
+can refine against, while nothing gives it no signal and costs a whole round.
+</p>
+
+<div class="remember">
+  <span class="lbl">What to remember from part 1</span>
+  <p>
+    Closed and small → prompt. Open and large → retrieval. Decide with that
+    question, not with "what seems important."
+  </p>
+</div>
+
+<h2 class="part">2 &nbsp;The SQL gate</h2>
+<p class="src">src/sqlgate.py · 175 of the project's 345 tests</p>
+
+<h3>Mental model</h3>
+
+<p>
+The model writes SQL. That SQL runs against a real warehouse with real
+credentials. Something has to decide whether each statement is allowed to run.
+</p>
+
+<p>
+The important idea is the difference between a <strong>soft layer</strong> and a
+<strong>boundary</strong>:
+</p>
+
+<table>
+<thead><tr><th>Layer</th><th>Kind</th><th>What happens when it fails</th></tr></thead>
+<tbody>
+<tr><td>System prompt instructions</td><td>Soft</td><td>The model may ignore them</td></tr>
+<tr><td>Guardrail classifier</td><td>Soft</td><td>Fails <strong>open</strong> — allows the turn</td></tr>
+<tr><td><code>validate_sql</code></td><td><strong>Hard</strong></td><td>The query never reaches Snowflake</td></tr>
+</tbody>
+</table>
+
+<p>
+Only the third one is a boundary, because it is the only one with no model in the
+decision path. It is a pure function — no I/O, no network, no clock — which is
+exactly what makes it exhaustively testable.
+</p>
+
+<h3>Concrete example</h3>
+
+<p>
+Here is the real function's actual output on seven inputs. Watch the last two
+especially: the gate does not just approve or reject, it <em>rewrites</em>.
+</p>
+
+<table>
+<thead><tr><th>Input</th><th>Result</th></tr></thead>
+<tbody>
+<tr>
+  <td class="mono">SELECT SUM("B01003e1") AS pop<br>FROM …"2020_CBG_B01"<br>WHERE SUBSTR(key,1,2) = '56'</td>
+  <td><strong>approved</strong>, rewritten as<br><span class="mono">… WHERE SUBSTRING(key, 1, 2) = '56' <strong>LIMIT 200</strong></span></td>
+</tr>
+<tr>
+  <td class="mono">SELECT * FROM …"2020_CBG_B01"</td>
+  <td><strong>rejected</strong> — <span class="mono">banned_construct</span><br>"star projection is not permitted; name the columns"</td>
+</tr>
+<tr>
+  <td class="mono">SELECT key, SYSTEM$CANCEL_ALL_QUERIES()<br>FROM …"2020_CBG_B01"</td>
+  <td><strong>rejected</strong> — <span class="mono">banned_construct</span><br>"unrecognised function(s): SYSTEM$CANCEL_ALL_QUERIES"</td>
+</tr>
+<tr>
+  <td class="mono">SELECT SUM("B01003e1")<br>FROM …"<strong>2019</strong>_CBG_B01"</td>
+  <td><strong>rejected</strong> — <span class="mono">table_not_allowed</span></td>
+</tr>
+<tr>
+  <td class="mono">SELECT 1</td>
+  <td><strong>rejected</strong> — "query does not read any allowed table"</td>
+</tr>
+<tr>
+  <td class="mono">SELECT key FROM … LIMIT 100000</td>
+  <td><strong>approved</strong>, clamped to <span class="mono">LIMIT 200</span></td>
+</tr>
+<tr>
+  <td class="mono">SELECT key FROM … LIMIT 5</td>
+  <td><strong>approved</strong>, left at <span class="mono">LIMIT 5</span></td>
+</tr>
+</tbody>
+</table>
+
+<div class="look">
+  <span class="lbl">Look at these three things</span>
+  <p>
+    <strong>1. <code>SUBSTR</code> became <code>SUBSTRING</code>.</strong> The gate
+    parses the SQL into a syntax tree and renders it back out. What runs is not the
+    model's text — it is the gate's re-rendering of a tree it fully understood. If
+    it cannot understand a construct, it cannot render it, and the query dies.
+  </p>
+  <p>
+    <strong>2. <code>LIMIT 5</code> survived but <code>LIMIT 100000</code> was
+    clamped.</strong> The row cap is a ceiling, not a default. The agent may have a
+    good reason to want five rows, and rewriting that would be the gate editing
+    intent rather than enforcing a bound.
+  </p>
+  <p>
+    <strong>3. <code>SELECT 1</code> was rejected.</strong> Not "nothing to check"
+    — rejected. That is the shape every escape takes that reads data without naming
+    a table.
+  </p>
+</div>
+
+<h3>How the code works</h3>
+
+<p>
+Seven checks run in order: it parses; there is exactly one statement; it is not an
+opaque command; it is a query; no banned construct appears anywhere in the tree;
+at least one table is named and all named tables are allowlisted; a row limit is
+applied.
+</p>
+
+<p>
+Of the ~430 lines, these three decisions carry almost all of the security:
+</p>
+
+<pre><code><span class="c"># 1. Permitted statement types are LISTED. Everything else is
+#    denied by omission — including node types that don't exist yet.</span>
+_QUERY_TYPES = (exp.Select, exp.SetOperation, exp.Subquery)
+
+<span class="c"># 2. "The parser has no specific node for this" is used as a
+#    stand-in for "this is not ordinary SQL."</span>
+names = {str(n.this).upper() for n in statement.find_all(exp.Anonymous)}
+
+<span class="c"># 3. Zero tables is a rejection, not a no-op.</span>
+if not referenced:
+    return "query does not read any allowed table"</code></pre>
+
+<p>
+Decision 2 is the one worth understanding. sqlglot models ordinary SQL functions
+as specific typed nodes, and falls back to a generic <code>Anonymous</code> node
+for anything it does not recognize. So "landed in <code>Anonymous</code>" is a
+usable proxy for "outside ordinary SQL" — which catches user-defined and external
+functions whose names could be anything.
+</p>
+
+<h3>Why it was designed this way</h3>
+
+<p>
+The alternative is a blocklist: ban <code>DROP</code>, <code>DELETE</code>,
+semicolons. The argument against it is evidence, not theory.
+</p>
+
+<p>
+Three separate bypasses got past this gate's <em>first</em> implementation —
+written by someone specifically trying to make it airtight — and were found only
+by attacking the real function. Two are worth seeing, because they are not
+obvious:
+</p>
+
+<pre><code><span class="c">-- BYPASS A: the allowlisted FROM clause launders nothing.
+-- Nothing being checked was looking at the SELECT list.</span>
+SELECT key, <span class="r">SYSTEM$CANCEL_ALL_QUERIES()</span> FROM ...allowed...
+
+<span class="c">-- BYPASS B: a decoy CTE named after a banned table.
+-- The bare reference in branch 1 is NOT in scope of the CTE
+-- declared inside branch 2 — so Snowflake resolves it against
+-- the REAL 2019 table.</span>
+SELECT key FROM ...allowed...
+WHERE key IN (SELECT key FROM <span class="r">"2019_CBG_B01"</span>)   <span class="c">← real table</span>
+UNION ALL
+SELECT x FROM (
+  WITH <span class="y">"2019_CBG_B01"</span> AS (SELECT 1 AS x)      <span class="c">← decoy, other scope</span>
+  SELECT x FROM "2019_CBG_B01"
+) AS decoy
+
+<span class="g">Both now rejected. Bypass B reports:
+  table(s) not in the allowlist: 2019_CBG_B01</span></code></pre>
+
+<p>
+Bypass B is why CTE names are resolved <em>by scope</em> — walking up the tree
+from each reference — rather than collected into one flat set. A flat set excuses
+a bare table name anywhere in the query as soon as any branch happens to define
+that name.
+</p>
+
+<p>
+There is a second version of the same bug: a CTE declared <em>after</em> the
+reference that uses it. A CTE cannot see one declared later, so Snowflake again
+falls through to the real table. Visibility therefore follows declaration order.
+</p>
+
+<p>
+<strong>Why the 2019 tables matter enough to defend this hard:</strong> block
+groups were redrawn for the 2020 census and the five-year windows overlap in four
+of five years, so comparing the vintages is statistically invalid. Leaving 2019 off
+the allowlist makes the invalid query <em>impossible</em> rather than discouraged.
+</p>
+
+<h3>Common mistakes and tradeoffs</h3>
+
+<p>
+<strong>The common mistake:</strong> a regex denylist. If a purpose-built
+parser-based gate had three holes, a regex has thirty. The quieter version:
+checking only the first <code>FROM</code> clause, which passes every bypass above.
+</p>
+
+<p>
+<strong>The measured tradeoff:</strong> refusing every function the parser cannot
+model is aggressive. So the cost was measured rather than assumed — of 48
+functions a census answer plausibly needs, 47 pass. One is lost.
+</p>
+
+<p>
+<strong>The limit of this design, stated honestly:</strong> at production scale the
+gate should not be the only boundary. The real control is a Snowflake role with
+SELECT on exactly those 31 objects and nothing else, so a gate bug is contained by
+the database rather than by a parser. The gate stays as defense in depth and as
+the thing that produces good error messages.
+</p>
+
+<div class="remember">
+  <span class="lbl">What to remember from part 2</span>
+  <ul>
+    <li>List what is allowed, not what is banned. New things then land on the deny
+    side by default.</li>
+    <li>Parse, do not pattern-match. Re-rendering from a syntax tree means anything
+    unparseable cannot survive.</li>
+    <li>"Zero of the thing I check for" is usually a rejection, not a pass.</li>
+  </ul>
+</div>
+
+<h2 class="part">3 &nbsp;The tool loop and its three limits</h2>
+<p class="src">src/agent.py · CLAUDE.md rules 9 and 11</p>
+
+<h3>Mental model</h3>
+
+<p>
+After each tool result the model is called again and decides what to do next.
+Nothing in that arrangement makes it stop. Three different things can go wrong,
+and they need three different limits — conflating them is the mistake.
+</p>
+
+<table>
+<thead><tr><th>Limit</th><th>Value</th><th>Bounds what</th></tr></thead>
+<tbody>
+<tr><td>Recovery budget</td><td>2</td><td>Retries <em>after a failure</em> — bad SQL or zero rows</td></tr>
+<tr><td>Loop iterations</td><td>8</td><td>Total rounds <em>even when everything succeeds</em></td></tr>
+<tr><td>Wall-clock watchdog</td><td>50s</td><td>Elapsed time, regardless of the other two</td></tr>
+</tbody>
+</table>
+
+<h3>Concrete example</h3>
+
+<p>
+A question that is genuinely multi-step — "what's the average household income in
+Texas?" — needs a numerator and a denominator, so it needs several searches before
+it can write any SQL. Here is what actually happens:
+</p>
+
+<pre><code>round 1   search "average household income"      <span class="g">ok</span>   <span class="c">recovery: 0/2</span>
+round 2   search "aggregate household income"    <span class="g">ok</span>   <span class="c">recovery: 0/2</span>
+round 3   resolve_geography "Texas"              <span class="g">ok</span>   <span class="c">recovery: 0/2</span>
+round 4   search "number of households"          <span class="g">ok</span>   <span class="c">recovery: 0/2</span>
+  ...
+round 8   <span class="r">loop cap reached</span>
+          <span class="y">"[Stopped after reaching this turn's tool-call limit.]"</span>
+          <span class="c">elapsed 30.7s — the watchdog never fired
+          recovery budget never spent — nothing failed</span></code></pre>
+
+<p>
+This is the point of keeping the limits separate. Nothing failed, so the recovery
+budget is untouched. It finished well inside 50 seconds, so the watchdog is
+irrelevant. It ran out of <em>rounds</em>. If those three had been one counter,
+the diagnosis would have been impossible.
+</p>
+
+<h3>How the code works</h3>
+
+<p>
+The counting rule is the part that matters:
+</p>
+
+<pre><code><span class="c"># Only run_census_sql spends the recovery budget — and BOTH
+# a hard failure and a zero-row result count as spending it.</span>
+if block.name == "run_census_sql":
+    if is_error:
+        recovery_attempts += 1
+    elif result_payload.get("row_count") == 0:
+        recovery_attempts += 1
+    else:
+        collected_query_results.append(result_payload)</code></pre>
+
+<p>
+When any limit trips, the message the user sees is <strong>generated by code, not
+by the model</strong>. Recovery exhaustion lists every attempt made. The watchdog
+formats rows already returned.
+</p>
+
+<h3>Why it was designed this way</h3>
+
+<p>
+All three started as prompt instructions and were moved into code after being
+watched to fail.
+</p>
+
+<p>
+The recovery budget originally counted only queries the <em>gate</em> rejected.
+That left real Snowflake execution errors uncounted — so a model guessing bad SQL
+could retry without limit, at full warehouse cost. That is precisely the exposure
+the rule exists to prevent.
+</p>
+
+<div class="look">
+  <span class="lbl">The principle underneath</span>
+  <p>
+    <em>A promise a language model can decline is not a promise.</em>
+  </p>
+  <p>
+    "At most 2 retries" is a commitment about money and latency made to whoever
+    operates this system. If the only thing enforcing it is a sentence in a prompt,
+    it is advisory.
+  </p>
+  <p>
+    The test for where a rule belongs: does violating it cost money, leak data, or
+    produce a silently wrong number? If yes, it goes in code.
+  </p>
+</div>
+
+<h3>Common mistakes and tradeoffs</h3>
+
+<p>
+<strong>The mistake in the watchdog's design</strong> — and it is deliberate, not
+accidental: when time runs out, do <em>not</em> ask the model to summarize what it
+found. That spends more of the budget already gone, and risks the model narrating a
+number no query actually returned. The partial message formats the real rows
+directly.
+</p>
+
+<p>
+<strong>The honest weakness:</strong> the watchdog checks the clock <em>between</em>
+tool rounds. It cannot abort a model call already in flight. So it is a soft bound
+at 50 seconds against a 60-second requirement, and the 10-second gap is the margin.
+The right fix is per-call timeouts and real cancellation, not a bigger budget.
+</p>
+
+<div class="remember">
+  <span class="lbl">What to remember from part 3</span>
+  <p>
+    Retries, rounds, and elapsed time are three different failure modes. One
+    counter for all three tells you nothing when it trips.
+  </p>
+</div>
+
+<h2 class="part">4 &nbsp;The ambiguity backstop</h2>
+<p class="src">src/agent.py <code>unresolved_ambiguous_geo</code> · D-014</p>
+
+<h3>Mental model</h3>
+
+<p>
+Thirty states have a Washington County. When a lookup is ambiguous, the correct
+behavior is to ask — never to quietly pick the biggest or the first.
+</p>
+
+<p>
+The interesting question is <em>where</em> that rule lives. Asking a question is
+model behavior, so the instinct is to put it in the prompt. But the failure mode
+here is a confidently stated number for the wrong county, with no error and nothing
+in the answer showing a choice was ever made. That is not a behavior problem, it is
+a correctness boundary.
+</p>
+
+<h3>Concrete example</h3>
+
+<p>
+This is the bug a code review found, and it is worth tracing because the trigger is
+completely ordinary — any comparison question naming an ambiguous county alongside
+a real one.
+</p>
+
+<pre><code><span class="c">"Compare Washington County with Travis County, Texas"</span>
+
+<span class="c">--- the ORIGINAL implementation: one variable ---</span>
+
+resolve_geography("Washington County")
+  → ambiguous, 30 candidates
+  <span class="y">pending_ambiguous = {30 candidates}</span>        <span class="c">← guard armed</span>
+
+resolve_geography("Travis County, Texas")
+  → unambiguous, 1 candidate
+  <span class="y">pending_ambiguous = None</span>                   <span class="r">← guard silently DISARMED</span>
+
+run_census_sql(...)
+  <span class="r">→ allowed through. Model picks a Washington County.
+     No error. No indication a choice was made.</span>
+
+<span class="c">--- the FIX: a list, only ever appended to ---</span>
+
+  <span class="g">unresolved_ambiguous_geo = [{30 candidates}]</span>     <span class="c">← stays armed</span>
+run_census_sql(...)
+  <span class="g">→ BLOCKED. Turn ends with a clarifying question
+     naming every candidate. Snowflake never touched.</span></code></pre>
+
+<h3>How the code works</h3>
+
+<p>
+The fix is a data-structure change, not more logic. The variable became a list that
+is appended to on every ambiguous result and never cleared for the rest of the
+turn:
+</p>
+
+<pre><code>unresolved_ambiguous_geo: list[dict] = []
+
+<span class="c"># armed by any ambiguous lookup</span>
+elif block.name == "resolve_geography" and result_payload.get("ambiguous"):
+    unresolved_ambiguous_geo.append(result_payload)
+
+<span class="c"># checked before the only tool that reaches Snowflake</span>
+if block.name == "run_census_sql" and unresolved_ambiguous_geo:
+    ambiguity_blocked = True
+    break</code></pre>
+
+<p>
+The clarifying question is then built by code from every unresolved entry — not
+just the most recent one, since a turn can raise two ambiguities.
+</p>
+
+<h3>Why it was designed this way</h3>
+
+<p>
+It is enforced twice on purpose: as a prompt instruction, so the model normally
+does the right thing gracefully, and as a code block, so that when it does not, the
+consequence is a clarifying question rather than a wrong number.
+</p>
+
+<p>
+The prompt handles the common case well. The code handles the case the prompt
+misses. Neither alone is sufficient.
+</p>
+
+<h3>Common mistakes and tradeoffs</h3>
+
+<p>
+<strong>The mistake this <em>is</em>:</strong> a guard whose state can be wiped by
+unrelated success. It is not a guard — it is a guard-shaped object that passes its
+own happy-path test. Every test written for it passed, because every test exercised
+one ambiguous lookup in isolation.
+</p>
+
+<p>
+<strong>The transferable version:</strong> for a safety property, prefer state that
+only accumulates. If clearing it is possible, something unrelated will eventually
+clear it.
+</p>
+
+<div class="remember">
+  <span class="lbl">What to remember from part 4</span>
+  <p>
+    When a guard tracks "is there an unresolved problem," make it append-only. A
+    last-write-wins variable will be reset by something that has nothing to do with
+    the problem.
+  </p>
+</div>
+
+<h2 class="part">5 &nbsp;The guardrail, and why it fails open</h2>
+<p class="src">src/guardrail.py · D-019</p>
+
+<h3>Mental model</h3>
+
+<p>
+There is a fast classifier (Haiku, 1.5-second timeout) in front of the agent loop.
+Its job is <em>speed</em>, not safety: reject off-topic and injection input in about
+1.3 seconds with zero tool calls, so obvious junk never costs a full agent turn.
+</p>
+
+<p>
+Because safety is not its job, it is built to be bypassable without consequence.
+Any error or timeout returns ALLOW.
+</p>
+
+<h3>Concrete example</h3>
+
+<p>
+Two questions that look similar and route completely differently:
+</p>
+
+<pre><code><span class="c">"What's the weather in San Francisco?"</span>
+  guardrail → <span class="r">off_topic</span> → canned refusal, <span class="g">0 tool calls, ~1.3s</span>
+
+<span class="c">"How many people will live in Texas in 2050?"</span>
+  guardrail → <span class="g">on_topic</span> (it IS a census-shaped question)
+  agent     → declines itself: the ACS measures the past
+              <span class="g">0 tool calls, ~4s</span></code></pre>
+
+<p>
+Both end in a refusal with no tool calls, but by different mechanisms. The eval
+scorer records <em>which</em> one fired rather than collapsing them, because the
+distinction is real.
+</p>
+
+<h3>How the code works</h3>
+
+<p>
+The whole fail-open contract is these lines:
+</p>
+
+<pre><code>try:
+    raw = _call_classifier_model(message, recent_turns)
+    ...
+except Exception:
+    return GuardrailVerdict(
+        action=GuardrailAction.ALLOW,          <span class="c"># ← fails OPEN</span>
+        reason="classifier_unavailable",
+    )</code></pre>
+
+<p>
+There is also an explicit set of allow-verdicts, so a label that appears in neither
+the refuse set nor the allow set is reported as <code>unrecognized_verdict</code>
+rather than silently passing. A routing gap becomes visible instead of quiet.
+</p>
+
+<h3>Why it was designed this way</h3>
+
+<p>
+Failing closed on classifier errors feels safer and is not. It trades a common real
+failure — the classifier is down, every legitimate question is blocked, the product
+is offline — against a failure the classifier does not actually prevent. The SQL
+gate is what stops dangerous queries, and the gate does not care whether the
+classifier is up.
+</p>
+
+<p>
+<strong>The over-refusal bug is the better lesson.</strong> "What's the population
+of Atlantis?" was being refused as off-topic, instead of reaching geography lookup
+and honestly reporting no match.
+</p>
+
+<p>
+The cause was a layer-responsibility error: the classifier was being asked, in
+effect, to decide whether a place <em>exists</em>. It has no data access. It cannot
+know. The fix adds a category for exactly this shape:
+</p>
+
+<pre><code><span class="c">unknown_subject:</span> a demographic question in every respect except
+that its subject may not exist in the data. <span class="y">Classify on the
+SHAPE of the question; do not try to decide whether the data
+exists. The assistant's tools will look and report honestly.</span></code></pre>
+
+<h3>Common mistakes and tradeoffs</h3>
+
+<p>
+<strong>The injection detail worth stealing:</strong> the classifier's own
+explanation text is never shown to the user and never persisted. Refusals render
+from a fixed message table keyed by category. If model-generated text about an
+adversarial input reached the client, that would be a channel for an attacker to
+get chosen text rendered.
+</p>
+
+<p>
+<strong>The tradeoff, stated honestly:</strong> failing open is only defensible
+while something else bounds cost. Today nothing does — there is no rate limiting
+and no per-session spend cap, so a classifier outage plus a scripted client is an
+unbounded bill behind one password. At scale the classifier stays fail-open and
+rate limiting becomes the thing that fails closed.
+</p>
+
+<div class="remember">
+  <span class="lbl">What to remember from part 5</span>
+  <p>
+    Decide what each layer is <em>for</em>, then let it fail in the direction that
+    matches. A fast filter should fail open; a correctness boundary should fail
+    closed. Asking a layer a question it structurally cannot answer — like whether
+    a place exists — produces exactly this class of bug.
+  </p>
+</div>
+
+<h2 class="part">6 &nbsp;What an eval run measures</h2>
+<p class="src">evals/ · D-022</p>
+
+<h3>Mental model</h3>
+
+<p>
+Unit tests are deterministic: same input, same result, so one run is proof. An eval
+against a live model is not. The same scenario can pass and then fail with nothing
+changed.
+</p>
+
+<p>
+That means a single run is a <em>sample</em>, and a pass rate computed from one
+sample per row is not a measurement.
+</p>
+
+<h3>Concrete example</h3>
+
+<p>
+The current set is 14 examples. One of them, <code>PM-08</code>, passes roughly two
+runs in three:
+</p>
+
+<pre><code>run 1   PM-08 <span class="g">pass</span>      "13/14 — 93%"    <span class="c">looks fixed</span>
+run 2   PM-08 <span class="r">fail</span>      "12/14 — 86%"    <span class="c">looks like a regression</span>
+run 3   PM-08 <span class="g">pass</span>      "13/14 — 93%"    <span class="c">looks fixed again</span>
+
+<span class="c">Nothing changed between those runs. No commit. No config.</span>
+
+<span class="y">--repeat 3</span> collapses them into one column:
+        PM-08  <span class="y">2/3</span>   ← rendered as its OWN state,
+                     not folded into pass or fail</code></pre>
+
+<h3>How the code works</h3>
+
+<p>
+<code>--repeat N</code> runs the whole set N times and writes N result files. Files
+are keyed by <code>git_sha</code>, so runs of the same commit collapse into a single
+column in the history grid, showing how many passed.
+</p>
+
+<p>
+The grid is per-scenario rather than per-run, which fixes a second problem. The
+first two recorded runs are 100% and the third is 93% — that looks like a
+regression and is not. The set grew from 11 examples to 14 and one addition is
+deliberately red. An aggregate rate is only comparable across runs whose
+denominator did not change.
+</p>
+
+<h3>Why it was designed this way</h3>
+
+<p>
+A red row is kept deliberately. <code>PM-08</code> was deleted from the set once and
+restored, because a run with the known failure removed is a worse artifact than a
+run that reads 13/14.
+</p>
+
+<p>
+Its triage note records something most write-ups omit: the bottleneck
+<strong>moved</strong>. Search was the original cause and was fixed; the limiting
+factor is now the 8-round cap; raising that trades against the 50-second watchdog.
+"Fixed the first cause, still failing, here is the new limiting factor and what
+relieving it would cost" is far more useful than either a green row or an
+unexplained red one.
+</p>
+
+<h3>Common mistakes and tradeoffs</h3>
+
+<p>
+<strong>The mistake:</strong> on seeing a flaky scenario, re-run until it passes and
+commit that file. Nobody experiences that as falsification at the time, and it is
+exactly how a suite stops measuring anything.
+</p>
+
+<p>
+<strong>Where this suite under-verifies, named rather than hidden:</strong> one check
+asserts only that an answer contains the word "median" and does not error. What the
+design actually wants — an explanation of why medians cannot be aggregated — needs
+an LLM judge that was cut. The live answer did explain it correctly. The check
+would not have caught it if it hadn't.
+</p>
+
+<p>
+<strong>The method for fixing that:</strong> take a known-good answer, break it
+deliberately, and confirm the check goes red. A check that has never failed has not
+been tested.
+</p>
+
+<div class="remember">
+  <span class="lbl">What to remember from part 6</span>
+  <p>
+    Any metric over a stochastic system needs a repeat count before it needs a
+    threshold. And the failure is asymmetric — you stop re-running once it is green,
+    so variance only ever gets recorded as progress.
+  </p>
+</div>
+
+<h2 class="part">7 &nbsp;The incident</h2>
+<p class="src">docs/reflection.md §4</p>
+
+<h3>What happened</h3>
+
+<p>
+280 tests green. Every layer verified against live Snowflake as it was built. Real
+queries had returned real grounded numbers.
+</p>
+
+<p>
+Then a browser was opened for the first time and two questions were typed. Both
+failed. <strong>Every single query in the system was failing.</strong>
+</p>
+
+<p>
+SafeGraph created the ACS columns case-sensitively. Snowflake folds unquoted names
+to uppercase. And the system prompt's own worked example showed an unquoted column
+reference — teaching the model the one pattern guaranteed to fail against this
+database.
+</p>
+
+<h3>Why the test suite structurally could not catch it</h3>
+
+<p>
+Three reasons, and they compound:
+</p>
+
+<ul>
+  <li>
+    <strong>The gate is a safety boundary, not a correctness boundary.</strong> It
+    passed the query, correctly — single statement, allowlisted table, limit
+    applied. No gate test can know whether a column name resolves against a real
+    catalog, and none should.
+  </li>
+  <li>
+    <strong>The fake Snowflake connection encoded the same assumption the code
+    did.</strong> A mock written by the author of the code cannot disagree with the
+    author of the code.
+  </li>
+  <li>
+    <strong>The defect lived in a prompt; its consequence lived in Snowflake's name
+    resolution.</strong> There is no artifact in between for a unit test to hold.
+  </li>
+</ul>
+
+<h3>The part that generalizes</h3>
+
+<p>
+The bug is not the valuable finding. This is:
+</p>
+
+<div class="look">
+  <span class="lbl">A good recovery path raises the cost of noticing what it recovers from</span>
+  <p>
+    The defect had surfaced <strong>twice before</strong>, and both times it was
+    logged as a success. The model hit the error, retried with quotes, got the right
+    answer — recorded as the agent gracefully handling a Snowflake quirk.
+  </p>
+  <p>
+    Both log entries were true. Both described a systematic prompt defect as
+    ordinary resilience.
+  </p>
+  <p>
+    It became visible only when two questions in a row failed to self-correct within
+    budget — which happened immediately after the retry budget was correctly
+    <em>tightened</em>. Better error handling did not cause the bug; it postponed the
+    discovery of it.
+  </p>
+</div>
+
+<p>
+The actionable version: <strong>instrument retries as a first-class metric with a
+threshold.</strong> "The agent self-corrected" is a signal, not a non-event. Every
+retry that succeeds is a failure nobody investigates.
+</p>
+
+<h3>What it changed</h3>
+
+<p>
+The system prompt's correctness rules are now ordered by <em>what a violation
+costs</em>, and rule 1 is the quoting rule — stated with the mechanism attached, so
+the model knows <em>why</em> unquoted names fail rather than just that they do. A
+model given the reason generalizes to cases the rule never listed.
+</p>
+
+<div class="remember">
+  <span class="lbl">What to remember from part 7</span>
+  <p>
+    Mocked tests verify your code. Only a real end-to-end call verifies your system.
+    They fail differently, and here only one of them was capable of noticing that
+    the product did not work at all.
+  </p>
+</div>
+
+<h2 class="part">Appendix — the assignment's criteria, mapped</h2>
+
+<table>
+<thead><tr><th>Criterion</th><th>Answered in</th></tr></thead>
+<tbody>
+<tr><td><strong>LLM / AI Engineering</strong> — genuine understanding of data-grounded agents; defensible choices</td><td>Parts 1, 2, 3 — the closed/open split, the gate, the loop</td></tr>
+<tr><td><strong>Production Quality</strong> — would you ship it; behavior under ambiguous, incomplete, adversarial input</td><td>Parts 2, 4, 5 — the gate, the ambiguity backstop, the two guardrail directions</td></tr>
+<tr><td><strong>Judgment Under Constraints</strong> — where the time went, what was cut</td><td>Part 6, plus the cuts below</td></tr>
+<tr><td><strong>Reflection &amp; Self-Awareness</strong> — honest assessment</td><td>Part 7, and the named weaknesses in 3, 5, 6</td></tr>
+<tr><td><strong>Comprehensive Mapping</strong> — do not limit yourself to a subset</td><td>Part 1 — all 3,782 estimate fields indexed; two classes excluded from search only, each for a stated reason</td></tr>
+<tr><td><strong>Context Awareness</strong> — see the schema without hard-coding it</td><td>Part 1 — zero variable IDs in any prompt</td></tr>
+<tr><td><strong>Deployment "Truth"</strong> — local doesn't count</td><td>Live behind Caddy with TLS and basic auth; the app binds to loopback, so auth cannot be skipped by hitting the port</td></tr>
+<tr><td><strong>Graceful Degradation</strong> — explain why, never crash</td><td>Part 0 step 1 — a boot with no snapshot or no Snowflake still serves and says so</td></tr>
+<tr><td><strong>Stateful Continuity</strong> — remember previous messages</td><td>Part 0 step 11 — full history replayed from SQLite; no summarization, so context cannot drift from what was said</td></tr>
+<tr><td><strong>Operational Guardrails</strong> — a dedicated validation layer</td><td>Parts 2 and 5</td></tr>
+<tr><td><strong>Latency Threshold</strong> — over 60s is a failure</td><td>Part 3 — streaming throughout, 50s watchdog, 25s query timeout, slowest scenario 30.7s</td></tr>
+<tr><td><strong>Safety First</strong> — correct and slow over fast and wrong</td><td>Part 5 fast-fail at ~1.3s; grounding rule means zero rows is "not found," never a number</td></tr>
+</tbody>
+</table>
+
+<h3>The four cuts, and why each</h3>
+
+<table>
+<thead><tr><th>Cut</th><th>Shipped instead</th><th>Reasoning</th></tr></thead>
+<tbody>
+<tr><td>Langfuse tracing</td><td>In-app trace tab: one trace per turn, spans per guardrail / tool / model call, real token counts</td><td>The span design took the judgment; the SDK and hosted project were the expensive half and buy nothing visible in a single-instance demo. Swapping the local buffer for an exporter is a change at one seam</td></tr>
+<tr><td>Decennial tables</td><td>Nothing — one eval category has no coverage</td><td>This was the genuine second data source for "two defensible answers." Cost stated, not papered over</td></tr>
+<tr><td>The LLM-judge grounding check</td><td>Six deterministic check types</td><td>Named as the biggest hole: the core grounding rule has no automated enforcement anywhere</td></tr>
+<tr><td>18 of 30 designed scenarios</td><td>14 that all actually run</td><td>Designing them was free — it predated the code. Building the runner cost the time</td></tr>
+</tbody>
+</table>
+
+<p class="foot">
+Every trace, rejection message and figure in this document was produced by running
+the code in this repository. Sources: <code>src/sqlgate.py</code>,
+<code>src/agent.py</code>, <code>src/guardrail.py</code>, <code>src/tools.py</code>,
+<code>evals/results/latest.json</code>, <code>docs/decisions.md</code> (D-001 …
+D-022), <code>docs/reflection.md</code>. Current figures: 345 tests, 175 on the SQL
+gate; 14 eval examples, all of which have run, 13 passing.
+</p>
+
+</body>
+</html>
