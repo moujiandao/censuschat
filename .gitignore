@@ -1,0 +1,15 @@
+# Secrets — never commit. The Snowflake private key must never enter the repo
+# (CLAUDE.md rule 8).
+.env
+*.pem
+*.p8
+
+# Local data / build artifacts
+data/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# NOTE: evals/results/ is deliberately NOT ignored. EvalRun JSON artifacts are
+# committed, including red rows (CLAUDE.md rule 20). Do not add it here.
