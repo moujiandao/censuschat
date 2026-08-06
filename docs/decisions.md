@@ -199,13 +199,18 @@ existing single-argument calls still work.
 
 ---
 
-## D-010 — `validate_sql`: three gate behaviors beyond issue #1's spec (2026-08-05)
+## D-010 — `validate_sql`: six gate behaviors beyond issue #1's spec (2026-08-06)
 
 **Status:** refinement, not a deviation — no approval required, same class
 as D-007/D-008. Recorded because it changes what the gate rejects, and
-because all three interpretations trend strictly toward *more* restrictive
-— never toward permissiveness, which is the correct default whenever the
+because every one of the six trends strictly toward *more* restrictive —
+never toward permissiveness, which is the correct default whenever the
 spec is silent on a security boundary (CLAUDE.md rule 5).
+
+Call 1 is a genuine spec gap. Calls 2–3 are default-deny hardening.
+Calls 4–6 close real bypasses — each one verified empirically against the
+actual `validate_sql` function, not inferred from reading the code: before
+the fix, each example below returned `ok=True` with zero violations.
 
 1. **An explicit `LIMIT` above `SQL_ROW_LIMIT` is clamped down, not
    preserved.** Issue #1 specifies preserving a smaller explicit `LIMIT`
@@ -222,6 +227,50 @@ spec is silent on a security boundary (CLAUDE.md rule 5).
    rule is stated over the star token itself, not over the outermost
    projection list — so any construct that reads all columns is banned,
    and the one star that reads no columns (`COUNT(*)`) is let through.
+4. **Function calls sqlglot cannot model (`exp.Anonymous`, plus
+   `IDENTIFIER()`) are rejected.** An allowlisted `FROM` clause does not
+   launder the rest of the statement:
+   `SELECT a, SYSTEM$CANCEL_ALL_QUERIES() FROM <allowed>` (a side effect —
+   a write wearing a SELECT's clothes) and
+   `SELECT GET_DDL('TABLE', '..."2019_CBG_B99"'), a FROM <allowed>` (names
+   its real target with a string literal, so it produces no `Table` node)
+   both passed with zero violations before this. `IDENTIFIER()` is the
+   same hazard — a string-built object reference — and is named
+   explicitly. A denylist cannot cover UDFs or external functions, whose
+   names are arbitrary and could post the rows they're handed to any
+   endpoint; "sqlglot has no typed node for this" can, on the same
+   default-deny logic as everything else here. **Measured cost:** of 48
+   functions a census answer plausibly needs, 47 are typed nodes — `DIV0`
+   and `ZEROIFNULL` included, since sqlglot's Snowflake dialect desugars
+   both to `IFF`/`Is`/`Div` primitives at parse time rather than leaving
+   them as function calls (verified directly: neither ever reaches
+   `_unmodeled_functions`). Only `RATIO_TO_REPORT` is rejected.
+5. **CTE names resolve by lexical scope, not a flat set collected from the
+   whole statement.** A decoy CTE named after a forbidden table, defined
+   in a branch where it isn't in scope, was excusing a bare reference to
+   the real 2019 table in a sibling branch — defeating D-003, the
+   allowlist's entire purpose.
+6. **CTE scope also respects declaration order within one `WITH` list.** A
+   CTE cannot see one declared after it (except under `WITH RECURSIVE`,
+   which may see itself). Same bypass as #5, one level down: a CTE
+   declared *after* the one referencing its name doesn't shadow a bare
+   reference to the real table — Snowflake resolves that reference against
+   the physical table, and the gate now does too. Verified `WITH
+   RECURSIVE`'s legitimate self-reference still passes when the query also
+   reads a real allowed table (isolated from call #2's zero-table rule,
+   which otherwise masks the recursive case in a query that reads nothing
+   else).
 
-All three, and their reasoning, are recorded in the implementation commit
-(`4642e36`) as well as here.
+**Notes for whoever implements `run_census_sql` (issue #5):**
+`SqlGateResult.sql` is sqlglot's regenerated SQL, not the model's original
+text byte-for-byte — `DIV0(a,b)` becomes `IFF(...)`, `--` comments become
+`/* */`. This is a safe property (no room for an injected comment to
+survive re-serialization) but means don't expect it to echo verbatim.
+`SqlGateResult.sql` is `""` on every rejection, by design.
+
+All six calls, and their reasoning, are recorded in the implementation
+commits (`924ece2`, `ed17956`) as well as here. Calls 4–6 were found by
+continued adversarial self-review after the issue's stated exit criteria
+were already met and the first commit was closed — each was verified
+empirically before being called fixed, both by the implementing agent and
+independently against the current code (see `CHANGELOG.md`).

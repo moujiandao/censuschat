@@ -12,10 +12,15 @@
 - Escape control characters in `session_id` before logging (`src/app.py`) — an unvalidated client-supplied newline could otherwise forge fake log lines
 - Run the app container as a non-root user; verified the `chown`'d `/app/data` ownership survives being overlaid by a fresh named volume, and that the app starts and serves correctly under the new user
 
+### Fixed (continued)
+- Close two further `validate_sql` bypasses found by continued adversarial review after issue #1's stated criteria were already met: unmodeled function calls (`SYSTEM$CANCEL_ALL_QUERIES()`, `GET_DDL(...)`, `IDENTIFIER()`) laundering a side effect or a string-named table reference through an allowlisted `FROM` clause, and CTE name resolution that ignored both nesting scope and declaration order — either of which let a decoy or forward-declared CTE name excuse a bare reference to the real forbidden 2019 table. All four were `ok=True` with zero violations before the fix; all four independently re-verified after it, along with a fifth check confirming `WITH RECURSIVE`'s legitimate self-reference still passes. D-010 rewritten to document all six judgment calls (was three) plus two notes for `run_census_sql` (issue #5): the gate's sanitized SQL is sqlglot's regenerated text, not the model's original verbatim, and is `""` on every rejection
+
 ### Verified
-- Full 178-test suite passes both on local Python 3.14 and inside the actual `python:3.13-slim` production container image — closes a build-vs-dev interpreter mismatch flagged in review
+- Full 179-test suite passes both on local Python 3.14 and inside the actual `python:3.13-slim` production container image — closes a build-vs-dev interpreter mismatch flagged in review
 - `(SELECT ...) LIMIT N` (the gate's output for a bare parenthesized query, an untested parse-tree shape) is valid Snowflake syntax and genuinely bounds the row count — confirmed against the real warehouse, returned exactly 200 rows; added as a permanent regression test
+- `DIV0`/`ZEROIFNULL` are not rejected as unmodeled functions, contradicting an independent reviewer's static-analysis finding — sqlglot's Snowflake dialect desugars both into typed `IFF`/`Is`/`Div` primitives at parse time, so they never reach the unmodeled-function check. Confirmed by inspecting the actual parse tree, not by re-reading source
 - Ran a full code-review pass (code-reviewer subagent) over `src/sqlgate.py`, `src/app.py`, and the deploy scaffold before pushing; one finding (missing `.env.example`) was a false positive — the file is tracked and pushed, the reviewer's `Glob` missed a root-level dotfile
+- A concurrent background agent's `git commit --amend` briefly folded an unrelated changelog commit into its own; caught before push via `git reflog`, and already self-corrected by the agent (`git reset --soft` + a cleanly separate commit) — no work lost, confirmed by diffing the discarded amend against the final state
 
 ## [2026-08-05]
 
