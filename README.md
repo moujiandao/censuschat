@@ -192,7 +192,7 @@ The frontend is one static HTML file, vanilla JS, CDN-free, no build step.
 | Tab | Shows |
 |---|---|
 | **Chat** | The agent itself. SSE token streaming, a tool-status line, session id persisted in `localStorage`. |
-| **Evals** | Three sections. **Try it yourself** is the three probes below, click one to load it into Chat. **Test results** is `evals/results/latest.json`: 14 examples with the question asked, the checks that ran, the answer, and timing; the one red row carries its triage inline. **Run history** is a scenario × commit grid over every recorded run, so a regression is visible as one cell flipping rather than as a pass rate moving for unknown reasons. |
+| **Evals** | Three sections. **Try it yourself** is the three probes below, click one to load it into Chat. **Test results** is `evals/results/latest.json`: 14 examples with the question asked, the checks that ran, the answer, and timing; any red row carries its triage inline. **Run history** is a scenario × commit grid over every recorded run, so a regression is visible as one cell flipping rather than as a pass rate moving for unknown reasons. |
 | **Flow Diagram** | The current turn's real SSE events as a timeline: guardrail decision, each tool call with args and a bounded result digest, elapsed ms. This is the fastest way to see *why* an answer came out the way it did. |
 | **Trace Logging** | Per-turn spans with latency and input/output token counts per model call. An in-process stand-in for Langfuse, not a replacement — see [What's cut](#whats-cut-and-why). |
 | **Data Source** | A static description of the dataset: provenance, the CBG grain, the table allowlist, the 28-group topic taxonomy, variable naming, and the known data traps. |
@@ -307,7 +307,7 @@ colons` — an unhelpful message for a simple missing variable.
 
 ## Testing and evals
 
-**345 tests, `make test`.** TDD (failing test first) on every deterministic
+**356 tests, `make test`.** TDD (failing test first) on every deterministic
 layer: the SQL trust boundary (`validate_sql`, 175 tests), guardrail routing,
 bounded-recovery counting, the ambiguity backstop, the wall-clock watchdog,
 degraded-mode detection, FTS ranking, `normalize_value`, and the eval scorer
@@ -322,10 +322,17 @@ passed the entire mocked suite and was only caught against the real database.
 **`make eval`** runs the golden set against the real stack (real Anthropic,
 real Snowflake, real guardrail) and writes an `EvalRun` to `evals/results/`.
 
-**14 examples, 13 passing** in the latest run (92.9%), the whole set in about
-2.6 minutes of wall clock (1.3s to 30.7s per example — the slowest is
-comfortably inside the 60s bound). Every example in the set has been run;
-there is no unrun backlog padding the count.
+**14 examples**, the whole set in about 2.6 minutes of wall clock (1.3s to
+30.7s per example — the slowest is comfortably inside the 60s bound). Every
+example in the set has been run; there is no unrun backlog padding the count.
+
+**The set is not reliably green, and the number you see depends on the run.**
+Thirteen examples pass every time. `PM-08` passes roughly two runs in three,
+so a single run reads 13/14 or 14/14 depending on the coin. Both numbers are
+in `evals/results/`. This is why the Evals tab renders a per-scenario history
+grid rather than a headline percentage, and why `--repeat 3` collapses runs of
+one commit into a `2/3` cell — see [Testing and evals](#testing-and-evals)
+below.
 
 **12 of the 14** are a verbatim subset of the 30 designed in
 `docs/plans/02-prd.md` §7 — the PRD's own ids, turns, and expectations,
@@ -353,11 +360,12 @@ so flake cannot be read as a fix. **No Langfuse needed for this** — it is a
 different axis (per-request production tracing, D-021), and committed JSON is
 better provenance for a reviewer who clones the repo.
 
-**The one red row is deliberate.** `PM-08` ("average household income in
-Texas?") is kept and triaged rather than deleted to make the run look clean —
-it exhausts the 8-round tool-loop cap while discovering a
-numerator/denominator pair, and is honestly recorded as flaky (it produces a
-grounded answer in roughly two runs of three). Raising the cap trades against
+**The one unreliable row is deliberate.** `PM-08` ("average household income in
+Texas?") is kept and triaged rather than deleted to make runs look clean — it
+exhausts the 8-round tool-loop cap while discovering a numerator/denominator
+pair, and is honestly recorded as flaky (it produces a grounded answer in
+roughly two runs of three; the most recent recorded run is one of the good
+ones). Raising the cap trades against
 the 50-second watchdog, so it was left out of scope deliberately rather than
 overlooked; the scenario's own `notes` field carries that reasoning.
 

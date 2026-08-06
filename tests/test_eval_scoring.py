@@ -134,10 +134,16 @@ def test_expect_clarifying_question_requires_a_question_and_no_successful_query(
     assert _score_check(check, _obs(answer="It is 500.")).passed is False
 
 
-def test_judge_groundedness_fails_loudly_rather_than_silently_skipping():
-    result = _score_check(Check(type=CheckType.JUDGE_GROUNDEDNESS), _obs(answer="x"))
+def test_judge_groundedness_routes_to_the_real_grounding_check():
+    """It used to be scored as an explicit "not implemented" failure. It is
+    now implemented for the numeric half, deterministically — declaring it on
+    a scenario must reach that logic rather than a stub."""
+    result = _score_check(
+        Check(type=CheckType.JUDGE_GROUNDEDNESS),
+        _obs(answer="The population is 999,111."),
+    )
     assert result.passed is False
-    assert "not implemented" in result.observed
+    assert "UNSOURCED" in result.observed
 
 
 # --------------------------------------------------------------------------
@@ -158,9 +164,10 @@ def test_every_scenario_is_runnable_and_scoreable():
         assert s.notes, f"{s.id} has no note explaining what it demonstrates"
 
 
-def test_no_scenario_carries_the_unimplemented_judge_check():
-    """judge_groundedness (issue #21) is scored as a loud failure rather than
-    skipped, so a row carrying it would turn a real 13/14 into a false red."""
+def test_no_scenario_needs_to_declare_the_grounding_check():
+    """Rule 2 applies to every turn, so the runner appends grounding to every
+    scenario rather than trusting an author to remember it. Declaring it is
+    redundant; this pins that nobody started relying on the declaration."""
     from evals.scenarios import GOLDEN_SCENARIOS
 
     for s in GOLDEN_SCENARIOS:
@@ -171,7 +178,9 @@ def test_no_scenario_carries_the_unimplemented_judge_check():
 # Numeric grounding (CLAUDE.md rule 2). Deterministic, not an LLM judge.
 # --------------------------------------------------------------------------
 
-def _obs(answer: str, rows: list[dict] | None = None, row_count: int | None = None):
+def _grounding_obs(
+    answer: str, rows: list[dict] | None = None, row_count: int | None = None
+) -> Observation:
     obs = Observation()
     obs.final_answer = answer
     for row in rows or []:
@@ -193,7 +202,7 @@ def test_a_fabricated_figure_fails_grounding():
     """The motivating case. PM-02's declared checks are answer_contains
     ("median") and no_unhandled_error, so this exact answer passed the suite
     while inventing the number — the precise failure rule 2 exists to stop."""
-    obs = _obs("The median household income in California is $78,672.", rows=[])
+    obs = _grounding_obs("The median household income in California is $78,672.", rows=[])
 
     result = _grounding_check(obs)
 
@@ -202,7 +211,7 @@ def test_a_fabricated_figure_fails_grounding():
 
 
 def test_a_figure_present_in_the_returned_row_passes():
-    obs = _obs(
+    obs = _grounding_obs(
         "Alameda County, California had an estimated total population of 1,661,584.",
         rows=[{"TOTAL_POPULATION": 1661584}],
     )
@@ -213,7 +222,7 @@ def test_a_figure_present_in_the_returned_row_passes():
 def test_a_rounded_difference_of_two_returned_values_passes():
     """CMP-01 legitimately says "roughly 199,000 higher" from two returned
     populations. A check that failed that would be wrong, not strict."""
-    obs = _obs(
+    obs = _grounding_obs(
         "Travis County has 1,250,884 people and Fulton County has 1,051,550 — "
         "roughly 199,000 higher.",
         rows=[{"POP": 1250884}, {"POP": 1051550}],
@@ -225,7 +234,7 @@ def test_a_rounded_difference_of_two_returned_values_passes():
 def test_vintage_years_are_not_treated_as_claims():
     """Every grounded answer says "2020 ACS 5-year estimates (2016-2020)".
     Treating those as data claims would fail all 14 examples."""
-    obs = _obs(
+    obs = _grounding_obs(
         "Using 2020 ACS 5-year estimates (2016-2020), the population is 581,348.",
         rows=[{"POP": 581348}],
     )
@@ -233,8 +242,52 @@ def test_vintage_years_are_not_treated_as_claims():
     assert _grounding_check(obs).passed is True
 
 
+def test_a_mean_substituted_from_two_returned_values_passes():
+    """The D-002 behaviour this product is built around: when a median can't
+    be aggregated, answer with aggregate income / households and say so. Real
+    PM-02 numbers — omitting plain division from the derived forms failed both
+    partial_match examples on correct behaviour."""
+    obs = _grounding_obs(
+        "A true state-level mean is about $111,606.",
+        rows=[{"AGG_INCOME": 1462390043900}, {"HOUSEHOLDS": 13103114}],
+    )
+
+    assert _grounding_check(obs).passed is True
+
+
+def test_digits_inside_a_variable_id_are_not_treated_as_figures():
+    """Found on the first live run after this check shipped: `B19013e1`
+    yielded the "figure" 19013, so every answer citing a variable id was
+    reported as a fabrication. DF-05 and PM-02 both went red on it."""
+    obs = _grounding_obs(
+        "The median household income variable (`B19013e1`) is block-group only.",
+        rows=[],
+    )
+
+    result = _grounding_check(obs)
+
+    assert result.passed is True
+    assert "no numeric claims" in result.observed
+
+
+def test_a_figure_echoed_from_tool_evidence_is_not_a_fabrication():
+    """A geo_id or any value the tools themselves produced is by definition
+    not invented, which is what rule 2 is about."""
+    obs = _grounding_obs("Alameda County resolves to 06001.", rows=[])
+    obs.record_tool_call(
+        {
+            "tool": "resolve_geography",
+            "args": "{}",
+            "ok": True,
+            "summary": {"resolved": ["Alameda County, California (06001)"]},
+        }
+    )
+
+    assert _grounding_check(obs).passed is True
+
+
 def test_an_answer_with_no_figures_passes():
-    obs = _obs("There are several counties named Washington County. Which state?")
+    obs = _grounding_obs("There are several counties named Washington County. Which state?")
 
     result = _grounding_check(obs)
 
@@ -246,7 +299,7 @@ def test_unverifiable_is_reported_as_inconclusive_not_as_a_failure():
     """TOOL_END exposes only first_row, so a figure legitimately drawn from
     row 5 is invisible here. Calling that a fabrication would be its own
     dishonesty, so it passes and says why."""
-    obs = _obs(
+    obs = _grounding_obs(
         "The largest is 999,111.",
         rows=[{"POP": 123456}],
         row_count=10,

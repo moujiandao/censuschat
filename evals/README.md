@@ -76,30 +76,71 @@ Deleted outright rather than renamed. A test now pins that ids are unique.
 
 - `conflicting` (`CF-01`, `CF-02`) — both need the decennial redistricting
   tables (D-004, issue #17), which were cut. Nothing to run them against.
-- `judge_groundedness`, the only LLM-judge check in the design (issue #21),
-  is **not implemented**. No example carries it. If one did, the scorer fails
-  it loudly with "not implemented" rather than skipping it silently, so it
-  can never inflate a pass rate. The practical consequence: nothing here
-  automatically verifies that every number in an answer traces to a returned
-  row, which is the single largest hole in the strategy.
+- The **prose half** of `judge_groundedness` (issue #21) is not implemented.
+  Whether the vintage assumption was stated, whether the median explanation is
+  an actual explanation rather than the word "median", whether the county was
+  offered rather than silently substituted: all unverified. That half needs an
+  LLM judge, and a judge needs calibrating against human labels before its
+  scores mean anything.
 - 18 of the PRD's 30 designed scenarios were never implemented.
+
+## Numeric grounding is checked on every example
+
+CLAUDE.md rule 2 says every numeric claim must come from rows returned by that
+turn's query. It is the invariant the whole architecture protects, and until
+recently nothing enforced it automatically. It does now, and the check is
+**appended to every scenario by the runner** rather than declared per row, so
+a new example cannot be written without it.
+
+**Deliberately deterministic, not an LLM judge.** For a number there is
+nothing to judge: either the figure is in the returned rows or it is not.
+Plain arithmetic is cheaper, needs no calibration, and is more reliable at
+this than a model would be.
+
+How it works: pull every figure of 4+ digits out of the answer, skip vintage
+years (2016, 2020), and require each one to be either a returned value or
+within 1% of a pairwise sum, difference or ratio of two of them. The derived
+case is not generosity — `CMP-01` legitimately says "roughly 199,000 higher"
+from two returned populations, and failing that would be wrong.
+
+What it deliberately does not do:
+
+- **Figures under 4 digits are ignored.** "19% higher", "5-year", "2 counties"
+  are prose, and a check that cries wolf is a check people delete. A genuine
+  3-digit fabrication would slip through.
+- **`TOOL_END` exposes only `first_row`.** When a query returned more rows
+  than the harness can see, an unmatched figure is reported **inconclusive
+  and passes**, rather than being called a fabrication we cannot actually
+  observe.
+
+The failure it exists to catch, concretely: `PM-02`'s declared checks are
+`answer_contains("median")` and `no_unhandled_error`, so "The median household
+income in California is $78,672" passed the whole suite while inventing the
+number. There is a unit test on exactly that answer.
 
 ## How much to trust the pass rate
 
-The latest run is 13/14, with `PM-08` red on purpose. Read it with these
-caveats, because a green row can equally mean the check is too loose:
+Measured over three runs at one commit: **13 of the 14 examples pass every
+time, and `PM-08` passes 2 runs in 3.** That is a stronger statement than any
+single run's score, and it is why `latest.json` alone should not be read as a
+verdict — whichever run went last became `latest.json`, so a 14/14 there can
+simply be the lucky one. The tab says so above the table.
+
+Read the numbers with these caveats, because a green row can equally mean the
+check is too loose:
 
 - **The strong checks.** `DF-05` asserts the literal string `581,348`, the
   real figure this share returns for Wyoming, confirmed by direct query.
   `GEO_RESOLVED`/`VARIABLE_RESOLVED` search the *tool evidence*, not the
   prose, so a model that merely names `B01003e1` without ever resolving it
   fails (there is a test for exactly that).
-- **The weak check.** `PM-02` only asserts the answer contains "median" and
-  doesn't error. What the PRD actually wants — explaining that medians can't
-  be aggregated and offering the true mean instead — is a
-  `judge_groundedness` question, and that's cut. The live answer *did*
-  explain it correctly, but the check would not have caught it if it hadn't.
-  This is the clearest place where the harness under-verifies.
+- **The weak check.** `PM-02`'s declared checks only assert the answer
+  contains "median" and doesn't error. What the PRD actually wants —
+  explaining that medians can't be aggregated and offering the true mean
+  instead — needs the LLM-judge half that is still cut. The live answer *did*
+  explain it correctly, but its own checks would not have caught it if it
+  hadn't. Numeric grounding now backstops the worst version of this (a made-up
+  figure fails), but "said the right words" is still not "explained it".
 - **`EXPECT_REFUSAL` is looser than its name.** `CheckType` documents it as
   "guardrail fired"; the scorer operationalizes it as "zero tool calls, clean
   termination" — the behavioral property that matters (Snowflake never
@@ -113,10 +154,13 @@ caveats, because a green row can equally mean the check is too loose:
   not.
 
 **Red rows are kept and reported**, never dropped to make a run look clean
-(CLAUDE.md rule 20). The current run has one: `PM-08`, the state-level mean
-substitution that exhausts the 8-round tool-loop cap. It was deleted from the
-set in `4170f0a` and restored deliberately, because a run with the known
-failure removed is a worse artifact than one that is 13/14. Its `notes` field
+(CLAUDE.md rule 20). The set has exactly one unreliable row: `PM-08`, the
+state-level mean substitution that exhausts the 8-round tool-loop cap. It
+lands red in roughly one run of three, so whether the newest file shows 13/14
+or 14/14 is a coin, not a change — read the history grid, not the headline. It
+was deleted from the set in `4170f0a` and restored deliberately, because a set
+with the known failure removed is a worse artifact than one that is sometimes
+13/14. Its `notes` field
 carries the triage: retrieval was fixed (D-020), the binding constraint moved
 to the round cap, and raising that cap trades against the 50s watchdog — so
 it is committed red and flaky (green in roughly two live runs of three)

@@ -996,7 +996,7 @@ denominator did not change.
 <p>
 A red row is kept deliberately. <code>PM-08</code> was deleted from the set once and
 restored, because a run with the known failure removed is a worse artifact than a
-run that reads 13/14.
+run that is sometimes 13/14.
 </p>
 
 <p>
@@ -1172,7 +1172,7 @@ the code in this repository. Sources: <code>src/sqlgate.py</code>,
 <code>src/agent.py</code>, <code>src/guardrail.py</code>, <code>src/tools.py</code>,
 <code>evals/results/latest.json</code>, <code>docs/decisions.md</code> (D-001 …
 D-022), <code>docs/reflection.md</code>. Current figures: 345 tests, 175 on the SQL
-gate; 14 eval examples, all of which have run, 13 passing.
+gate; 14 eval examples, all of which have run, 13 of them reliably &mdash; PM-08 passes about two runs in three.
 </p>
 
 </body>

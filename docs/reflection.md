@@ -25,7 +25,7 @@ them.
 It also cost me. I reached hour 20 with a fully tested backend and no web
 page, which is a hard requirement. See section 2.
 
-Everything deterministic was built test-first. 345 tests now, 175 of them on
+Everything deterministic was built test-first. 356 tests now, 175 of them on
 the SQL gate alone.
 
 ### How I used Claude Code
@@ -127,11 +127,11 @@ about the system as a whole. It is a debugging aid, and I would rather call it
 that than claim the observability requirement is met.
 
 **The eval harness shrank to 14 executed scenarios.** `make eval` does run for
-real: live Anthropic, live Snowflake, the real guardrail, six deterministic
-check types, and a committed result file the Evals tab renders. Two gaps
-matter. `judge_groundedness` is unimplemented, which means the core grounding
-rule has no automated enforcement anywhere in the project. And nothing runs the
-suite automatically, so nothing catches a regression between commits.
+real: live Anthropic, live Snowflake, the real guardrail, deterministic checks,
+and a committed result file the Evals tab renders. The remaining gaps are named
+precisely in section 3, but the headline one is that nothing runs the suite
+automatically, so nothing catches a regression between commits. Everything here
+was run by hand, by me, when I remembered to.
 
 I also wrote 25 further scenarios covering injection shapes, malformed input,
 NULL and top-coded values, and multi-turn drift, then deleted them (D-022).
@@ -157,48 +157,47 @@ median-versus-mean case, which is narrower than intended.
 ### If I had another day
 
 1. Wire `normalize_value`. It is a live wrong-number path.
-2. Implement `judge_groundedness`. The most important rule has no automated check.
-3. Finish `PM-08`. Retrieval is fixed; what remains is the round cap.
-4. Rebuild the deleted coverage as scenarios that actually run.
-5. Rate limiting and a per-session cost cap.
-6. Decennial tables, for a real conflicting case.
-7. Real Langfuse.
+2. Make an eval able to fail when the agent does not answer at all (the
+   `CMP-01` hole in section 3).
+3. Finish the grounding check: the prose half, and the row visibility that
+   currently makes `CMP-01` unverifiable.
+4. Finish `PM-08`. Retrieval is fixed; what remains is the round cap.
+5. Rebuild the deleted coverage as scenarios that actually run.
+6. Rate limiting and a per-session cost cap.
+7. Decennial tables, for a real conflicting case.
+8. Real Langfuse.
 
 ---
 
 ## 3. Known failure modes I did not fully fix
 
-- **`PM-08` is red and I left it red.** "Average household income in Texas"
-  runs out of tool rounds while assembling a numerator and denominator. My
-  first diagnosis was wrong: I blamed the model for exploring too much. The
-  real cause was retrieval requiring every query token to match, so "number of
-  households" returned zero hits while the right variable sat in the snapshot
-  the whole time. That is fixed (D-020). The scenario still fails, now on the
-  8-round cap, and it is honestly flaky (green in roughly two live runs of
-  three). Committed red rather than re-run until it passed.
-- **Top-coded values reach the user as precise figures.** Above. The guard
-  exists and nothing calls it. This is the one I would fix first.
+Three groups, because they fail differently: things the agent can still get
+wrong, things my evals cannot see, and things that would break under real
+traffic. The middle group is the one I would read first if I were reviewing
+this, because a limitation you cannot measure is worse than one you can.
+
+### 3a. Wrong answers the system can still produce
+
+- **Top-coded values reach the user as precise figures.** 776 block groups
+  report `B19013e1 = 250001`, which is the Census code for "$250,000 or more",
+  not an income of $250,001. `normalize_value` exists to catch this, is tested,
+  and nothing calls it. The number comes from the database and is still wrong
+  in the way that matters. This is the one I would fix first.
+- **`PM-08` is genuinely flaky, and now I can prove it.** "Average household
+  income in Texas" assembles a numerator and denominator and sometimes runs out
+  of tool rounds doing it. My first diagnosis was wrong: I blamed the model for
+  over-exploring. The real cause was retrieval requiring every query token to
+  match, so "number of households" returned zero hits while the right variable
+  sat in the snapshot the whole time (D-020, fixed). What remains is the
+  8-round cap. Running the set three times at one commit measured it at **2
+  passes in 3**, with the other 13 examples stable at 3 for 3. I kept it and
+  reported the ratio rather than re-running until it went green.
 - **Guardrail over-refusal of places that may not exist.** "Population of
   Atlantis" used to be refused as off-topic instead of reaching the tools and
   honestly reporting no match. Fixed (D-019) by having the classifier judge the
   *shape* of a question rather than whether the place exists, and pinned by
   `UN-08`. The underlying tension does not go away: the fast-fail path and the
   honest-not-found path compete for the same inputs.
-- **Health status can go stale.** Snowflake reachability is checked once at
-  boot and cached (D-015), deliberately, to avoid touching Snowflake at request
-  time outside `run_census_sql`. If Snowflake dies mid-session, `/api/health`
-  keeps reporting healthy. Acceptable because nothing polls it continuously and
-  a real outage still surfaces on the next query.
-- **The watchdog cannot interrupt a call in flight.** It checks the clock
-  between rounds, so one pathological model call can overrun the 50-second
-  budget. Against a 60-second requirement that leaves 10 seconds of slack. The
-  right fix is per-call timeouts and cancellation, not a bigger budget.
-- **No rate limiting and no spend cap.** A public endpoint that calls Anthropic
-  and Snowflake on every request, behind one shared password, is unbounded cost
-  exposure. Fine for a demo with a known reviewer list, not for anything else.
-- **Single instance only.** Sessions are SQLite on a local volume and traces
-  live in process memory. A second replica would split both. This cannot scale
-  horizontally at all, not merely badly.
 - **US territories are missing.** 13 county-grain rows (American Samoa, Guam,
   Northern Mariana Islands, US Virgin Islands) have a null state in the source
   and were dropped rather than given an invented naming policy (D-012). Asking
@@ -209,10 +208,86 @@ median-versus-mean case, which is narrower than intended.
   comparison against 2019 is statistically invalid. I stand by enforcing that at
   the gate, but "how did this change since 2019" is a reasonable question this
   system structurally cannot answer.
-- **Some eval checks are weak.** `PM-02` asserts only that the answer contains
-  the word "median" when what I actually want is an explanation of why medians
-  cannot be aggregated. The live answer did explain it. The check would not have
-  noticed if it hadn't.
+
+### 3b. What my evals cannot see
+
+This section exists because the honest answer to "do your evals prove the agent
+works" is "partly, and here is exactly which part."
+
+- **An example can pass while the agent never answers the question.** This is
+  the sharpest one. `CMP-01` asks which of two counties has more people, and
+  its checks are: did `resolve_geography` return `48453`, did it return
+  `13121`, and did the stream terminate without an unhandled error. In one
+  recorded run the agent resolved both counties, failed twice on the query, and
+  replied *"I tried 2 times to get a grounded answer to this and couldn't."*
+  All three checks passed. The scenario was green.
+
+  Nothing was broken about the checks individually. Each one asserts something
+  true and worth asserting. The gap is that **none of them asserts an answer
+  exists**, so a well-behaved failure satisfies all of them. Bounded recovery
+  is designed to produce exactly that kind of graceful failure, which means the
+  better the failure handling, the easier it is for a scenario to pass without
+  answering anything. `DF-05` does not have this problem, because it asserts
+  the literal string `581,348`, so nothing but a real answer can satisfy it.
+  The fix is to give every scenario that expects an answer something only a
+  real answer can produce.
+
+- **Numeric grounding is enforced, but only where numbers exist.** Rule 2 says
+  every number must come from rows the query returned. That is now checked on
+  every example automatically, deterministically: pull every figure of four or
+  more digits out of the answer, and require each to be a returned value or a
+  simple arithmetic combination of two of them. Deliberately not an LLM judge,
+  because for a number there is nothing to judge and arithmetic is cheaper and
+  more reliable. But in the latest run it verified figures on **4 of the 14
+  examples**. Nine contain no numbers at all (refusals, clarifying questions,
+  the city redirect), so there is nothing to ground. "Grounding passes 14/14"
+  would be a true sentence and a misleading one.
+
+- **`CMP-01`'s grounding is unverifiable, not verified.** The tool-end event
+  exposes only the first row of a query result, deliberately, so a debug panel
+  cannot become an unbounded payload. `CMP-01` returns more rows than that, so
+  its figures cannot be traced and the check reports **inconclusive and
+  passes**. Calling it a fabrication I cannot actually observe would be its own
+  dishonesty, but the practical effect is that the comparison scenario, one of
+  the few that produces multiple real numbers, is the one whose numbers go
+  unchecked.
+
+- **The prose half of grounding does not exist.** Whether the vintage
+  assumption was stated, whether the median explanation is an explanation
+  rather than the word "median", whether the county was offered rather than
+  silently substituted: none of that is checked. `PM-02` asserts only that the
+  answer contains "median". The live answer did explain it properly. The check
+  would not have noticed if it hadn't. That half needs an LLM judge, and a
+  judge needs calibrating against human labels before its scores mean anything,
+  which is a project rather than an afternoon.
+
+- **Nothing runs the evals automatically.** No CI gate, no regression check on
+  commit. The Evals tab now shows a per-example history across commits so a
+  regression is visible as one cell flipping, but somebody still has to run the
+  suite and then look at it.
+
+- **The recorded commit is not the whole story.** An `EvalRun` records
+  `git_sha` but not the model ids, so a change in results could come from
+  Anthropic rather than from me. It also cannot tell that the working tree was
+  dirty, which it was for the run that produced the current `latest.json`.
+
+### 3c. What would break under real traffic
+
+- **No rate limiting and no spend cap.** A public endpoint that calls Anthropic
+  and Snowflake on every request, behind one shared password, is unbounded cost
+  exposure. Fine for a demo with a known reviewer list, not for anything else.
+- **Single instance only.** Sessions are SQLite on a local volume and traces
+  live in process memory. A second replica would split both. This cannot scale
+  horizontally at all, not merely badly.
+- **The watchdog cannot interrupt a call in flight.** It checks the clock
+  between rounds, so one pathological model call can overrun the 50-second
+  budget. Against a 60-second requirement that leaves 10 seconds of slack. The
+  right fix is per-call timeouts and cancellation, not a bigger budget.
+- **Health status can go stale.** Snowflake reachability is checked once at
+  boot and cached (D-015), deliberately, to avoid touching Snowflake at request
+  time outside `run_census_sql`. If Snowflake dies mid-session, `/api/health`
+  keeps reporting healthy. Acceptable because nothing polls it continuously and
+  a real outage still surfaces on the next query.
 
 ---
 
@@ -220,7 +295,7 @@ median-versus-mean case, which is narrower than intended.
 
 ### What I test, and what I deliberately don't
 
-345 tests, written test-first, on every layer where being wrong is either a
+356 tests, written test-first, on every layer where being wrong is either a
 security hole or a silently wrong number: the SQL gate (175 on its own),
 guardrail routing and both fail-open paths, recovery counting, the ambiguity
 backstop, the watchdog against a faked clock rather than real sleeps, degraded
@@ -285,22 +360,69 @@ That is the whole argument for eval-first on an LLM system, in one incident:
 the mocked suite tests my code, and the eval harness tests the system. Only one
 of them was capable of noticing that the product did not work.
 
+### The second incident: I trusted a check I had not calibrated
+
+Late on, I built the numeric grounding check described in section 3b and ran it
+against the real set. It went red twice, and both reds were bugs in the check.
+
+The first run failed `DF-05` and `PM-02`. My number extractor was pulling
+digits out of variable ids, so `B19013e1` became the "figure" 19013, and every
+answer that cited a variable id was reported as a fabrication.
+
+I fixed that, re-ran, and it failed `PM-02` and `PM-08`. This time the figures
+were real: the answers reported a state-level mean, computed as aggregate
+income divided by household count. My checker knew how to verify sums,
+differences and percentages, and did not know how to verify division. I had
+written a groundedness checker for a census agent and left out the one
+arithmetic operation the product is built around, since dividing an aggregate
+by a count is exactly what D-002 says to do when a median cannot be aggregated.
+
+Zero real fabrications in either run. Two rounds of false accusations against
+correct behaviour.
+
+What makes this worth writing down is not the bugs, it is that I read the first
+set of reds as findings about the agent. For a moment I believed the system was
+fabricating numbers, because my instrument said so and my instrument was new. A
+red row in a committed artifact looks like evidence about the system, and it is
+equally likely to be evidence about the thing measuring it.
+
+**A new eval check needs a calibration pass against known-good outputs before
+any red it produces should be believed.** Run it against answers you have
+already confirmed are correct, and treat every red as a suspected bug in the
+check until proven otherwise. That is the same discipline as watching a test
+fail before trusting it to pass, applied to the measuring instrument rather
+than the code. I did not do it, and I got two rounds of confident wrong
+answers from my own tooling.
+
+A related, duller failure from the same session: the harness never called
+`load_dotenv()`, though both its docstring and the Makefile claimed it needed
+`.env`. Run outside a shell that already had the variables exported, every
+scenario died on an authentication error, and the harness dutifully recorded
+`0/14 passed` into a committed artifact. Nothing had been measured. It now
+refuses to run at all when credentials are missing, because a run that measured
+nothing must not produce a file that looks like a catastrophic regression.
+
 ### What I would add, in order
 
-1. **`judge_groundedness`.** The project's most important rule is currently
-   checked by reading answers.
-2. **A live smoke test in CI** on any commit touching the system prompt,
+1. **A check that fails when the agent does not answer.** The `CMP-01` hole:
+   right now a graceful failure satisfies every check a comparison scenario
+   has. This is the cheapest fix on the list and closes the largest blind spot.
+2. **The prose half of grounding**, with a judge calibrated against my own
+   labels before I believe any score it produces.
+3. **A live smoke test in CI** on any commit touching the system prompt,
    `src/tools.py`, or `src/sqlgate.py`. One real question, one known number,
    about 20 seconds and a few cents.
-3. **A contract test against the real catalog**, asserting from
+4. **A contract test against the real catalog**, asserting from
    `INFORMATION_SCHEMA.COLUMNS` that variable columns are mixed-case, so the
    assumption that broke everything is pinned by data rather than by a sentence
    in a prompt. Same for the schema beliefs that already bit me once.
-4. **The deleted scenarios, as tests that run.** Malformed input, more
+5. **The deleted scenarios, as tests that run.** Malformed input, more
    injection shapes, NULL and top-coded values, multi-turn drift, worst-case
    latency.
-5. **A regression gate**, so a pass-rate drop fails a commit instead of waiting
+6. **A regression gate**, so a pass-rate drop fails a commit instead of waiting
    for someone to look at a tab.
-6. **Stronger checks.** The general fix is to test the checks themselves:
+7. **Stronger checks.** The general fix is to test the checks themselves:
    mutate a known-good answer into a known-bad one and confirm the check goes
-   red. A check that has never failed has not been tested.
+   red. A check that has never failed has not been tested. The grounding check
+   above is the proof: it had never been seen to fail correctly, and its first
+   two failures were both its own.

@@ -928,11 +928,38 @@
     );
   }
 
-  function renderEvalRun(run) {
+  function renderEvalRun(run, history) {
     if (!run) return "";
     const rows = run.results || [];
     const passed = rows.filter(function (r) { return r.passed; }).length;
     const when = new Date(run.run_at).toLocaleString();
+
+    // This table is ONE run. When a commit was run several times, whichever
+    // run happened to go last became latest.json, so a headline of "14/14"
+    // can be the lucky one — the selection effect evals/README.md warns
+    // about. Name it here rather than let the number stand alone.
+    const sameCommit = (history || []).filter(function (h) {
+      return h.git_sha === run.git_sha;
+    });
+    let caveat = "";
+    if (sameCommit.length > 1) {
+      const inconsistent = [];
+      Object.keys(sameCommit[0].scenarios || {}).forEach(function (id) {
+        const outcomes = sameCommit.map(function (h) { return h.scenarios[id]; });
+        if (outcomes.indexOf(true) !== -1 && outcomes.indexOf(false) !== -1) {
+          inconsistent.push(id);
+        }
+      });
+      caveat =
+        "<p class='section-lead'><strong>This is one of " + sameCommit.length +
+        " runs recorded at this commit</strong>, so the count above is a single " +
+        "sample, not a verdict." +
+        (inconsistent.length
+          ? " " + escapeHtml(inconsistent.join(", ")) +
+            " did not give the same result every time — see Run history below for the ratio."
+          : " Every example gave the same result in all of them.") +
+        "</p>";
+    }
 
     return (
       "<div class='eval-section'><h2>Test results</h2>" +
@@ -943,8 +970,9 @@
       "look clean.</p></div>" +
       "<div class='eval-summary'>" +
         "<div class='eval-stat'><div class='n'>" + passed + "/" + rows.length + "</div>" +
-          "<div class='l'>passing</div></div>" +
+          "<div class='l'>passing this run</div></div>" +
       "</div>" +
+      caveat +
       renderExecuted(rows)
     );
   }
@@ -960,7 +988,7 @@
       if (!data.latest) {
         html += '<p class="empty-state">No eval runs recorded yet.</p>';
       } else {
-        html += renderEvalRun(data.latest);
+        html += renderEvalRun(data.latest, data.history);
         html += renderHistory(data.history);
       }
     } catch (e) {

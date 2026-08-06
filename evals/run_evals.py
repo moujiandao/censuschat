@@ -290,7 +290,10 @@ def _score_check(check: Check, obs: Observation) -> CheckResult:
 # an actual explanation), and that half remains unbuilt.
 # --------------------------------------------------------------------------
 
-_FIGURE_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
+# The boundaries matter: without them `B19013e1` yields the "figure" 19013 and
+# every answer that cites a variable id is reported as a fabrication. Found
+# exactly that way, on the first live run after this check was added.
+_FIGURE_RE = re.compile(r"(?<![A-Za-z0-9])\d[\d,]*(?:\.\d+)?(?![A-Za-z0-9])")
 
 # Below this many digits the token is almost never a data claim: "5-year",
 # "2 counties", "19% higher". Cheap precision at a known cost in recall, and a
@@ -341,8 +344,13 @@ def _is_grounded(figure: float, returned: list[float]) -> bool:
                 continue
             if close(figure, abs(a - b)) or close(figure, a + b):
                 return True
-            if b and close(figure, a / b * 100):
-                return True
+            if b:
+                # Plain division is the mean substitution this product is
+                # built around: aggregate income / households is exactly what
+                # D-002 says to answer with when a median can't be aggregated.
+                # Omitting it failed PM-02 and PM-08 on correct behaviour.
+                if close(figure, a / b) or close(figure, a / b * 100):
+                    return True
     return False
 
 
@@ -356,7 +364,19 @@ def _grounding_check(obs: Observation) -> CheckResult:
         )
 
     returned = obs.returned_values
-    unsourced = [f for f in figures if not _is_grounded(float(f.replace(",", "")), returned)]
+    # A figure echoed verbatim from anywhere in this turn's tool traffic (a
+    # geo_id, a row the summary shows, a value in the SQL) is by definition
+    # not invented, which is what rule 2 is about. Widening to the whole
+    # evidence blob is more robust than trying to enumerate every identifier
+    # shape a model might mention.
+    evidence = obs.tool_evidence
+    unsourced = [
+        f
+        for f in figures
+        if not _is_grounded(float(f.replace(",", "")), returned)
+        and f not in evidence
+        and f.replace(",", "") not in evidence
+    ]
 
     if not unsourced:
         return CheckResult(
