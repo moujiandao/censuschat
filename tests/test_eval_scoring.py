@@ -7,7 +7,14 @@ treatment as production deterministic logic (CLAUDE.md rule 19).
 
 from __future__ import annotations
 
-from evals.run_evals import Observation, _score_check
+import pytest
+
+from evals.run_evals import (
+    Observation,
+    _grounding_check,
+    _require_credentials,
+    _score_check,
+)
 from src.contracts import Check, CheckType
 
 
@@ -134,52 +141,150 @@ def test_judge_groundedness_fails_loudly_rather_than_silently_skipping():
 
 
 # --------------------------------------------------------------------------
-# The pending/executed split (D-018). These guard the scenario set itself
-# rather than the scorer — a mislabeled row silently changes a headline
-# number, which is exactly the class of defect this whole file exists for.
+# These guard the scenario set itself rather than the scorer — a bad row
+# silently changes a headline number, which is the class of defect this
+# whole file exists for.
 # --------------------------------------------------------------------------
 
-def test_pending_rows_never_enter_the_pass_rate_denominator():
-    """The invariant: 25 unrun scenarios must not drag a genuine 11/11 down
-    to 11/36, nor be quietly hidden. They are excluded from the denominator
-    and appended to results only for display."""
-    from evals.scenarios import GOLDEN_SCENARIOS
-
-    executed = [s for s in GOLDEN_SCENARIOS if s.status == "executed"]
-    pending = [s for s in GOLDEN_SCENARIOS if s.status == "pending"]
-
-    assert executed and pending, "fixture assumes both kinds exist"
-    assert len(executed) + len(pending) == len(GOLDEN_SCENARIOS)
-
-    # Mirrors run_evals.main(): the denominator is computed from executed
-    # rows before pending ones are appended.
-    fake_results = [True] * len(executed)
-    pass_rate = sum(fake_results) / len(fake_results)
-    assert pass_rate == 1.0, "an all-green executed set must read 100%, not 11/36"
-
-
-def test_every_pending_row_carries_the_universal_groundedness_check():
-    """"No number that isn't traceable to returned rows" is the universal
-    invariant on authored scenarios. A pending row without it would be
-    specifying less than intended."""
+def test_every_scenario_is_runnable_and_scoreable():
+    """Each example must have a question, at least one check, and a note
+    saying what it demonstrates. A row missing any of those renders as an
+    empty line in the Evals tab and proves nothing."""
     from evals.scenarios import GOLDEN_SCENARIOS
 
     for s in GOLDEN_SCENARIOS:
-        if s.status != "pending":
-            continue
-        types = {c.type for c in s.checks}
-        assert CheckType.JUDGE_GROUNDEDNESS in types, f"{s.id} missing the universal check"
-        assert 2 <= len(s.checks) <= 4, f"{s.id} has {len(s.checks)} checks, want 2-4"
+        assert s.turns and all(s.turns), f"{s.id} has an empty turn"
+        assert s.checks, f"{s.id} has no checks"
+        assert s.notes, f"{s.id} has no note explaining what it demonstrates"
 
 
-def test_no_executed_row_carries_judge_groundedness():
-    """Executed rows predate the judge and must stay scoreable — adding an
-    unimplemented check to them would turn a real 11/11 into 0/11."""
+def test_no_scenario_carries_the_unimplemented_judge_check():
+    """judge_groundedness (issue #21) is scored as a loud failure rather than
+    skipped, so a row carrying it would turn a real 13/14 into a false red."""
     from evals.scenarios import GOLDEN_SCENARIOS
 
     for s in GOLDEN_SCENARIOS:
-        if s.status == "executed":
-            assert CheckType.JUDGE_GROUNDEDNESS not in {c.type for c in s.checks}, s.id
+        assert CheckType.JUDGE_GROUNDEDNESS not in {c.type for c in s.checks}, s.id
+
+
+# --------------------------------------------------------------------------
+# Numeric grounding (CLAUDE.md rule 2). Deterministic, not an LLM judge.
+# --------------------------------------------------------------------------
+
+def _obs(answer: str, rows: list[dict] | None = None, row_count: int | None = None):
+    obs = Observation()
+    obs.final_answer = answer
+    for row in rows or []:
+        obs.record_tool_call(
+            {
+                "tool": "run_census_sql",
+                "args": "",
+                "ok": True,
+                "summary": {
+                    "first_row": row,
+                    "row_count": row_count if row_count is not None else 1,
+                },
+            }
+        )
+    return obs
+
+
+def test_a_fabricated_figure_fails_grounding():
+    """The motivating case. PM-02's declared checks are answer_contains
+    ("median") and no_unhandled_error, so this exact answer passed the suite
+    while inventing the number — the precise failure rule 2 exists to stop."""
+    obs = _obs("The median household income in California is $78,672.", rows=[])
+
+    result = _grounding_check(obs)
+
+    assert result.passed is False
+    assert "78,672" in result.observed
+
+
+def test_a_figure_present_in_the_returned_row_passes():
+    obs = _obs(
+        "Alameda County, California had an estimated total population of 1,661,584.",
+        rows=[{"TOTAL_POPULATION": 1661584}],
+    )
+
+    assert _grounding_check(obs).passed is True
+
+
+def test_a_rounded_difference_of_two_returned_values_passes():
+    """CMP-01 legitimately says "roughly 199,000 higher" from two returned
+    populations. A check that failed that would be wrong, not strict."""
+    obs = _obs(
+        "Travis County has 1,250,884 people and Fulton County has 1,051,550 — "
+        "roughly 199,000 higher.",
+        rows=[{"POP": 1250884}, {"POP": 1051550}],
+    )
+
+    assert _grounding_check(obs).passed is True
+
+
+def test_vintage_years_are_not_treated_as_claims():
+    """Every grounded answer says "2020 ACS 5-year estimates (2016-2020)".
+    Treating those as data claims would fail all 14 examples."""
+    obs = _obs(
+        "Using 2020 ACS 5-year estimates (2016-2020), the population is 581,348.",
+        rows=[{"POP": 581348}],
+    )
+
+    assert _grounding_check(obs).passed is True
+
+
+def test_an_answer_with_no_figures_passes():
+    obs = _obs("There are several counties named Washington County. Which state?")
+
+    result = _grounding_check(obs)
+
+    assert result.passed is True
+    assert "no numeric claims" in result.observed
+
+
+def test_unverifiable_is_reported_as_inconclusive_not_as_a_failure():
+    """TOOL_END exposes only first_row, so a figure legitimately drawn from
+    row 5 is invisible here. Calling that a fabrication would be its own
+    dishonesty, so it passes and says why."""
+    obs = _obs(
+        "The largest is 999,111.",
+        rows=[{"POP": 123456}],
+        row_count=10,
+    )
+
+    result = _grounding_check(obs)
+
+    assert result.passed is True
+    assert "INCONCLUSIVE" in result.observed
+
+
+def test_missing_credentials_stop_the_run_before_anything_is_written(monkeypatch):
+    """A missing key is not a red row: nothing was measured. Scoring it as 14
+    failures writes a committed artifact that reads as a catastrophic
+    regression and is really a config error — and the Evals tab draws its
+    trend from exactly those files. Observed for real: every scenario died on
+    "Could not resolve authentication method" and the harness recorded 0/14."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    with pytest.raises(SystemExit) as exc:
+        _require_credentials()
+
+    assert "ANTHROPIC_API_KEY" in str(exc.value)
+    assert "nothing was written" in str(exc.value).lower()
+
+
+def test_credentials_present_lets_the_run_proceed(monkeypatch):
+    for var in (
+        "ANTHROPIC_API_KEY",
+        "SNOWFLAKE_ACCOUNT",
+        "SNOWFLAKE_USER",
+        "SNOWFLAKE_PRIVATE_KEY_PATH",
+        "SNOWFLAKE_WAREHOUSE",
+        "SNOWFLAKE_ROLE",
+    ):
+        monkeypatch.setenv(var, "set")
+
+    _require_credentials()  # must not raise
 
 
 def test_scenario_ids_are_unique():

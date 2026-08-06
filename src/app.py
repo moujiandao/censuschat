@@ -119,76 +119,103 @@ _EVALS_RESULTS_DIR = Path("evals/results")
 
 
 def _scenario_index() -> dict[str, dict]:
-    """Scenario id -> the authoring context a stored EvalResult doesn't carry.
+    """Scenario id -> the question and notes a stored EvalResult doesn't carry.
 
     An EvalResult records what happened (checks, answer, elapsed) but not what
     was *asked* or why, so the Evals tab could only ever render opaque ids.
     Rather than widen the frozen contract (CLAUDE.md rule 12) — which would
-    also only help runs recorded from now on — the question text, notes, and
-    provenance are joined on at read time from evals/scenarios.py, which
-    retroactively labels the result files already committed.
+    also only help runs recorded from now on — both are joined on at read time
+    from evals/scenarios.py, which labels the result files already committed.
 
     Imported lazily and defensively: a deployment without evals/ on the path
     must still serve stored results, just unlabeled.
     """
     try:
-        from evals.scenarios import GOLDEN_SCENARIOS, PRD_SCENARIO_IDS
+        from evals.scenarios import GOLDEN_SCENARIOS
     except Exception:  # pragma: no cover - defensive; evals/ is shipped
         logger.warning("evals.scenarios unavailable; serving unlabeled results")
         return {}
 
-    return {
-        s.id: {
-            "turns": list(s.turns),
-            "notes": s.notes,
-            # PRD §7 rows were designed before any agent code existed;
-            # everything else was authored against a working system. The
-            # distinction is what a reader needs to weigh a green row.
-            "provenance": "prd" if s.id in PRD_SCENARIO_IDS else "authored",
-        }
-        for s in GOLDEN_SCENARIOS
-    }
+    return {s.id: {"turns": list(s.turns), "notes": s.notes} for s in GOLDEN_SCENARIOS}
 
 
 def _annotate(run: dict | None, index: dict[str, dict]) -> dict | None:
-    """Attach scenario context to each result, in place on the loaded dict.
+    """Attach the question and notes to each result, in place on the loaded dict.
 
-    A result whose scenario id no longer exists in scenarios.py (an older run
-    referencing a since-renamed row) is annotated as "unknown" rather than
-    dropped or raised on — a stale id is a labeling gap, not a reason to fail
-    the whole tab.
+    Rows an older harness recorded as "pending" are dropped: they were
+    scenarios authored but never run, a distinction the set no longer carries,
+    and an unrun scenario is not evidence about anything. They stay in the
+    stored files, which are a historical record and shouldn't be rewritten to
+    tidy the UI.
+
+    A row whose scenario is no longer in scenarios.py is kept, unlabeled. It
+    still records a real run, and dropping it would empty the tab entirely on
+    the import-failure path below.
     """
     if not run:
         return run
+    kept = []
     for result in run.get("results", []):
+        if result.get("status") == "pending":
+            continue
         meta = index.get(result.get("scenario_id"))
         result["turns"] = meta["turns"] if meta else []
         result["notes"] = meta["notes"] if meta else None
-        result["provenance"] = meta["provenance"] if meta else "unknown"
+        kept.append(result)
+    run["results"] = kept
     return run
 
 
-def _load_evals() -> dict:
-    """The Evals tab renders latest vs. previous EvalRun directly (per
-    docs/01-architecture.md) — evals/results/latest.json is always the
-    most recent run; the second-most-recent timestamped file (everything
-    in the directory except latest.json itself) is "previous", or None on
-    a repo with only one run on record.
+def _history() -> list[dict]:
+    """Every recorded run, oldest first, as a compact pass/fail projection.
 
-    Each result is enriched with its scenario's turns/notes/provenance —
-    see _scenario_index."""
+    Deliberately not the full runs: the tab only needs which scenario passed
+    in which run to draw the matrix, and shipping every answer and check for
+    every historical run would grow the payload without being read.
+
+    `latest.json` is skipped because it is a copy of the newest timestamped
+    file, and counting it twice would show a phantom extra run — which, on a
+    view whose whole job is "are we improving," is the worst kind of bug.
+    """
+    runs = []
+    for path in sorted(_EVALS_RESULTS_DIR.glob("*.json")):
+        if path.name == "latest.json":
+            continue
+        try:
+            run = json.loads(path.read_text())
+        except Exception:  # pragma: no cover - a corrupt file shouldn't kill the tab
+            logger.warning("skipping unreadable eval result %s", path.name)
+            continue
+        runs.append(
+            {
+                "run_at": run.get("run_at"),
+                "git_sha": run.get("git_sha"),
+                "pass_rate": run.get("pass_rate"),
+                "scenarios": {
+                    r["scenario_id"]: r["passed"]
+                    for r in run.get("results", [])
+                    if r.get("status") != "pending"
+                },
+            }
+        )
+    return runs
+
+
+def _load_evals() -> dict:
+    """What the Evals tab renders: the newest run in full, plus a compact
+    history of every recorded run so the tab can show whether things are
+    improving.
+
+    `evals/results/latest.json` is always a copy of the most recent run. Each
+    result in it is enriched with its scenario's question and notes — see
+    _scenario_index.
+    """
     latest_path = _EVALS_RESULTS_DIR / "latest.json"
     if not latest_path.exists():
-        return {"latest": None, "previous": None}
+        return {"latest": None, "history": []}
 
     latest = json.loads(latest_path.read_text())
-    timestamped = sorted(
-        p for p in _EVALS_RESULTS_DIR.glob("*.json") if p.name != "latest.json"
-    )
-    previous = json.loads(timestamped[-2].read_text()) if len(timestamped) >= 2 else None
-
-    index = _scenario_index()
-    return {"latest": _annotate(latest, index), "previous": _annotate(previous, index)}
+    return {"latest": _annotate(latest, _scenario_index()), "history": _history()}
 
 
 @app.get("/api/evals")

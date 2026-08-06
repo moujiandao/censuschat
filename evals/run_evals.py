@@ -23,6 +23,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
+import re
 import subprocess
 import sys
 import time
@@ -30,8 +32,18 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.agent import _REFUSAL_MESSAGES, agent_turn
-from src.contracts import (
+from dotenv import load_dotenv
+
+# MUST run before importing src.agent: that module builds its Anthropic client
+# at import time, reading the key straight from the process environment. Import
+# it first and the client is constructed keyless, and every scenario then dies
+# on "Could not resolve authentication method" — which the harness dutifully
+# scores as 14 genuine failures. The docstring above and the Makefile both
+# promised .env support that nothing actually implemented.
+load_dotenv()
+
+from src.agent import _REFUSAL_MESSAGES, agent_turn  # noqa: E402
+from src.contracts import (  # noqa: E402
     Check,
     CheckResult,
     CheckType,
@@ -42,6 +54,31 @@ from src.contracts import (
 )
 
 RESULTS_DIR = Path(__file__).parent / "results"
+
+# Checked before anything runs. A missing credential is not a red row: it means
+# nothing was measured, and writing "0/14 passed" for it produces an artifact
+# that looks like a catastrophic regression and is really a config error. The
+# committed history is what the Evals tab draws its trend from, so a fabricated
+# 0% column is worse than a crash.
+_REQUIRED_ENV = (
+    "ANTHROPIC_API_KEY",
+    "SNOWFLAKE_ACCOUNT",
+    "SNOWFLAKE_USER",
+    "SNOWFLAKE_PRIVATE_KEY_PATH",
+    "SNOWFLAKE_WAREHOUSE",
+    "SNOWFLAKE_ROLE",
+)
+
+
+def _require_credentials() -> None:
+    missing = [v for v in _REQUIRED_ENV if not os.environ.get(v)]
+    if missing:
+        raise SystemExit(
+            "missing credentials: " + ", ".join(missing) + "\n"
+            "This is a live-call harness. Populate .env (see .env.example) or "
+            "export them.\nNothing was run and nothing was written to "
+            "evals/results/."
+        )
 
 # The exact canned strings agent_turn emits on a guardrail REFUSE verdict —
 # used to tell a guardrail refusal apart from a model self-refusal.
@@ -89,6 +126,46 @@ class Observation:
     def ran_sql_successfully(self) -> bool:
         return any(
             c["tool"] == "run_census_sql" and c["ok"] for c in self.tool_calls
+        )
+
+    @property
+    def returned_values(self) -> list[float]:
+        """Every numeric value this turn's successful run_census_sql calls
+        actually returned. This is the literal evidence set CLAUDE.md rule 2
+        names: "rows returned by this turn's QueryResults"."""
+        values: list[float] = []
+        for call in self.tool_calls:
+            if call["tool"] != "run_census_sql" or not call["ok"]:
+                continue
+            row = (call.get("summary") or {}).get("first_row") or {}
+            for v in row.values():
+                if isinstance(v, bool):
+                    continue
+                if isinstance(v, (int, float)):
+                    values.append(float(v))
+                elif isinstance(v, str):
+                    try:
+                        values.append(float(v.replace(",", "")))
+                    except ValueError:
+                        pass
+        return values
+
+    @property
+    def has_unseen_rows(self) -> bool:
+        """True when a query returned more rows than the harness can see.
+
+        `_summarize_tool_result` deliberately caps run_census_sql at
+        `first_row` so a debug panel can't become an unbounded payload. That
+        cap is right for the UI and blinds this check: a figure legitimately
+        drawn from row 5 would look unsourced. When it applies, grounding is
+        reported as inconclusive rather than failed — claiming a fabrication
+        we cannot actually see would be its own dishonesty.
+        """
+        return any(
+            c["tool"] == "run_census_sql"
+            and c["ok"]
+            and ((c.get("summary") or {}).get("row_count") or 0) > 1
+            for c in self.tool_calls
         )
 
 
@@ -191,13 +268,121 @@ def _score_check(check: Check, obs: Observation) -> CheckResult:
         )
 
     if check.type == CheckType.JUDGE_GROUNDEDNESS:
-        return CheckResult(
-            check=check,
-            passed=False,
-            observed="judge_groundedness not implemented (issue #21, cut)",
-        )
+        # Implemented for the numeric half only — see _grounding_check. Every
+        # scenario gets this appended automatically, so declaring it on a
+        # scenario is redundant rather than wrong.
+        return _grounding_check(obs)
 
     return CheckResult(check=check, passed=False, observed=f"unknown check {check.type}")
+
+
+# --------------------------------------------------------------------------
+# Numeric grounding — CLAUDE.md rule 2, the invariant the whole architecture
+# exists to protect, and until now the one with no automated enforcement
+# anywhere in the project.
+#
+# Deliberately deterministic rather than an LLM judge. For *numeric* claims
+# there is nothing to judge: either the figure is in the rows the query
+# returned or it is not. A judge would cost money, need calibrating against
+# human labels before its scores meant anything, and be less reliable at the
+# one thing plain arithmetic does perfectly. The judge is still the right
+# tool for the prose half (is the vintage stated, is the median explanation
+# an actual explanation), and that half remains unbuilt.
+# --------------------------------------------------------------------------
+
+_FIGURE_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+# Below this many digits the token is almost never a data claim: "5-year",
+# "2 counties", "19% higher". Cheap precision at a known cost in recall, and a
+# check that cries wolf is a check people delete.
+_MIN_CLAIM_DIGITS = 4
+_ROUNDING_TOLERANCE = 0.01
+
+
+def _integer_digits(token: str) -> str:
+    return token.replace(",", "").split(".")[0]
+
+
+def _is_vintage_year(token: str) -> bool:
+    """2020, 2016 and friends are vintage framing, not claims about rows."""
+    digits = _integer_digits(token)
+    return len(digits) == 4 and 1900 <= int(digits) <= 2100
+
+
+def _claimed_figures(answer: str) -> list[str]:
+    seen: list[str] = []
+    for token in _FIGURE_RE.findall(answer):
+        if len(_integer_digits(token)) < _MIN_CLAIM_DIGITS or _is_vintage_year(token):
+            continue
+        if token not in seen:
+            seen.append(token)
+    return seen
+
+
+def _is_grounded(figure: float, returned: list[float]) -> bool:
+    """Sourced if the figure is a returned value, or a simple arithmetic
+    combination of two of them.
+
+    The derived case is not generosity: CMP-01 legitimately answers "roughly
+    199,000 higher" from two returned populations, and a check that failed it
+    would be wrong. Tolerance covers the rounding the model applies when it
+    says "roughly".
+    """
+
+    def close(a: float, b: float) -> bool:
+        scale = max(abs(a), abs(b), 1.0)
+        return abs(a - b) / scale <= _ROUNDING_TOLERANCE
+
+    if any(close(figure, v) for v in returned):
+        return True
+    for a in returned:
+        for b in returned:
+            if a is b:
+                continue
+            if close(figure, abs(a - b)) or close(figure, a + b):
+                return True
+            if b and close(figure, a / b * 100):
+                return True
+    return False
+
+
+def _grounding_check(obs: Observation) -> CheckResult:
+    check = Check(type=CheckType.JUDGE_GROUNDEDNESS)
+    figures = _claimed_figures(obs.final_answer)
+
+    if not figures:
+        return CheckResult(
+            check=check, passed=True, observed="no numeric claims in the answer"
+        )
+
+    returned = obs.returned_values
+    unsourced = [f for f in figures if not _is_grounded(float(f.replace(",", "")), returned)]
+
+    if not unsourced:
+        return CheckResult(
+            check=check,
+            passed=True,
+            observed=f"{len(figures)} figure(s) traced to returned rows: {figures}",
+        )
+
+    if obs.has_unseen_rows:
+        return CheckResult(
+            check=check,
+            passed=True,
+            observed=(
+                f"INCONCLUSIVE — {unsourced} not in the rows this harness can see, "
+                "but a query returned more rows than TOOL_END exposes"
+            ),
+        )
+
+    return CheckResult(
+        check=check,
+        passed=False,
+        observed=(
+            f"UNSOURCED {unsourced} — not in any row this turn's run_census_sql "
+            f"returned (saw {returned or 'no rows at all'})"
+        ),
+    )
 
 
 def _git_sha() -> str:
@@ -224,31 +409,17 @@ def _select(scenario_ids: list[str]) -> list[str]:
     return scenario_ids
 
 
-async def main() -> int:
-    from evals.scenarios import GOLDEN_SCENARIOS
+async def _run_all(scenarios: list) -> EvalRun:
+    """One complete pass over the set, scored, as a single EvalRun.
 
-    parser = argparse.ArgumentParser(prog="python -m evals.run_evals")
-    parser.add_argument(
-        "--only",
-        default="",
-        help=(
-            "Comma-separated scenario ids to run instead of the full executed "
-            "set. A filtered run writes NOTHING to evals/results/ — see below."
-        ),
-    )
-    args = parser.parse_args()
-    only = _select([i.strip() for i in args.only.split(",") if i.strip()])
-
-    executed = [s for s in GOLDEN_SCENARIOS if s.status == "executed"]
-    pending = [s for s in GOLDEN_SCENARIOS if s.status == "pending"]
-    if only:
-        # A filtered run is a debugging aid, not a result. It deliberately
-        # ignores `status` so a pending row can be tried without promoting it.
-        executed = [s for s in GOLDEN_SCENARIOS if s.id in only]
-        pending = []
-
+    Deliberately returns a whole run rather than accumulating across repeats:
+    with a live model a scenario is a coin with an unknown bias, so N passes
+    are N independent measurements, not one measurement of N samples. Keeping
+    them as separate EvalRuns is what lets the Evals tab show `2/3` for a
+    flaky row without inventing a place to store that in the frozen contract.
+    """
     results: list[EvalResult] = []
-    for scenario in executed:
+    for scenario in scenarios:
         print(f"running {scenario.id} ({scenario.category.value})…", flush=True)
         try:
             obs, elapsed = await _run_scenario(scenario)
@@ -269,7 +440,12 @@ async def main() -> int:
             )
             continue
 
+        # Rule 2 applies to every turn, so it is enforced on every scenario
+        # rather than being something an author has to remember to declare.
+        # Appended, not declared, precisely so a new example cannot omit it.
         check_results = [_score_check(c, obs) for c in scenario.checks]
+        if not any(c.check.type == CheckType.JUDGE_GROUNDEDNESS for c in check_results):
+            check_results.append(_grounding_check(obs))
         passed = all(c.passed for c in check_results)
         results.append(
             EvalResult(
@@ -284,10 +460,7 @@ async def main() -> int:
         mark = "PASS" if passed else "FAIL"
         print(f"  {mark} ({elapsed:.1f}s)", flush=True)
 
-    # Pass rate and by-category are computed from EXECUTED rows only, before
-    # pending rows are appended. An unrun backlog must never move a real
-    # number in either direction — 25 pending scenarios dragging a genuine
-    # 11/11 down to 11/36 would be as dishonest as hiding them entirely.
+    # Every scenario in the set is run, so the denominator is simply the set.
     by_category: dict[str, list[bool]] = {}
     for r in results:
         by_category.setdefault(r.category.value, []).append(r.passed)
@@ -296,23 +469,13 @@ async def main() -> int:
     n_passed = sum(1 for r in results if r.passed)
     pass_rate = n_passed / n_executed if n_executed else 0.0
 
-    # Appended AFTER the denominators are fixed, purely so the Evals tab can
-    # show the backlog. passed=False here means "no evidence", not "failed";
-    # the status field is what distinguishes them and the UI renders on that.
-    results = results + [
-        EvalResult(
-            scenario_id=s.id,
-            category=s.category,
-            passed=False,
-            checks=[],
-            answer_final="",
-            elapsed_s=0.0,
-            status="pending",
-        )
-        for s in pending
-    ]
+    print(f"\n{n_passed}/{n_executed} passed ({pass_rate:.0%})")
+    for r in results:
+        if not r.passed:
+            failed = [c.check.type.value for c in r.checks if not c.passed]
+            print(f"  RED  {r.scenario_id:8s} {', '.join(failed)}")
 
-    run = EvalRun(
+    return EvalRun(
         run_at=datetime.now(timezone.utc),
         git_sha=_git_sha(),
         results=results,
@@ -320,27 +483,71 @@ async def main() -> int:
         by_category={k: sum(v) / len(v) for k, v in by_category.items()},
     )
 
-    print(f"\n{n_passed}/{n_executed} executed passed ({pass_rate:.0%})"
-          f" — {len(pending)} pending, excluded from the denominator")
-    for r in results:
-        if r.status == "executed" and not r.passed:
-            failed = [c.check.type.value for c in r.checks if not c.passed]
-            print(f"  RED  {r.scenario_id:8s} {', '.join(failed)}")
 
-    # A filtered run must never touch evals/results/. Its pass rate is over a
-    # hand-picked subset, so writing it would overwrite the committed artifact
-    # with a number that looks like a full run and isn't. Rule 20's "red rows
-    # are kept" only means anything if latest.json is always a whole run.
-    if only:
-        print("\n--only: filtered run, nothing written to evals/results/")
-        return 0
-
+def _write(run: EvalRun) -> str:
     RESULTS_DIR.mkdir(exist_ok=True)
     payload = json.loads(run.model_dump_json())
     stamp = run.run_at.strftime("%Y%m%dT%H%M%SZ")
+    # Two runs inside the same second would otherwise overwrite each other,
+    # silently discarding a measurement — the one thing a repeat run exists to
+    # collect. Unlikely at ~2.6 min per pass, cheap to make impossible.
+    suffix = 0
+    while (RESULTS_DIR / f"{stamp}.json").exists():
+        suffix += 1
+        stamp = f"{run.run_at.strftime('%Y%m%dT%H%M%SZ')}-{suffix}"
     (RESULTS_DIR / f"{stamp}.json").write_text(json.dumps(payload, indent=2))
     (RESULTS_DIR / "latest.json").write_text(json.dumps(payload, indent=2))
-    print(f"wrote evals/results/{stamp}.json and latest.json")
+    return stamp
+
+
+async def main() -> int:
+    from evals.scenarios import GOLDEN_SCENARIOS
+
+    parser = argparse.ArgumentParser(prog="python -m evals.run_evals")
+    parser.add_argument(
+        "--only",
+        default="",
+        help=(
+            "Comma-separated scenario ids to run instead of the full executed "
+            "set. A filtered run writes NOTHING to evals/results/ — see below."
+        ),
+    )
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help=(
+            "Run the whole set N times, writing N separate result files. With "
+            "a live model one run is not a measurement: a scenario that passes "
+            "2 of 3 times is flaky, and a single run reports it as a clean "
+            "pass or a clean fail. The Evals tab groups runs by commit and "
+            "shows the ratio."
+        ),
+    )
+    args = parser.parse_args()
+    if args.repeat < 1:
+        raise SystemExit("--repeat must be at least 1")
+    _require_credentials()
+    only = _select([i.strip() for i in args.only.split(",") if i.strip()])
+
+    scenarios = [s for s in GOLDEN_SCENARIOS if s.id in only] if only else GOLDEN_SCENARIOS
+
+    for i in range(args.repeat):
+        if args.repeat > 1:
+            print(f"\n=== run {i + 1} of {args.repeat} ===", flush=True)
+        run = await _run_all(scenarios)
+
+        # A filtered run must never touch evals/results/. Its pass rate is over
+        # a hand-picked subset, so writing it would overwrite the committed
+        # artifact with a number that looks like a full run and isn't. Rule 20's
+        # "red rows are kept" only means anything if latest.json is a whole run.
+        if only:
+            print("\n--only: filtered run, nothing written to evals/results/")
+            continue
+
+        stamp = _write(run)
+        print(f"wrote evals/results/{stamp}.json and latest.json")
+
     return 0
 
 

@@ -3,7 +3,13 @@
 These are rules, not guidance. Violating any of them is a defect. Deviating
 requires an entry in `docs/decisions.md` and Brian's explicit approval first.
 Requirement truth: `docs/assignment.pdf`. Decision truth:
-`docs/plans/01-architecture.md`. Interface truth: `src/contracts.py`.
+`docs/01-architecture.md` (the original brief said `docs/plans/`; see
+**D-006**). Interface truth: `src/contracts.py`.
+
+Rules 15, 17, and 18 were knowingly deviated from during the build. The rule
+text below is left unchanged on purpose — what was committed to and where it
+was departed from are both evidence. Each deviation carries a `docs/decisions.md`
+entry, flagged inline.
 
 ## Security & grounding
 
@@ -54,13 +60,21 @@ Requirement truth: `docs/assignment.pdf`. Decision truth:
     config module: Sonnet for the agent, Haiku for the classifier.
 15. Frontend is one static HTML file (vanilla JS, CDN assets only, no build
     step) with three tabs: Chat, Evals, Flow Diagram.
+    *Shipped with five tabs — Trace Logging and Data Source added. The tab
+    list is a minimum surface, not a cap; the single-file/no-build half is
+    the binding half and holds. **D-017**.*
 16. Session state = full history replay from SQLite keyed by `session_id`.
 17. Every turn is one Langfuse trace: `session_id` in metadata; spans for
     guardrail, each tool call, and each model call; token counts and
     latency recorded.
+    *Not satisfied. Langfuse was cut for time; the span model shipped as
+    in-process tracing (`src/tracing.py`, Trace Logging tab) with no
+    persistence, no cross-session search, no alerting. **D-021**.*
 18. Deploy = Docker Compose (app + Caddy) on EC2 at
     `https://censuschat.brianmar.com` behind basic auth. Caddy reaches the
     app by compose service name, never `localhost`.
+    *Caddy is native on the host (it also serves another site), so compose
+    starts only `app`, published on `127.0.0.1:8000`. **D-016**.*
 
 ## Process
 

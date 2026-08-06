@@ -35,10 +35,9 @@ Paste these into the Chat tab. Each one exercises a different required
 behavior. Open the **Flow Diagram** tab after each to see the tool calls that
 produced the answer.
 
-These three are also listed at the top of the **Evals** tab, where clicking one
-loads it into Chat. They are run by hand, so they appear in no recorded eval
-run — but each duplicates a golden scenario (`DF-05`, `AMB-01`, `UN-01`), named
-there so the two lists cannot drift apart.
+These three are also at the top of the **Evals** tab, where clicking one loads
+it into Chat. They are the same questions as examples `DF-05`, `AMB-01` and
+`UN-01` in the results table there.
 
 **1. Happy path — grounded retrieval**
 
@@ -178,7 +177,13 @@ number.
   snowflake-connector-python. Models pinned in one module
   (`src/model_config.py`): Sonnet for the agent, Haiku for the classifier.
 - **Interface contract** is `src/contracts.py`, treated as frozen. Decisions
-  and interpretation calls are logged in `docs/decisions.md` (D-001 … D-020).
+  and interpretation calls are logged in `docs/decisions.md` (D-001 … D-022).
+
+`docs/flow-diagram.html` is a standalone, self-contained walkthrough of this
+same path — boot, guardrail, tool loop, gate — with each layer labeled by
+whether it can be talked past. Open it in a browser; it needs no server.
+`docs/01-architecture.md` and `docs/plans/02-prd.md` are the pre-code design
+documents, left as written and marked where the build superseded them.
 
 ### What each tab shows
 
@@ -187,7 +192,7 @@ The frontend is one static HTML file, vanilla JS, CDN-free, no build step.
 | Tab | Shows |
 |---|---|
 | **Chat** | The agent itself. SSE token streaming, a tool-status line, session id persisted in `localStorage`. |
-| **Evals** | Three sections, deliberately separated: the hand-run **demo probes** below (click one to load it into Chat), the **executed** rows from `evals/results/latest.json` with each scenario's question, provenance badge, checks and answer, and the **backlog** of authored-but-never-run scenarios behind a toggle. A row's badge says whether it was designed in the PRD before any code existed or authored afterward — the two are not equally strong evidence. |
+| **Evals** | Three sections. **Try it yourself** is the three probes below, click one to load it into Chat. **Test results** is `evals/results/latest.json`: 14 examples with the question asked, the checks that ran, the answer, and timing; the one red row carries its triage inline. **Run history** is a scenario × commit grid over every recorded run, so a regression is visible as one cell flipping rather than as a pass rate moving for unknown reasons. |
 | **Flow Diagram** | The current turn's real SSE events as a timeline: guardrail decision, each tool call with args and a bounded result digest, elapsed ms. This is the fastest way to see *why* an answer came out the way it did. |
 | **Trace Logging** | Per-turn spans with latency and input/output token counts per model call. An in-process stand-in for Langfuse, not a replacement — see [What's cut](#whats-cut-and-why). |
 | **Data Source** | A static description of the dataset: provenance, the CBG grain, the table allowlist, the 28-group topic taxonomy, variable naming, and the known data traps. |
@@ -279,7 +284,7 @@ the repo).
 | `ANTHROPIC_API_KEY` | yes | Agent and guardrail |
 | `SNAPSHOT_DB_PATH` | no | Defaults to `data/snapshot.sqlite3` |
 | `SESSION_DB_PATH` | no | Defaults to `data/sessions.sqlite3` |
-| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | no | Reserved; full Langfuse integration is cut (rule 17 is served by the in-app Trace Logging tab instead) |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | no | Reserved and unread by application code; full Langfuse integration is cut (**D-021**) and the in-app Trace Logging tab stands in for it |
 
 Three further variables exist **only for `docker-compose.yml`** and are never
 read by application code, so they won't appear if you go looking for them in
@@ -302,7 +307,7 @@ colons` — an unhelpful message for a simple missing variable.
 
 ## Testing and evals
 
-**338 tests, `make test`.** TDD (failing test first) on every deterministic
+**345 tests, `make test`.** TDD (failing test first) on every deterministic
 layer: the SQL trust boundary (`validate_sql`, 175 tests), guardrail routing,
 bounded-recovery counting, the ambiguity backstop, the wall-clock watchdog,
 degraded-mode detection, FTS ranking, `normalize_value`, and the eval scorer
@@ -317,23 +322,36 @@ passed the entire mocked suite and was only caught against the real database.
 **`make eval`** runs the golden set against the real stack (real Anthropic,
 real Snowflake, real guardrail) and writes an `EvalRun` to `evals/results/`.
 
-- **14 scenarios executed**, 13 passing in the latest run (92.9%). The
-  original 11 are a verbatim subset of the 30 designed in
-  `docs/plans/02-prd.md` §7 — the PRD's own IDs, turns, and expectations,
-  authored during scaffolding *before* any agent code existed, so they were
-  not reverse-engineered from a working system.
-- **25 scenarios authored but never executed** (`status="pending"`), covering
-  injection beyond one shape, malformed input, NULL and top-coded values, and
-  a worst-case latency comparison. They are a specification of intended
-  behavior, not evidence of it, and are labeled as such in the UI and the
-  data.
+**14 examples, 13 passing** in the latest run (92.9%), the whole set in about
+2.6 minutes of wall clock (1.3s to 30.7s per example — the slowest is
+comfortably inside the 60s bound). Every example in the set has been run;
+there is no unrun backlog padding the count.
 
-`pass_rate` is computed from executed rows *before* pending ones are appended,
-so the number reads 11/11 rather than 11/36. An unrun backlog must not move a
-real measurement in either direction — deflating a genuine 11/11 to 11/36
-would be as misleading as hiding the backlog. A pending row serializes as
-`passed: false` with no checks, which means *no evidence*, not *failed*; the
-`status` field is what the UI renders on.
+**12 of the 14** are a verbatim subset of the 30 designed in
+`docs/plans/02-prd.md` §7 — the PRD's own ids, turns, and expectations,
+authored during scaffolding *before* any agent code existed, so they were not
+reverse-engineered from a working system. That is also why the ids have gaps:
+they are the PRD's numbering, and 18 of its 30 were never implemented. The
+other two (`UN-08`, `PM-08`) were added later to pin defects found after the
+system worked; both carry that history in their `notes`.
+
+An earlier version of the set also carried 25 scenarios that were authored but
+never executed. They were removed rather than kept as a coverage claim: a
+scenario that has never run is a wish, not a test, and mixing the two made the
+set harder to read than the claim was worth. See `evals/README.md`.
+
+**Tracking improvement over time.** Every run writes its own timestamped file
+keyed by `git_sha`, so `evals/results/` is already a version history; the Evals
+tab renders it as a scenario × commit grid. Two things that grid exists to
+prevent, both of which the current data demonstrates: an aggregate pass rate
+is not comparable across runs whose denominator changed (100% → 93% here is
+three added examples, not a regression), and with a live model one run is not
+a measurement (`PM-08` passes roughly 2 runs in 3).
+`python -m evals.run_evals --repeat 3` runs the set three times; runs of the
+same commit collapse into one column showing `2/3`, rendered as its own state
+so flake cannot be read as a fix. **No Langfuse needed for this** — it is a
+different axis (per-request production tracing, D-021), and committed JSON is
+better provenance for a reviewer who clones the repo.
 
 **The one red row is deliberate.** `PM-08` ("average household income in
 Texas?") is kept and triaged rather than deleted to make the run look clean —
@@ -392,4 +410,5 @@ judge — all real, all scoped and partly designed, none finished.
   decennial tables that were cut, so there is nothing to run them against.
 - The Trace Logging tab renders real per-turn span data but is in-memory and
   in-process only — a stand-in for rule 17's Langfuse requirement, not a
-  replacement for it.
+  replacement for it. Rule 17 is recorded as **unmet** in `docs/decisions.md`
+  (**D-021**) rather than reinterpreted to fit what shipped.

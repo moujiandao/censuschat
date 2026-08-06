@@ -217,17 +217,26 @@
   .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
   .badge.pass { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
   .badge.fail { background: color-mix(in srgb, var(--error) 20%, transparent); color: var(--error); }
-  /* Neither pass nor fail — authored but never executed (D-018). */
-  .badge.pending { background: color-mix(in srgb, var(--muted) 18%, transparent); color: var(--muted); }
-  .pending-row td { opacity: 0.62; }
   .muted-cell { color: var(--muted); font-style: italic; }
   .answer-preview { color: var(--muted); font-size: 12.5px; max-width: 320px; }
   .empty-state { color: var(--muted); font-size: 13.5px; padding: 8px 4px; }
 
-  /* Provenance: designed in the PRD before any agent code existed, vs.
-     authored later against a system that already worked. */
-  .badge.prd { background: color-mix(in srgb, var(--accent, #6ea8fe) 18%, transparent); color: var(--accent, #6ea8fe); }
-  .badge.authored, .badge.unknown { background: color-mix(in srgb, var(--muted) 15%, transparent); color: var(--muted); }
+  /* Run history matrix: scenarios down, commits across. */
+  table.matrix { border-collapse: collapse; font-size: 12px; }
+  table.matrix th, table.matrix td { padding: 5px 9px; border-bottom: 1px solid var(--border); text-align: center; white-space: nowrap; }
+  table.matrix th.sid, table.matrix td.sid { text-align: left; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  table.matrix thead th { color: var(--muted); font-weight: 600; font-size: 11px; }
+  table.matrix thead th .when { display: block; font-weight: 400; opacity: 0.75; }
+  .cell-pass { color: var(--ok); }
+  .cell-fail { color: var(--error); font-weight: 700; }
+  /* Flaky: passed some runs of this commit and not others. Its own state on
+     purpose — folding it into pass or fail is how a coin-flip reads as a fix. */
+  .cell-flake { color: #b8860b; font-weight: 700; }
+  .cell-absent { color: var(--muted); opacity: 0.45; }
+  .matrix-scroll { overflow-x: auto; }
+  .delta { font-size: 12.5px; margin: 10px 0 0; }
+  .delta .fixed { color: var(--ok); }
+  .delta .broke { color: var(--error); }
 
   .eval-section { margin: 26px 0 10px; }
   .eval-section h2 { font-size: 14px; margin: 0 0 4px; }
@@ -238,7 +247,7 @@
   .row-note { color: var(--muted); font-size: 12px; line-height: 1.45; margin-top: 6px; max-width: 60ch; }
   .row-note b { color: var(--error); font-weight: 600; }
 
-  /* Demo probes — hand-run by a reviewer, not part of any recorded run. */
+  /* "Try it yourself" cards — click loads the question into Chat. */
   .probe-list { display: grid; gap: 10px; margin-bottom: 6px; }
   .probe {
     background: var(--card); border: 1px solid var(--border); border-radius: 10px;
@@ -250,10 +259,6 @@
   .probe .pw { color: var(--muted); font-size: 12.5px; margin-top: 6px; line-height: 1.45; }
   .probe .pmeta { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 8px; }
 
-  details.backlog { margin: 22px 0 8px; border-top: 1px solid var(--border); padding-top: 14px; }
-  details.backlog summary { cursor: pointer; font-size: 13px; font-weight: 600; }
-  details.backlog summary::marker { color: var(--muted); }
-  .backlog-cat { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding-top: 14px; }
 
   /* Flow diagram panel */
   .flow-turn {
@@ -723,25 +728,21 @@
     return escapeHtml(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
-  // The three probes from README §"Evaluating the running demo". They are
-  // hand-run by a reviewer in the Chat tab, so they appear in no EvalRun —
-  // but each duplicates a golden scenario, and naming that link here is what
-  // stops the two lists drifting apart. Static content, no endpoint (D-017).
+  // The same three questions as README §"Evaluating the running demo", and the
+  // same questions as examples DF-05, AMB-01 and UN-01 in the table below.
+  // Static content, no endpoint (D-017).
   const DEMO_PROBES = [
     {
       q: "What is the total population of Wyoming?",
       watch: "Expect 581,348, streaming token by token rather than a blank wait. The Flow Diagram shows resolve_geography → search_census_variables → run_census_sql with the real SQL and returned row.",
-      scenario: "DF-05",
     },
     {
       q: "How many people live in Washington County?",
       watch: "Thirty states have one. Expect the agent to list candidates and ask, never to silently pick. Enforced twice: a prompt instruction, and a code backstop that blocks run_census_sql outright (D-014).",
-      scenario: "AMB-01",
     },
     {
       q: "How many people will live in Texas in 2050?",
       watch: "The ACS measures the past. Expect a fast refusal explaining why, with zero tool calls. Declined by the agent itself, unlike an off-topic question, which the guardrail classifier stops earlier.",
-      scenario: "UN-01",
     },
   ];
 
@@ -751,27 +752,17 @@
         '<button type="button" class="probe" data-q="' + escapeAttr(p.q) + '">' +
         '<span class="pq">' + escapeHtml(p.q) + "</span>" +
         '<div class="pw">' + escapeHtml(p.watch) + "</div>" +
-        '<div class="pmeta">Click to run in Chat · same question as ' +
-          escapeHtml(p.scenario) + "</div></button>"
+        '<div class="pmeta">Click to run it in Chat</div></button>'
       );
     }).join("");
 
     return (
-      "<div class='eval-section'><h2>Demo probes — hand-run</h2>" +
-      "<p class='section-lead'>Three questions to paste into Chat, each exercising a " +
-      "different required behavior. These are run by hand, so they appear in no " +
-      "recorded run below; each one duplicates a golden scenario, named on the card.</p></div>" +
+      "<div class='eval-section'><h2>Try it yourself</h2>" +
+      "<p class='section-lead'>Three questions worth asking first, each showing a " +
+      "different required behavior. Click one to load it into Chat, then open the " +
+      "Flow Diagram tab to see the tool calls behind the answer.</p></div>" +
       "<div class='probe-list'>" + cards + "</div>"
     );
-  }
-
-  function provenanceBadge(p) {
-    if (p === "prd") return '<span class="badge prd" title="Designed in docs/plans/02-prd.md §7 before any agent code existed">PRD §7</span>';
-    if (p === "authored") return '<span class="badge authored" title="Written after the system worked, so a pass is weaker evidence">authored</span>';
-    // Either the id is absent from evals/scenarios.py (an older run naming a
-    // since-renamed row) or scenario metadata failed to load entirely. Both
-    // mean the same thing to a reader: provenance is unknown, don't infer it.
-    return '<span class="badge unknown" title="Provenance unavailable — no scenario with this id in evals/scenarios.py, or scenario metadata failed to load">unlabeled</span>';
   }
 
   function questionCell(r) {
@@ -807,9 +798,8 @@
         : "";
       return (
         "<tr><td><span class='scenario-id'>" + escapeHtml(r.scenario_id) + "</span>" +
-          provenanceBadge(r.provenance) + "</td>" +
+          "<span class='muted-cell'>" + escapeHtml(r.category) + "</span></td>" +
         "<td>" + questionCell(r) + answer + note + "</td>" +
-        "<td>" + escapeHtml(r.category) + "</td>" +
         "<td>" + badge + "</td>" +
         "<td>" + checks + "</td>" +
         "<td>" + r.elapsed_s.toFixed(1) + "s</td></tr>"
@@ -817,79 +807,145 @@
     }).join("");
 
     return (
-      "<table class='evals'><thead><tr><th>Scenario</th><th>Question &amp; answer</th>" +
-      "<th>Category</th><th>Result</th><th>Checks</th><th>Time</th></tr></thead>" +
+      "<table class='evals'><thead><tr><th>Example</th><th>Question &amp; answer</th>" +
+      "<th>Result</th><th>Checks</th><th>Time</th></tr></thead>" +
       "<tbody>" + body + "</tbody></table>"
     );
   }
 
-  function renderBacklog(rows) {
-    if (!rows.length) return "";
-    // Grouped by category so the shape of the gap is legible at a glance:
-    // six stress rows and five injection rows say more than 25 flat lines.
-    const byCat = {};
-    rows.forEach(function (r) {
-      (byCat[r.category] = byCat[r.category] || []).push(r);
+  // Runs grouped by commit. Several runs of the same commit are the same
+  // measurement repeated, so they collapse into one column showing how many
+  // of them passed — which is the only way flake is visible at all.
+  function groupByCommit(history) {
+    const cols = [];
+    (history || []).forEach(function (run) {
+      const last = cols[cols.length - 1];
+      if (last && last.sha === run.git_sha) {
+        last.runs.push(run);
+      } else {
+        cols.push({ sha: run.git_sha, runs: [run] });
+      }
     });
-    const body = Object.keys(byCat).sort().map(function (cat) {
-      const header = "<tr><td colspan='2' class='backlog-cat'>" +
-        escapeHtml(cat) + " · " + byCat[cat].length + "</td></tr>";
-      return header + byCat[cat].map(function (r) {
-        return (
-          "<tr class='pending-row'>" +
-          "<td><span class='scenario-id'>" + escapeHtml(r.scenario_id) + "</span></td>" +
-          "<td>" + questionCell(r) +
-            (r.notes ? "<div class='row-note'>" + escapeHtml(r.notes) + "</div>" : "") +
-          "</td></tr>"
-        );
-      }).join("");
+    return cols;
+  }
+
+  // A scenario absent from a run is not a failure. It was added later, or
+  // removed. Conflating the two is the mistake this whole view exists to
+  // prevent, so "absent" gets its own glyph and never counts either way.
+  function cellFor(col, id) {
+    let ran = 0;
+    let passed = 0;
+    col.runs.forEach(function (r) {
+      if (Object.prototype.hasOwnProperty.call(r.scenarios || {}, id)) {
+        ran += 1;
+        if (r.scenarios[id]) passed += 1;
+      }
+    });
+    if (!ran) return { cls: "cell-absent", text: "·", state: "absent" };
+    if (col.runs.length > 1) {
+      const label = passed + "/" + ran;
+      if (passed === ran) return { cls: "cell-pass", text: label, state: "pass" };
+      if (passed === 0) return { cls: "cell-fail", text: label, state: "fail" };
+      return { cls: "cell-flake", text: label, state: "flake" };
+    }
+    return passed
+      ? { cls: "cell-pass", text: "✓", state: "pass" }
+      : { cls: "cell-fail", text: "✗", state: "fail" };
+  }
+
+  function renderHistory(history) {
+    const cols = groupByCommit(history);
+    if (cols.length < 2) {
+      return (
+        "<div class='eval-section'><h2>Run history</h2>" +
+        "<p class='section-lead'>Only one commit has a recorded run so far, so " +
+        "there is nothing to compare against yet. Run <code>make eval</code> " +
+        "again after a change and this becomes a scenario-by-commit grid " +
+        "showing what got fixed and what regressed.</p></div>"
+      );
+    }
+
+    // Union of every scenario ever run, so a row that was added or removed
+    // still gets a line rather than vanishing.
+    const ids = [];
+    (history || []).forEach(function (r) {
+      Object.keys(r.scenarios || {}).forEach(function (id) {
+        if (ids.indexOf(id) === -1) ids.push(id);
+      });
+    });
+
+    const head = cols.map(function (c) {
+      const when = new Date(c.runs[c.runs.length - 1].run_at).toLocaleDateString();
+      const n = c.runs.length > 1 ? " ×" + c.runs.length : "";
+      return "<th>" + escapeHtml(c.sha) + escapeHtml(n) +
+        "<span class='when'>" + escapeHtml(when) + "</span></th>";
     }).join("");
 
+    const body = ids.map(function (id) {
+      const cells = cols.map(function (c) {
+        const cell = cellFor(c, id);
+        return "<td class='" + cell.cls + "'>" + cell.text + "</td>";
+      }).join("");
+      return "<tr><td class='sid'>" + escapeHtml(id) + "</td>" + cells + "</tr>";
+    }).join("");
+
+    // Only ever compares the two most recent commits. A longer diff would need
+    // a baseline nobody has chosen, and "since last time" is the question.
+    const prev = cols[cols.length - 2];
+    const curr = cols[cols.length - 1];
+    const fixed = [];
+    const broke = [];
+    const added = [];
+    ids.forEach(function (id) {
+      const a = cellFor(prev, id).state;
+      const b = cellFor(curr, id).state;
+      if (a === "absent" && b !== "absent") added.push(id);
+      else if (a === "fail" && b === "pass") fixed.push(id);
+      else if (a === "pass" && b === "fail") broke.push(id);
+    });
+
+    const parts = [];
+    if (fixed.length) parts.push("<span class='fixed'>" + fixed.length + " fixed (" + escapeHtml(fixed.join(", ")) + ")</span>");
+    if (broke.length) parts.push("<span class='broke'>" + broke.length + " regressed (" + escapeHtml(broke.join(", ")) + ")</span>");
+    if (added.length) parts.push(added.length + " added (" + escapeHtml(added.join(", ")) + ")");
+    const delta = "<p class='delta'><strong>" + escapeHtml(curr.sha) + " vs " +
+      escapeHtml(prev.sha) + ":</strong> " +
+      (parts.length ? parts.join(" · ") : "no change") + "</p>";
+
     return (
-      "<details class='backlog'><summary>Backlog — " + rows.length +
-        " scenarios authored, never run</summary>" +
-      "<p class='section-lead'>A specification of intended behavior, not evidence of it. " +
-      "Excluded from the pass rate in both directions: an unrun backlog must not " +
-      "deflate a real measurement, and must not be hidden either. Each carries a " +
-      "judge_groundedness check, which is unimplemented (issue #21), so every row " +
-      "would fail the moment it ran.</p>" +
-      "<table class='evals'><tbody>" + body + "</tbody></table></details>"
+      "<div class='eval-section'><h2>Run history</h2>" +
+      "<p class='section-lead'>One column per commit, oldest first. " +
+      "<span class='cell-pass'>✓</span> passed, " +
+      "<span class='cell-fail'>✗</span> failed, " +
+      "<span class='cell-absent'>·</span> not in that run. A commit run more " +
+      "than once shows how many of those runs passed, so a flaky row " +
+      "(<span class='cell-flake'>2/3</span>) can't be mistaken for a fix. " +
+      "Compare rows, not the overall pass rate: the rate also moves when the " +
+      "set changes size.</p></div>" +
+      "<div class='matrix-scroll'><table class='matrix'><thead><tr>" +
+      "<th class='sid'>Example</th>" + head + "</tr></thead><tbody>" +
+      body + "</tbody></table></div>" + delta
     );
   }
 
-  function renderEvalRun(run, label) {
+  function renderEvalRun(run) {
     if (!run) return "";
-    const all = run.results || [];
-    // "pending" is a run state, "provenance" is where the case came from —
-    // two independent axes. A row can be PRD-designed and unrun, or authored
-    // and executed (UN-08, PM-08 restore two deleted red rows).
-    const executed = all.filter(function (r) { return r.status !== "pending"; });
-    const pending = all.filter(function (r) { return r.status === "pending"; });
-    const passed = executed.filter(function (r) { return r.passed; }).length;
-    const fromPrd = executed.filter(function (r) { return r.provenance === "prd"; }).length;
-
-    const pendingStat = pending.length
-      ? "<div class='eval-stat'><div class='n'>" + pending.length +
-        "</div><div class='l'>authored, never run</div></div>"
-      : "";
+    const rows = run.results || [];
+    const passed = rows.filter(function (r) { return r.passed; }).length;
+    const when = new Date(run.run_at).toLocaleString();
 
     return (
-      "<div class='eval-section'><h2>" + label + "</h2>" +
-      "<p class='section-lead'>Run by <code>make eval</code> against the real stack: " +
-      "real Anthropic, real Snowflake, real guardrail. The pass rate counts executed " +
-      "rows only.</p></div>" +
+      "<div class='eval-section'><h2>Test results</h2>" +
+      "<p class='section-lead'>Every example below was run by <code>make eval</code> " +
+      "against the real stack: real Anthropic, real Snowflake, real guardrail. " +
+      "Last run " + escapeHtml(when) + " at commit " + escapeHtml(run.git_sha) +
+      ". A red row is kept and explained rather than deleted to make the run " +
+      "look clean.</p></div>" +
       "<div class='eval-summary'>" +
-        "<div class='eval-stat'><div class='n'>" + passed + "/" + executed.length + "</div>" +
-          "<div class='l'>executed passing</div></div>" +
-        "<div class='eval-stat'><div class='n'>" + (run.pass_rate * 100).toFixed(0) + "%</div>" +
-          "<div class='l'>pass rate</div></div>" +
-        "<div class='eval-stat'><div class='n'>" + fromPrd + "</div>" +
-          "<div class='l'>designed pre-code</div></div>" +
-        pendingStat +
-        "<div class='eval-stat'><div class='n'>" + escapeHtml(run.git_sha) + "</div><div class='l'>git sha</div></div>" +
+        "<div class='eval-stat'><div class='n'>" + passed + "/" + rows.length + "</div>" +
+          "<div class='l'>passing</div></div>" +
       "</div>" +
-      renderExecuted(executed) +
-      renderBacklog(pending)
+      renderExecuted(rows)
     );
   }
 
@@ -904,10 +960,8 @@
       if (!data.latest) {
         html += '<p class="empty-state">No eval runs recorded yet.</p>';
       } else {
-        html += renderEvalRun(data.latest, "Latest run · " + new Date(data.latest.run_at).toLocaleString());
-        if (data.previous) {
-          html += renderEvalRun(data.previous, "Previous run · " + new Date(data.previous.run_at).toLocaleString());
-        }
+        html += renderEvalRun(data.latest);
+        html += renderHistory(data.history);
       }
     } catch (e) {
       html += '<p class="empty-state">Couldn\'t load eval results.</p>';

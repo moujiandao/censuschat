@@ -637,7 +637,9 @@ catalog — the 3,782 labels remain reachable only through
 
 **Status:** deviation from CLAUDE.md rule 12. **Approved by Brian before
 implementation**, when the alternative (a parallel untyped file) was
-presented alongside.
+presented alongside. **Largely superseded the same day by D-022** — the 25
+pending scenarios it existed to carry were deleted. The reasoning below is
+kept because the decision was real and the reversal is part of the record.
 
 Rule 12 makes `src/contracts.py` the interface freeze: "Signatures, field
 names, and enum members change only with a flagged, approved deviation."
@@ -797,3 +799,102 @@ binding constraint moved from retrieval to the 8-round
 `_MAX_TOOL_LOOP_ITERATIONS` cap. Raising it trades against the 50s
 watchdog and was left out of scope deliberately; the row is committed red
 with that triage cause in its `notes`.
+
+---
+
+## D-021 — Langfuse cut; the span model shipped in-process (2026-08-06)
+
+**Status:** deviation from CLAUDE.md rule 17 and architecture §5. Recorded
+retroactively — the cut was made under time pressure during M3 and described
+honestly in `README.md` and `docs/reflection.md`, but never written up here
+as the deviation it is. That gap is itself the point: a rule that says
+"deviations require an entry" is only as good as the entry, and this one was
+missed for a full day while three other deviations (D-016, D-017, D-018) were
+filed correctly.
+
+Rule 17 reads: "Every turn is one Langfuse trace: `session_id` in metadata;
+spans for guardrail, each tool call, and each model call; token counts and
+latency recorded."
+
+**What shipped instead.** `src/tracing.py` plus `GET /api/traces` and the
+Trace Logging tab. The *span model* is intact and satisfies the second half
+of the rule literally: one trace per turn keyed by `session_id`, one span per
+guardrail check, per tool call, and per model call, with latency and
+input/output token counts read off the Anthropic response's `usage`. What is
+missing is the backend: traces live in a process-local ring buffer of the
+last 20 turns per session.
+
+**Why cut rather than reduced.** Langfuse is an SDK plus a hosted project
+plus keys plus a network dependency on the request path. The span
+instrumentation is the part that required design thought — deciding what a
+span *is* in this system, and threading it through the tool loop and the
+guardrail. Writing that against a local buffer cost roughly an hour;
+wiring the SDK, provisioning the project, and handling its failure modes
+(what happens to a turn when Langfuse is unreachable?) was the expensive
+half, and it buys nothing a reviewer can see in a single-instance demo.
+Cutting the transport and keeping the instrumentation preserves the
+reversible part of the work: swapping the buffer for a Langfuse exporter is
+a change at one seam, not a re-instrumentation.
+
+**Cost accepted, stated plainly.** In-process means it dies on restart, is
+invisible across replicas, has no persistent storage, no cross-session
+search, no aggregation, and no alerting. It answers "what happened in this
+turn." Observability answers "what is happening across the deployed
+system," and this does not. `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`
+remain in `.env.example` as reserved, unread by application code.
+
+**Not claimed as satisfying rule 17.** The README labels the tab a
+"stand-in ... not a replacement," and the reflection calls it "a debugging
+aid wearing an observability tab's name." Rule 17 is recorded here as
+**unmet**, not reinterpreted.
+
+---
+
+## D-022 — The unrun backlog is deleted; the set is 14 examples that all ran (2026-08-06)
+
+**Status:** reverses most of **D-018**. Requested by Brian, after the Evals
+tab proved unreadable in practice.
+
+D-018 added `status="pending"` so 25 authored-but-never-executed scenarios
+could sit in the artifact without polluting the pass rate. The reasoning
+still holds in the abstract: a hidden backlog is how coverage gets
+overstated. What it missed is the cost on the reading side.
+
+The tab ended up rendering 39 rows in one table, of which 25 had never run,
+plus a provenance badge splitting the remaining 14 two ways. Asked what
+separated the "PRD scenarios" from the "golden scenarios," the answer took
+several paragraphs and a diagram — for a set whose entire job is to let a
+reviewer see, quickly, what was verified. The labeling was accurate and the
+result was still unreadable.
+
+**Decision (Brian):** delete the 25 pending scenarios. What remains is 14
+examples, every one of which has actually been run, with their existing ids
+and their existing recorded results.
+
+**Fix:** `evals/scenarios.py` drops the pending block, `PENDING_SCENARIOS`,
+and `PRD_SCENARIO_IDS`. `run_evals.py` loses the executed/pending split, so
+the denominator is simply the set. The Evals tab is two sections — "Try it
+yourself" (the three README probes) and "Test results" (one table) — with no
+provenance badges and no backlog toggle. `/api/evals` skips rows any older
+run recorded as `pending`; the stored result files keep them, because a
+result file is a historical record and rewriting it to tidy the UI would be
+the wrong kind of clean.
+
+**Not done, deliberately:** the ids were not renumbered. `DF-01` then `DF-05`
+looks like a gap and is one — they are PRD §7's own numbers, and renumbering
+would break the traceability to a design authored before any agent code
+existed, which is the strongest evidence claim the eval set has. It would
+also invalidate every committed result file and force a live re-run. A
+comment in `scenarios.py` explains the gaps instead.
+
+**Contracts left alone.** `EvalScenario.status` and `EvalResult.status` stay
+in `src/contracts.py`, defaulted to `"executed"` and now effectively vestigial.
+Removing a field is a rule 12 change needing its own approval, and the field
+still correctly describes the stored artifacts that carry it. `ScenarioCategory.STRESS`
+likewise stays, now unused by any scenario.
+
+**Cost accepted:** the injection, malformed-input, NULL/top-code and
+multi-turn-drift cases those 25 rows described are no longer written down in
+code. They are described in `docs/reflection.md` as untested gaps, which is
+the honest place for a claim with no evidence behind it. Recovering them is
+`git show f79b556:evals/scenarios.py`.

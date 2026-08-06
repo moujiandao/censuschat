@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>censuschat - request flow</title>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --card: #ffffff;
+    --ink: #1a1d21;
+    --muted: #5b6470;
+    --line: #dfe3e8;
+    --edge: #2563eb;
+    --soft: #d97706;
+    --local: #059669;
+    --hard: #b3261e;
+    --stop: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 24px 64px;
+    background: var(--bg); color: var(--ink);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); margin: 0 0 28px; font-size: 14px; }
+  h2 { font-size: 17px; margin: 40px 0 12px; letter-spacing: -0.01em; }
+
+  #status {
+    display: inline-block; padding: 4px 10px; border-radius: 6px;
+    font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: #e8f5e9; color: #1b5e20; margin-bottom: 16px;
+  }
+  #status.fail { background: #fdecea; color: #b3261e; }
+
+  .diagram {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 20px; overflow-x: auto;
+  }
+  .diagram svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+
+  /* ---- legend ---- */
+  .legend {
+    display: grid; gap: 10px; margin: 20px 0 0;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  }
+  .legend div {
+    display: flex; align-items: flex-start; gap: 9px;
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.45;
+  }
+  .swatch {
+    width: 13px; height: 13px; border-radius: 3px; flex-shrink: 0; margin-top: 3px;
+  }
+  .legend b { display: block; font-size: 12.5px; }
+  .legend span.txt { color: var(--muted); font-size: 12.5px; }
+
+  /* ---- explanation cards ---- */
+  .cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-left: 3px solid var(--edge); border-radius: 8px; padding: 14px 16px;
+  }
+  .card.soft  { border-left-color: var(--soft); }
+  .card.local { border-left-color: var(--local); }
+  .card.hard  { border-left-color: var(--hard); }
+  .card.stop  { border-left-color: var(--stop); }
+  .card h3 { margin: 0 0 6px; font-size: 14px; }
+  .card p  { margin: 0 0 8px; font-size: 13.5px; color: #333; }
+  .card p:last-child { margin-bottom: 0; }
+  .card code, code.inline {
+    background: #f0f2f5; padding: 1px 5px; border-radius: 4px;
+    font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .tag {
+    display: inline-block; font: 600 10.5px ui-monospace, Menlo, monospace;
+    text-transform: uppercase; letter-spacing: .06em;
+    padding: 2px 7px; border-radius: 4px; margin-bottom: 8px;
+  }
+  .tag.soft  { background: #fef3e2; color: #92400e; }
+  .tag.local { background: #e6f6f0; color: #065f46; }
+  .tag.hard  { background: #fdecea; color: #8c1d18; }
+  .tag.edge  { background: #e8effd; color: #1e40af; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; margin-top: 6px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  td code { font-size: 12.5px; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  footer { margin-top: 44px; padding-top: 16px; border-top: 1px solid var(--line);
+           color: var(--muted); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>censuschat - request flow</h1>
+  <p class="sub">
+    What happens between a typed question and a grounded number, and which layers
+    can be talked past. Source of truth: <code class="inline">src/agent.py</code>,
+    <code class="inline">src/sqlgate.py</code>, <code class="inline">src/snapshot.py</code>.
+  </p>
+
+  <div id="status">rendering...</div>
+  <div class="diagram"><div id="out-main"></div></div>
+
+  <div class="legend">
+    <div><span class="swatch" style="background:#2563eb"></span>
+      <span><b>Transport</b><span class="txt">Edge and framework. No decisions made here.</span></span></div>
+    <div><span class="swatch" style="background:#d97706"></span>
+      <span><b>Soft layer</b><span class="txt">Advisory. Reduces how often you hit the wall; is not the wall.</span></span></div>
+    <div><span class="swatch" style="background:#059669"></span>
+      <span><b>Local only</b><span class="txt">Reads the SQLite snapshot. No network, no Snowflake.</span></span></div>
+    <div><span class="swatch" style="background:#b3261e"></span>
+      <span><b>Trust boundary</b><span class="txt">Code that cannot be argued with. Default-deny.</span></span></div>
+    <div><span class="swatch" style="background:#6b7280"></span>
+      <span><b>Code-enforced stop</b><span class="txt">Deterministic message the model cannot decline to emit.</span></span></div>
+  </div>
+
+  <!-- ================= EXPLANATIONS ================= -->
+
+  <h2>Phase 1 - Boot: where the local SQLite comes from</h2>
+  <div class="diagram" style="margin-bottom:14px"><div id="out-boot"></div></div>
+  <div class="cards">
+    <div class="card local">
+      <span class="tag local">once at startup</span>
+      <h3>It is built from Snowflake, then never touched again</h3>
+      <p><code>build_snapshot()</code> runs two <em>developer-authored</em> <code>SELECT</code>s
+         against Snowflake's <strong>metadata</strong> tables and writes the results to
+         <code>data/snapshot.sqlite3</code>.</p>
+      <p>This is the one deliberate exception to the "Snowflake only via
+         <code>run_census_sql</code>" rule - that rule scopes to <em>request time</em>.
+         No user text ever reaches these two queries.</p>
+    </div>
+    <div class="card local">
+      <span class="tag local">metadata only</span>
+      <h3>It holds names, not numbers</h3>
+      <p>Zero demographic values live in the snapshot. It is a catalog of
+         <em>what exists</em>, so the model can look up an ID instead of guessing one.</p>
+      <table>
+        <tr><th>Contents</th><th>Rows</th></tr>
+        <tr><td>Variables (FTS5)</td><td class="num">3,782</td></tr>
+        <tr><td>Geographies</td><td class="num">3,273</td></tr>
+        <tr><td>- states <span class="txt">(synthesized)</span></td><td class="num">52</td></tr>
+        <tr><td>- counties</td><td class="num">3,221</td></tr>
+        <tr><td>File size / build</td><td class="num">2.7 MB / 3.9 s</td></tr>
+      </table>
+    </div>
+    <div class="card local">
+      <span class="tag local">durability</span>
+      <h3>Written atomically</h3>
+      <p>Built into a temp file and <code>rename()</code>d into place, so a crash mid-build
+         never leaves a half-written snapshot for the next boot to read.</p>
+      <p>The <code>snapshot_meta</code> table is written <em>last</em> - its presence is what
+         marks the file as a complete build.</p>
+    </div>
+  </div>
+
+  <h2>Phase 2 - The two local tools</h2>
+  <div class="cards">
+    <div class="card local">
+      <h3>They resolve names, they don't fetch data</h3>
+      <p>Neither tool returns a subset of the census data. They translate English into
+         identifiers that the eventual SQL needs:</p>
+      <table>
+        <tr><th>Input</th><th>Output</th></tr>
+        <tr><td>"median household income"</td><td><code>B19013e1</code></td></tr>
+        <tr><td>"Travis County, Texas"</td><td><code>48453</code></td></tr>
+      </table>
+    </div>
+    <div class="card local">
+      <h3>Why "scanning everything" isn't a concern</h3>
+      <p>The whole file is 2.7 MB and lives on local disk. <code>search_census_variables</code>
+         uses FTS5 with BM25 ranking and returns <code>LIMIT 10</code>;
+         <code>resolve_geography</code> is an equality match on indexed columns.
+         Both are single-digit milliseconds with no network.</p>
+      <p>Variable IDs are reached at runtime rather than listed in the prompt - with
+         thousands of them, a prompt-embedded list would let the model pattern-match a
+         plausible ID that does not exist.</p>
+    </div>
+    <div class="card local">
+      <h3>Ordering</h3>
+      <p>Resolve <em>first</em> (local, free, fast), query <em>last</em> (remote, slow, metered).
+         Nothing hardcodes this - the model chooses each round - but it falls out of the fact
+         that <code>run_census_sql</code> has nothing to put in a query until the other two have run.</p>
+    </div>
+  </div>
+
+  <h2>Phase 3 - What actually limits the Snowflake scan</h2>
+  <div class="cards">
+    <div class="card hard">
+      <span class="tag hard">gate</span>
+      <h3><code>validate_sql</code> validates; it does not sanitize</h3>
+      <p>Sanitizing means cleaning dangerous input and hoping you covered every case.
+         This parses the statement into an AST with sqlglot and <em>proves</em> it matches a
+         small set of permitted shapes, rejecting everything else.</p>
+      <p>If sqlglot cannot model a construct, that is a rejection - an expression the gate
+         cannot inspect is one it cannot vouch for.</p>
+    </div>
+    <div class="card hard">
+      <span class="tag hard">7 checks, in order</span>
+      <h3>What it enforces</h3>
+      <p>parses cleanly | exactly one statement | no opaque commands
+         (<code>CALL</code>, <code>EXECUTE</code>) | is genuinely a query | no banned constructs
+         (<code>INTO</code>, session vars, <code>SELECT *</code>) | every table on the allowlist |
+         bounded by <code>LIMIT 200</code>.</p>
+      <p>The only thing it <em>modifies</em> is the row limit: injected when absent, clamped when
+         too large.</p>
+    </div>
+    <div class="card hard">
+      <h3>Three independent scan limits</h3>
+      <p><strong>1.</strong> the <code>WHERE SUBSTR(...)</code> clause narrows to one geography's
+         block groups. <strong>2.</strong> the mandatory <code>LIMIT 200</code>.
+         <strong>3.</strong> the <code>SELECT *</code> ban (D-007) - those tables average ~280
+         columns, so a star under <code>LIMIT 200</code> still pulls ~56,000 cells into context.</p>
+    </div>
+  </div>
+
+  <h2>Phase 4 - The four code-enforced stops</h2>
+  <div class="cards">
+    <div class="card stop">
+      <h3>Bounded recovery - 2 attempts</h3>
+      <p>A failed or zero-row <code>run_census_sql</code> spends the turn's budget. Once spent,
+         the loop stops asking the model and emits an honest failure naming exactly what was tried.</p>
+    </div>
+    <div class="card stop">
+      <h3>Ambiguity block</h3>
+      <p>If <code>resolve_geography</code> returned <code>ambiguous=true</code> and the model tries
+         to query anyway, <strong>Snowflake is never touched</strong> - the turn is force-terminated
+         with a clarifying question listing every candidate.</p>
+    </div>
+    <div class="card stop">
+      <h3>50-second watchdog</h3>
+      <p>Checked at round boundaries only, never mid-call: a query already in flight finishes and
+         its rows are kept. Only the <em>next</em> round is prevented.</p>
+      <p>The partial answer is assembled from rows this turn's queries actually returned (capped at
+         50). The model is never asked to summarize - that would spend the budget that just ran out
+         and risks narrating an ungrounded number.</p>
+    </div>
+    <div class="card stop">
+      <h3>8-round loop cap</h3>
+      <p>An infrastructure backstop against a runaway loop, independent of the recovery budget.</p>
+    </div>
+  </div>
+
+  <h2>Why the boundary is drawn where it is</h2>
+  <div class="cards">
+    <div class="card hard">
+      <p>Everything above <code>validate_sql</code> - the system prompt's correctness rules, the
+         Haiku guardrail - is <strong>advisory</strong>. A model can be argued out of an instruction;
+         a classifier can be fed a phrasing it misreads.</p>
+      <p>Neither can be argued out of a pure function that parses your SQL and returns
+         <code>ok=False</code>. Put the security in the layer that cannot be talked to; use the
+         soft layers to reduce how often you reach it.</p>
+    </div>
+    <div class="card soft">
+      <span class="tag soft">fails open</span>
+      <h3>The guardrail deliberately allows on failure</h3>
+      <p>On a Haiku timeout (1.5 s) or error, the verdict is <code>ALLOW</code>. A classifier outage
+         must never block a legitimate question. The tradeoff is safe precisely because the SQL gate
+         is still downstream.</p>
+      <p>Its job is cost, not security: refusing at the guardrail costs one small call instead of a
+         full Sonnet tool loop.</p>
+    </div>
+    <div class="card soft">
+      <span class="tag soft">label design</span>
+      <h3><code>unknown_subject</code> exists because of a real bug</h3>
+      <p>"Population of Atlantis?" is <em>shaped</em> like a census question. The classifier was
+         labeling it <code>off_topic</code> and refusing, when the right behavior is to let the tools
+         look and report honestly that it isn't there.</p>
+    </div>
+  </div>
+
+  <footer>
+    Diagram source is inline in this file. Rendered with mermaid 11 from CDN - needs network on
+    first load. Node counts and timings read from the live snapshot on 2026-08-06.
+  </footer>
+</div>
+
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+
+// Two diagrams, deliberately. Folding boot-time snapshot building into the
+// request path produced one sprawling graph where the two phases visually
+// competed; they happen at completely different times and share only the
+// SQLite file, so they read far better apart.
+
+const shared = `
+    classDef edge   fill:#e8effd,stroke:#2563eb,stroke-width:2px,color:#12244d
+    classDef soft   fill:#fef3e2,stroke:#d97706,stroke-width:2px,color:#5c3a06
+    classDef local  fill:#e6f6f0,stroke:#059669,stroke-width:2px,color:#053d2c
+    classDef hard   fill:#b3261e,stroke:#7f1d1a,stroke-width:3px,color:#ffffff
+    classDef store  fill:#2563eb,stroke:#1e40af,stroke-width:2px,color:#ffffff
+    classDef stop   fill:#eef0f3,stroke:#6b7280,stroke-width:2px,color:#25292e
+    classDef answer fill:#dcfce7,stroke:#16a34a,stroke-width:3px,color:#052e16
+    classDef loop   fill:#ede9fe,stroke:#7c3aed,stroke-width:3px,color:#2e1065
+`;
+
+const bootSrc = `flowchart LR
+    SFM[("Snowflake METADATA tables<br/><small>2020_METADATA_CBG_FIELD_DESCRIPTIONS<br/>2020_METADATA_CBG_FIPS_CODES</small>")]
+    SNAP["build_snapshot()<br/><small>src/snapshot.py</small>"]
+    TMP["write to .tmp<br/><small>then atomic rename</small>"]
+    DB[("data/snapshot.sqlite3<br/>3,782 variables | 3,273 geographies<br/><small>2.7 MB | names only, zero numbers</small>")]
+
+    SFM -->|"2 fixed SELECTs<br/>developer-authored, never user text"| SNAP
+    SNAP -->|"D-008 filter: drop B99*,<br/>keep e-suffix estimates only"| TMP
+    TMP -->|"snapshot_meta written last<br/>= marker of a complete build"| DB
+${shared}
+    class SFM,DB store
+    class SNAP,TMP local
+`;
+
+const mainSrc = `flowchart TD
+    A["Browser<br/><small>static/index.html</small>"]
+    B["Caddy on EC2<br/><small>native systemd service, not Compose<br/>TLS + basic auth (D-016)</small>"]
+    C["FastAPI<br/><small>src/app.py</small>"]
+    D["agent_turn()<br/><small>src/agent.py</small>"]
+
+    A -->|"POST /api/chat (SSE)"| B
+    B -->|"reverse_proxy 127.0.0.1:8000<br/>flush_interval -1 for SSE"| C
+    C -->|"replays full session history<br/>from SQLite by session_id"| D
+
+    D --> E{"Degraded?<br/><small>snapshot missing AND Snowflake<br/>unreachable at boot</small>"}
+    E -->|"yes - nothing to answer with"| ZD["Honest message<br/><small>stream still ends DONE</small>"]
+    E -->|"no (file stat + cached bool, free)"| F{"Guardrail (Haiku)<br/><small>1.5s timeout</small>"}
+
+    F -->|"REFUSE<br/>off_topic / adversarial / inappropriate"| ZR["Canned refusal<br/><small>Sonnet never called</small>"]
+    F -->|"ALLOW, borderline, unknown_subject<br/><b>or FAILS OPEN on error</b>"| G
+
+    G{{"TOOL LOOP<br/><small>max 8 rounds | one Sonnet call each<br/>the model picks the tool every round</small>"}}
+
+    G -->|"step 1 - what is it called?"| H["search_census_variables<br/><small>local SQLite | FTS5 + BM25 | LIMIT 10</small>"]
+    G -->|"step 2 - where is it?"| I["resolve_geography<br/><small>local SQLite | indexed match</small>"]
+    H -.->|"variable_id, e.g. B19013e1"| G
+    I -.->|"geo_id, e.g. 48453<br/>or ambiguous=true"| G
+
+    G -->|"step 3 - only once those resolve"| J["run_census_sql<br/><small>the ONLY request-time<br/>Snowflake touchpoint</small>"]
+    J --> K{"validate_sql<br/><b>TRUST BOUNDARY</b><br/><small>default-deny | 7 checks</small>"}
+    K -.->|"reject + specific reason,<br/>model rewrites and retries"| G
+    K -->|"validated SQL<br/>LIMIT 200 injected"| L[("Snowflake<br/>US_CENSUS.PUBLIC<br/><small>2020_CBG_* data tables</small>")]
+    L -.->|"max 200 rows"| G
+
+    G ==>|"model stops asking for tools"| M["Grounded answer streams out<br/><small>every number traceable to a row above</small><br/><b>DONE</b>"]
+    G -->|"a limit trips first"| STOPS
+
+    subgraph STOPS[" Code-enforced stops - deterministic text, not model-generated "]
+        direction LR
+        S1["bounded recovery<br/><small>2 failed or zero-row<br/>queries spent</small>"]
+        S2["ambiguity block<br/><small>Snowflake never<br/>touched</small>"]
+        S3["50s watchdog<br/><small>partial answer from<br/>rows already returned</small>"]
+        S4["8-round cap<br/><small>runaway-loop<br/>backstop</small>"]
+    end
+${shared}
+    class A,B,C,D edge
+    class E,F soft
+    class H,I,J local
+    class K hard
+    class L store
+    class ZD,ZR,S1,S2,S3,S4 stop
+    class M answer
+    class G loop
+`;
+
+const status = document.getElementById('status');
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'base',
+  flowchart: { htmlLabels: true, curve: 'basis', nodeSpacing: 45, rankSpacing: 60 },
+  themeVariables: { fontFamily: 'inherit', fontSize: '13px' }
+});
+
+async function draw(id, src, target) {
+  await mermaid.parse(src);
+  const { svg } = await mermaid.render(id, src);
+  document.getElementById(target).innerHTML = svg;
+}
+
+try {
+  await draw('gMain', mainSrc, 'out-main');
+  await draw('gBoot', bootSrc, 'out-boot');
+  status.textContent = 'PARSE_OK  RENDER_OK  (2 diagrams)';
+} catch (e) {
+  status.className = 'fail';
+  status.textContent = 'FAIL: ' + (e && e.message ? e.message : String(e));
+}
+</script>
+</body>
+</html>

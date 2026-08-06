@@ -183,7 +183,7 @@ def test_evals_endpoint_returns_none_when_no_results_exist(tmp_path, monkeypatch
     monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
     response = client.get("/api/evals")
     assert response.status_code == 200
-    assert response.json() == {"latest": None, "previous": None}
+    assert response.json() == {"latest": None, "history": []}
 
 
 def test_evals_endpoint_returns_latest_run(tmp_path, monkeypatch):
@@ -194,28 +194,58 @@ def test_evals_endpoint_returns_latest_run(tmp_path, monkeypatch):
     response = client.get("/api/evals")
 
     assert response.status_code == 200
-    body = response.json()
-    assert body["latest"]["git_sha"] == "abc123"
-    assert body["previous"] is None
+    assert response.json()["latest"]["git_sha"] == "abc123"
 
 
-def test_evals_endpoint_returns_previous_run_when_two_distinct_runs_exist(tmp_path, monkeypatch):
-    """latest.json always mirrors the newest timestamped file (that's the
-    invariant evals/run_evals.py maintains), so distinguishing
-    "one run ever" from "a real previous run" requires two *distinct*
-    timestamped files, not just one alongside latest.json."""
+def test_evals_history_never_double_counts_latest_json(tmp_path, monkeypatch):
+    """latest.json is a copy of the newest timestamped file. Counting it as
+    its own run would show a phantom extra column on a view whose entire job
+    is "are we improving," which is the worst place for a miscount."""
     monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
-    older = {"run_at": "2026-08-05T00:00:00Z", "git_sha": "old111", "results": [], "pass_rate": 0.5, "by_category": {}}
     newer = {"run_at": "2026-08-06T00:00:00Z", "git_sha": "new222", "results": [], "pass_rate": 0.9, "by_category": {}}
+    (tmp_path / "20260806T000000Z.json").write_text(json.dumps(newer))
+    (tmp_path / "latest.json").write_text(json.dumps(newer))
+
+    history = client.get("/api/evals").json()["history"]
+
+    assert len(history) == 1
+
+
+def test_evals_history_is_oldest_first_with_per_scenario_outcomes(tmp_path, monkeypatch):
+    """The matrix needs run order and a pass/fail per scenario per run. It does
+    not need the full results, which is why history is a projection."""
+    monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
+    older = _run_with(["DF-01"])
+    older["git_sha"] = "old111"
+    newer = _run_with(["DF-01", "PM-08"])
+    newer["git_sha"] = "new222"
+    newer["results"][1]["passed"] = False
     (tmp_path / "20260805T000000Z.json").write_text(json.dumps(older))
     (tmp_path / "20260806T000000Z.json").write_text(json.dumps(newer))
     (tmp_path / "latest.json").write_text(json.dumps(newer))
 
-    response = client.get("/api/evals")
+    history = client.get("/api/evals").json()["history"]
 
-    body = response.json()
-    assert body["latest"]["git_sha"] == "new222"
-    assert body["previous"]["git_sha"] == "old111"
+    assert [h["git_sha"] for h in history] == ["old111", "new222"]
+    assert history[0]["scenarios"] == {"DF-01": True}
+    assert history[1]["scenarios"] == {"DF-01": True, "PM-08": False}
+
+
+def test_evals_history_excludes_rows_an_older_run_recorded_as_pending(
+    tmp_path, monkeypatch
+):
+    """A scenario that never ran must not occupy a cell in the matrix — an
+    empty cell means "not in this run", and a never-run row would read as a
+    failure."""
+    monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
+    run = _run_with(["DF-01", "OLD-99"])
+    run["results"][1]["status"] = "pending"
+    (tmp_path / "20260806T000000Z.json").write_text(json.dumps(run))
+    (tmp_path / "latest.json").write_text(json.dumps(run))
+
+    history = client.get("/api/evals").json()["history"]
+
+    assert history[0]["scenarios"] == {"DF-01": True}
 
 
 def _run_with(scenario_ids: list[str]) -> dict:
@@ -239,38 +269,41 @@ def _run_with(scenario_ids: list[str]) -> dict:
     }
 
 
-def test_evals_endpoint_annotates_a_prd_scenario_with_its_question_and_provenance(
+def test_evals_endpoint_attaches_the_question_a_stored_result_does_not_carry(
     tmp_path, monkeypatch
 ):
-    """A stored EvalResult carries no question text, so the Evals tab could
-    only render an opaque id. The join supplies it, and marks the row as
-    PRD-designed — which is what makes a pass on it worth something."""
+    """A stored EvalResult records what happened, not what was asked, so the
+    Evals tab could only render an opaque id without this join."""
     monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
     (tmp_path / "latest.json").write_text(json.dumps(_run_with(["DF-01"])))
 
     row = client.get("/api/evals").json()["latest"]["results"][0]
 
-    assert row["provenance"] == "prd"
     assert row["turns"] == ["Population of Alameda County, California?"]
     assert row["notes"]
 
 
-def test_evals_endpoint_marks_a_post_hoc_scenario_as_authored(tmp_path, monkeypatch):
-    """PM-08 restores a deleted red row and was written against a system that
-    already worked, so it must never be presented as PRD-designed evidence."""
-    monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
-    (tmp_path / "latest.json").write_text(json.dumps(_run_with(["PM-08"])))
-
-    row = client.get("/api/evals").json()["latest"]["results"][0]
-
-    assert row["provenance"] == "authored"
-
-
-def test_evals_endpoint_serves_an_unknown_scenario_id_rather_than_failing(
+def test_evals_endpoint_drops_rows_an_older_run_recorded_as_pending(
     tmp_path, monkeypatch
 ):
-    """An older run may reference a scenario since renamed or removed. That's
-    a labeling gap, not a reason to 500 the whole tab."""
+    """The committed result files still hold rows from when the set carried an
+    unrun backlog. An unrun scenario is not evidence, so it is not shown — but
+    the stored file stays as it was, rather than being rewritten."""
+    monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
+    run = _run_with(["DF-01", "OLD-99"])
+    run["results"][1]["status"] = "pending"
+    (tmp_path / "latest.json").write_text(json.dumps(run))
+
+    rows = client.get("/api/evals").json()["latest"]["results"]
+
+    assert [r["scenario_id"] for r in rows] == ["DF-01"]
+
+
+def test_evals_endpoint_keeps_an_unknown_scenario_id_rather_than_failing(
+    tmp_path, monkeypatch
+):
+    """An older run may name a scenario since renamed or removed. It still
+    records a real run, so it is kept and rendered unlabeled."""
     monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
     (tmp_path / "latest.json").write_text(json.dumps(_run_with(["GONE-99"])))
 
@@ -278,23 +311,20 @@ def test_evals_endpoint_serves_an_unknown_scenario_id_rather_than_failing(
 
     assert response.status_code == 200
     row = response.json()["latest"]["results"][0]
-    assert row["provenance"] == "unknown"
     assert row["turns"] == []
     assert row["notes"] is None
 
 
-def test_evals_endpoint_annotates_the_previous_run_too(tmp_path, monkeypatch):
-    """The previous-run section renders the same way, and older files predate
-    the join entirely — they must still come back labeled."""
+def test_evals_history_survives_a_corrupt_result_file(tmp_path, monkeypatch):
+    """One unreadable file must not take out the whole history view."""
     monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
-    (tmp_path / "20260805T000000Z.json").write_text(json.dumps(_run_with(["OT-01"])))
+    (tmp_path / "20260805T000000Z.json").write_text("{ not json")
     (tmp_path / "20260806T000000Z.json").write_text(json.dumps(_run_with(["DF-05"])))
     (tmp_path / "latest.json").write_text(json.dumps(_run_with(["DF-05"])))
 
-    body = client.get("/api/evals").json()
+    history = client.get("/api/evals").json()["history"]
 
-    assert body["previous"]["results"][0]["provenance"] == "prd"
-    assert body["previous"]["results"][0]["turns"] == ["What's the weather in San Francisco?"]
+    assert [h["git_sha"] for h in history] == ["abc123"]
 
 
 def test_evals_endpoint_still_serves_results_when_scenario_metadata_is_unavailable(
@@ -314,17 +344,19 @@ def test_evals_endpoint_still_serves_results_when_scenario_metadata_is_unavailab
     response = client.get("/api/evals")
 
     assert response.status_code == 200
-    row = response.json()["latest"]["results"][0]
-    assert row["scenario_id"] == "DF-01"
-    assert row["provenance"] == "unknown"
+    rows = response.json()["latest"]["results"]
+    assert [r["scenario_id"] for r in rows] == ["DF-01"]
+    assert rows[0]["turns"] == []
 
 
-def test_prd_scenario_ids_all_exist_in_the_golden_set():
-    """PRD_SCENARIO_IDS is hand-maintained alongside the scenarios it labels;
-    a typo there would silently mislabel a row as authored."""
-    from evals.scenarios import GOLDEN_SCENARIOS, PRD_SCENARIO_IDS
+def test_every_golden_scenario_has_been_run():
+    """The set no longer carries an unrun backlog. A scenario that has never
+    been executed is a wish, not a test, and must not sit alongside ones that
+    have — which is exactly the confusion this set was cleaned up to remove."""
+    from evals.scenarios import GOLDEN_SCENARIOS
 
-    assert PRD_SCENARIO_IDS <= {s.id for s in GOLDEN_SCENARIOS}
+    assert GOLDEN_SCENARIOS
+    assert all(s.status == "executed" for s in GOLDEN_SCENARIOS)
 
 
 def test_traces_endpoint_returns_empty_list_for_unknown_session():

@@ -7,6 +7,17 @@ resolved below with a citation. Nothing in architecture 01 is re-decided.
 
 The build proceeds from this document without further discovery.
 
+> **Pre-code document, left as written.** §7's 30-scenario golden set was
+> authored here before any agent code existed, which is why the executed
+> subset can be called evidence rather than a system describing itself; see
+> `evals/README.md`. Departures made during the build are recorded in
+> `docs/decisions.md` (D-001 … D-022), and the shipped system is described in
+> `README.md`. Chiefly: Langfuse was cut (**D-021**), the frontend shipped
+> five tabs (**D-017**), `EvalScenario` gained `status` and a `stress`
+> category (**D-018**, mostly reversed by **D-022**), and 12 of the 30 §7
+> scenarios are executed today — the shipped set is those 12 plus `UN-08`
+> and `PM-08`.
+
 ---
 
 ## 1. Overview & requirements mapping
