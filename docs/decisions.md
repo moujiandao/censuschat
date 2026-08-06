@@ -529,3 +529,54 @@ reasoning above; revisit if `/api/health` ever gains a continuous
 production consumer (e.g. a `docker-compose` healthcheck or external
 uptime monitor), at which point a periodic background refresh would be
 worth adding.
+
+---
+
+## D-016 — Native Caddy on the deploy host, not Compose's (2026-08-06)
+
+**Status:** deviation from CLAUDE.md rule 18. **Approved by Brian during
+the live deploy**, after the constraint was discovered on the host.
+
+Rule 18 reads: "Deploy = Docker Compose (app + Caddy) on EC2 at
+`https://censuschat.brianmar.com` behind basic auth. Caddy reaches the app
+by compose service name, never `localhost`." The rule's intent is sound —
+addressing a container by service name avoids depending on host port
+layout, and keeps the whole stack reproducible from one compose file.
+
+The host contradicts it. `18.191.3.58` already runs Caddy as a **native
+systemd service**, owning ports 80 and 443, and that same Caddy also
+serves `memory.brianmar.com` → `localhost:3010` (an unrelated
+long-running container). Starting the bundled `caddy` service would fail
+on a port conflict; stopping the native one to free the ports would take
+`memory.brianmar.com` offline. Neither is acceptable for a rule whose
+purpose is deployment hygiene, not uptime sacrifice.
+
+Its `censuschat.brianmar.com` block was also *already* correct —
+`basic_auth` plus `reverse_proxy 127.0.0.1:8000` with `flush_interval -1`,
+which is exactly the setting SSE streaming needs (issue #10). The config
+predated this work and was simply pointing at a port nothing listened on,
+which is why the domain returned 401-with-no-app for so long.
+
+**Fix:** `deploy.sh` starts only the `app` service
+(`docker compose up -d --build app`), and a committed
+`docker-compose.override.yml` publishes it on `127.0.0.1:8000`. The
+bundled `caddy` service stays in `docker-compose.yml` unused, so a host
+*without* a native Caddy could still bring up the full stack as rule 18
+describes — the deviation is host-specific, not baked into the image.
+
+**Cost accepted:** the deployed topology is no longer fully described by
+`docker-compose.yml` alone; reproducing it requires the host's
+`/etc/caddy/Caddyfile` too, which lives outside this repo. Documented in
+README §Deploying. Binding to `127.0.0.1` rather than `0.0.0.0` preserves
+the security property rule 18 implicitly protected: the app is
+unreachable except through Caddy, so basic auth cannot be bypassed by
+hitting port 8000 directly.
+
+**Also found during this deploy, and fixed separately:** the `Dockerfile`
+copied only `src/`, so `static/` and `evals/` were absent from the image —
+`GET /` would have 500'd and the Evals tab shown nothing, i.e. the entire
+web UI broken on the host while working perfectly on localhost. Caught by
+reading the Dockerfile before deploying, not by any test, and verified by
+building and running the real image (commit `ffe90ea`). A concrete
+instance of the assignment's own warning that "your local machine doesn't
+count."

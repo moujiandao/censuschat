@@ -1,0 +1,18 @@
+# Deployment-topology override for the EC2 host (see docs/decisions.md D-016).
+#
+# That host already runs Caddy natively as a systemd service, and that same
+# Caddy also serves memory.brianmar.com. Starting the `caddy` service from
+# docker-compose.yml would fight it for ports 80/443, and stopping the
+# native one would take the other site down. So the bundled caddy service
+# is simply never started there (`docker compose up -d --build app`), and
+# the app publishes on 127.0.0.1:8000 — exactly what the host's existing
+# /etc/caddy/Caddyfile already reverse-proxies to, with flush_interval -1
+# set for SSE.
+#
+# Compose loads this file automatically. Binding to 127.0.0.1 (not 0.0.0.0)
+# keeps the app unreachable from outside the box except through Caddy, so
+# basic auth can't be bypassed by hitting the port directly.
+services:
+  app:
+    ports:
+      - "127.0.0.1:8000:8000"

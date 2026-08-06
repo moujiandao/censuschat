@@ -5,16 +5,21 @@ grounded in the 2020 ACS 5-year estimates (SafeGraph's Open Census Data
 share on the Snowflake Marketplace).
 
 **Live demo:** https://censuschat.brianmar.com
-**Credentials:** HTTP Basic Auth — username `TODO`, password `TODO` *(fill
-in before sharing — see `.env` on the deploy host for `BASIC_AUTH_USER` /
-the plaintext password used to generate `BASIC_AUTH_HASH`)*.
 
-> **Note on the live demo's freshness:** this session's redeploy step could
-> not run from inside the sandboxed dev environment (no outbound SSH). If
-> you're reading this and the demo doesn't yet reflect the frontend or the
-> SQL-identifier-quoting fix described below, `./deploy.sh` needs to be run
-> on the EC2 host (`git pull --ff-only && docker compose up -d --build`) —
-> see "Deploying" below.
+**Credentials** (HTTP Basic Auth):
+
+| | |
+|---|---|
+| Username | `snowflake` |
+| Password | `census` |
+
+```bash
+curl -u snowflake:census https://censuschat.brianmar.com/api/health
+```
+
+`/api/health` returns `{"status":"ok","snapshot":"ok","snowflake":"ok"}`
+when the app can reach both its local snapshot and Snowflake, and
+`degraded` (never a crash) when it can't.
 
 ## Architecture
 
@@ -61,13 +66,29 @@ from Snowflake (a few seconds); subsequent boots reuse the cached file at
 
 ## Deploying
 
-`docker-compose.yml` + `Caddyfile` run the app behind Caddy (TLS + basic
-auth) on an EC2 host. From that host, with `.env` populated per
-`.env.example`'s comments:
+The app runs as a single container on an EC2 host, behind Caddy (TLS +
+basic auth). From that host, with `.env` populated per `.env.example`:
 
 ```bash
-./deploy.sh   # git pull --ff-only && docker compose up -d --build, waits for /api/health
+./deploy.sh   # git pull --ff-only && docker compose up -d --build app, waits for /api/health
 ```
+
+**Caddy is native on that host, not containerized** (it also serves
+`memory.brianmar.com`, so it can't be replaced by the bundled `caddy`
+service without taking that site down). `deploy.sh` therefore starts only
+the `app` service, and `docker-compose.override.yml` publishes it on
+`127.0.0.1:8000` — which the host's existing `/etc/caddy/Caddyfile`
+already reverse-proxies to, with `flush_interval -1` set for SSE. Binding
+to loopback rather than `0.0.0.0` means the app can't be reached except
+through Caddy, so basic auth can't be bypassed by hitting the port
+directly. This deviates from CLAUDE.md rule 18 ("Caddy reaches the app by
+compose service name, never localhost") and is recorded as **D-016**.
+
+Two things are deliberately absent from git and must exist on the host
+(CLAUDE.md rule 8): `.env`, and the Snowflake private key. The key must be
+readable by the container's `appuser` (uid 999) — if it's owned by
+`ubuntu` with mode `600` the app boots *degraded* with a `PermissionError`
+in `docker compose logs app`, rather than crashing.
 
 ## Interpreting the requirements
 
