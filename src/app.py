@@ -118,12 +118,65 @@ async def health() -> dict:
 _EVALS_RESULTS_DIR = Path("evals/results")
 
 
+def _scenario_index() -> dict[str, dict]:
+    """Scenario id -> the authoring context a stored EvalResult doesn't carry.
+
+    An EvalResult records what happened (checks, answer, elapsed) but not what
+    was *asked* or why, so the Evals tab could only ever render opaque ids.
+    Rather than widen the frozen contract (CLAUDE.md rule 12) — which would
+    also only help runs recorded from now on — the question text, notes, and
+    provenance are joined on at read time from evals/scenarios.py, which
+    retroactively labels the result files already committed.
+
+    Imported lazily and defensively: a deployment without evals/ on the path
+    must still serve stored results, just unlabeled.
+    """
+    try:
+        from evals.scenarios import GOLDEN_SCENARIOS, PRD_SCENARIO_IDS
+    except Exception:  # pragma: no cover - defensive; evals/ is shipped
+        logger.warning("evals.scenarios unavailable; serving unlabeled results")
+        return {}
+
+    return {
+        s.id: {
+            "turns": list(s.turns),
+            "notes": s.notes,
+            # PRD §7 rows were designed before any agent code existed;
+            # everything else was authored against a working system. The
+            # distinction is what a reader needs to weigh a green row.
+            "provenance": "prd" if s.id in PRD_SCENARIO_IDS else "authored",
+        }
+        for s in GOLDEN_SCENARIOS
+    }
+
+
+def _annotate(run: dict | None, index: dict[str, dict]) -> dict | None:
+    """Attach scenario context to each result, in place on the loaded dict.
+
+    A result whose scenario id no longer exists in scenarios.py (an older run
+    referencing a since-renamed row) is annotated as "unknown" rather than
+    dropped or raised on — a stale id is a labeling gap, not a reason to fail
+    the whole tab.
+    """
+    if not run:
+        return run
+    for result in run.get("results", []):
+        meta = index.get(result.get("scenario_id"))
+        result["turns"] = meta["turns"] if meta else []
+        result["notes"] = meta["notes"] if meta else None
+        result["provenance"] = meta["provenance"] if meta else "unknown"
+    return run
+
+
 def _load_evals() -> dict:
     """The Evals tab renders latest vs. previous EvalRun directly (per
     docs/01-architecture.md) — evals/results/latest.json is always the
     most recent run; the second-most-recent timestamped file (everything
     in the directory except latest.json itself) is "previous", or None on
-    a repo with only one run on record."""
+    a repo with only one run on record.
+
+    Each result is enriched with its scenario's turns/notes/provenance —
+    see _scenario_index."""
     latest_path = _EVALS_RESULTS_DIR / "latest.json"
     if not latest_path.exists():
         return {"latest": None, "previous": None}
@@ -133,7 +186,9 @@ def _load_evals() -> dict:
         p for p in _EVALS_RESULTS_DIR.glob("*.json") if p.name != "latest.json"
     )
     previous = json.loads(timestamped[-2].read_text()) if len(timestamped) >= 2 else None
-    return {"latest": latest, "previous": previous}
+
+    index = _scenario_index()
+    return {"latest": _annotate(latest, index), "previous": _annotate(previous, index)}
 
 
 @app.get("/api/evals")

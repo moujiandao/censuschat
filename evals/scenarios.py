@@ -1,22 +1,27 @@
-"""Golden scenarios. Two provenances, deliberately not blurred.
+"""Golden scenarios. Two provenances and two run states, deliberately not
+blurred — they are different axes and a row can be any combination.
 
-**Rows 1-11 (status="executed")** are a verbatim subset of
-docs/plans/02-prd.md §7 — the PRD's own IDs, turns, and expectations, not
-restatements. That design predates any agent code, so those test cases
-were not reverse-engineered from a working system. They have been run;
-results are in evals/results/latest.json.
+**Provenance** (`PRD_SCENARIO_IDS` below is the machine-readable truth):
 
-**Rows 12-36 (status="pending")** were authored on 2026-08-06, after the
-system existed, to cover classes the assignment emphasises that PRD §7
-left thin: prompt injection beyond one shape, malformed/hostile input,
-NULL and top-coded values, multi-turn drift, and a worst-case comparison
-against the 60s bound. They have **never been executed** — they are a
-specification of intended behaviour, not evidence of it, and every one of
-them will fail its universal judge_groundedness check the moment it runs
-(issue #21 is unimplemented). Being authored after the code, they carry
-an obvious bias risk the PRD rows don't; see evals/README.md.
+- **PRD §7** — a verbatim subset of docs/plans/02-prd.md §7: the PRD's own
+  IDs, turns, and expectations, not restatements. That design predates any
+  agent code, so those cases were not reverse-engineered from a working
+  system, which is what makes a pass on them worth something.
+- **Authored** — written 2026-08-06, after the system existed. Two of these
+  are executed (`UN-08`, `PM-08`, restoring red rows deleted in 4170f0a
+  under non-colliding IDs); the rest cover classes PRD §7 left thin:
+  injection beyond one shape, malformed/hostile input, NULL and top-coded
+  values, multi-turn drift, and a worst-case comparison against the 60s
+  bound. Being authored after the code, they carry a bias risk the PRD
+  rows don't; see evals/README.md.
 
-New IDs start above the PRD's maximum in each category, so none can
+**Run state** is `EvalScenario.status`. A `pending` row has never been
+executed: a specification of intended behaviour, not evidence of it, and
+every one will fail its universal judge_groundedness check the moment it
+runs (issue #21 is unimplemented). run_evals.py excludes pending rows from
+the pass-rate denominator so an unrun backlog can't move a real number.
+
+Authored IDs start above the PRD's maximum in each category, so none can
 collide with a PRD scenario — including the 19 PRD rows still
 unimplemented. STR-* is a new category (D-018).
 
@@ -33,6 +38,32 @@ snapshot before being written here, not assumed.
 from __future__ import annotations
 
 from src.contracts import Check, CheckType, EvalScenario, ScenarioCategory
+
+# The IDs traceable to docs/plans/02-prd.md §7, authored during scaffolding
+# (commit ef2dd43) before any agent code existed. Everything not in this set
+# was authored on 2026-08-06 against a system that already worked.
+#
+# This lives here, next to the scenarios, rather than as a field on
+# EvalScenario: src/contracts.py is frozen (CLAUDE.md rule 12), and a field
+# would only serialize into *future* result files, whereas an ID set can tag
+# the runs already committed to evals/results/. /api/evals joins on it at
+# read time so the Evals tab can badge each row's provenance.
+PRD_SCENARIO_IDS: frozenset[str] = frozenset(
+    {
+        "DF-01",
+        "DF-05",
+        "CMP-01",
+        "MT-01",
+        "AMB-01",
+        "AMB-02",
+        "AMB-03",
+        "PM-02",
+        "PM-03",
+        "UN-01",
+        "OT-01",
+        "INJ-02",
+    }
+)
 
 GOLDEN_SCENARIOS: list[EvalScenario] = [
     EvalScenario(

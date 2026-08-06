@@ -2,14 +2,20 @@
 
 ## What this is
 
-`scenarios.py` holds **36 scenarios of two distinct provenances**, and the
-distinction is load-bearing enough that the file separates them and the
-Evals tab renders them differently:
+`scenarios.py` holds **39 scenarios**. Two things vary independently, and
+both are load-bearing enough that the file separates them and the Evals tab
+renders them differently: **provenance** (was the case designed before the
+code, or after it?) and **run state** (has it actually been executed?).
 
-| | Count | Status | Provenance |
+| | Count | Run state | Provenance |
 |---|---|---|---|
-| **Executed** | 11 | run, results recorded | Verbatim from `docs/plans/02-prd.md` §7 — the PRD's IDs, turns, expectations |
+| **Executed, PRD** | 12 | run, results recorded | Verbatim from `docs/plans/02-prd.md` §7 — the PRD's ids, turns, expectations, authored before any agent code existed |
+| **Executed, authored** | 2 | run, results recorded | `UN-08`, `PM-08` — restore red rows deleted in `4170f0a`, written after the system worked |
 | **Pending** | 25 | **never run** | Authored 2026-08-06, after the system existed |
+
+A pass on a PRD row is stronger evidence than a pass on an authored one,
+because a PRD row could not have been shaped to fit a system that already
+worked. `PRD_SCENARIO_IDS` is what lets the UI say which is which.
 
 `run_evals.py` drives the executed rows against the real `agent_turn` (real
 Anthropic, real Snowflake, real guardrail), scores the deterministic checks,
@@ -62,27 +68,39 @@ renders on that, not on `passed`.
 
 ## What's implemented, and what isn't
 
-| PRD category | Designed | Here | Note |
-|---|---|---|---|
-| direct_fact | 5 | 2 | DF-01, DF-05 |
-| comparison | 4 | 1 | CMP-01 |
-| multi_turn | 4 | 1 | MT-01 (2 turns, one session) |
-| ambiguous | 3 | 2 | AMB-01, AMB-02 |
-| partial_match | 3 | 2 | PM-02, PM-03 |
-| conflicting | 2 | **0** | Both need the decennial redistricting tables (D-004, issue #17) — cut, so there is nothing to run them against |
-| unanswerable | 4 | 1 | UN-01 |
-| off_topic | 3 | 1 | OT-01 |
-| injection | 2 | 1 | INJ-02 |
+Executed rows only. "PRD" counts rows traceable to PRD §7; "authored" counts
+rows written later and run anyway (both restore red rows deleted in `4170f0a`).
+
+| PRD category | Designed | PRD, executed | Authored, executed | Note |
+|---|---|---|---|---|
+| direct_fact | 5 | 2 | 0 | DF-01, DF-05 |
+| comparison | 4 | 1 | 0 | CMP-01 |
+| multi_turn | 4 | 1 | 0 | MT-01 (2 turns, one session) |
+| ambiguous | 3 | 3 | 0 | AMB-01, AMB-02, AMB-03 — the full PRD set |
+| partial_match | 3 | 2 | 1 | PM-02, PM-03; PM-08 is the deliberate red row |
+| conflicting | 2 | **0** | 0 | Both need the decennial redistricting tables (D-004, issue #17) — cut, so there is nothing to run them against |
+| unanswerable | 4 | 1 | 1 | UN-01; UN-08 pins the D-019 over-refusal fix |
+| off_topic | 3 | 1 | 0 | OT-01 |
+| injection | 2 | 1 | 0 | INJ-02 |
+
+**Provenance is machine-readable, not prose.** `PRD_SCENARIO_IDS` in
+`scenarios.py` is the source of truth for which ids came from PRD §7;
+`/api/evals` joins it onto each stored result at read time so the Evals tab can
+badge every row. It lives there rather than as a field on `EvalScenario`
+because `src/contracts.py` is frozen (rule 12), and because a new field would
+only label runs recorded from now on, while an id set retroactively labels the
+result files already committed.
 
 `judge_groundedness` — the only LLM-judge check in the design (issue #21) —
 is **not implemented**. No scenario carries it. If one did, the scorer
 fails it loudly with "not implemented" rather than skipping it silently, so
 it can never inflate a pass rate.
 
-## How much to trust a 100% pass rate
+## How much to trust the pass rate
 
-The latest run is 11/11. That number should be read with the following
-caveats, because a clean run can equally mean the checks are too loose:
+The latest run is 13/14, with `PM-08` red on purpose. That number should be
+read with the following caveats, because a clean row can equally mean the
+check is too loose:
 
 - **The strong checks.** `DF-05` asserts the literal string `581,348` —
   the real figure this share returns for Wyoming, confirmed by direct

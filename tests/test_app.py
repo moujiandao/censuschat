@@ -218,6 +218,115 @@ def test_evals_endpoint_returns_previous_run_when_two_distinct_runs_exist(tmp_pa
     assert body["previous"]["git_sha"] == "old111"
 
 
+def _run_with(scenario_ids: list[str]) -> dict:
+    return {
+        "run_at": "2026-08-06T00:00:00Z",
+        "git_sha": "abc123",
+        "results": [
+            {
+                "scenario_id": sid,
+                "category": "direct_fact",
+                "passed": True,
+                "checks": [],
+                "answer_final": "",
+                "elapsed_s": 1.0,
+                "status": "executed",
+            }
+            for sid in scenario_ids
+        ],
+        "pass_rate": 1.0,
+        "by_category": {},
+    }
+
+
+def test_evals_endpoint_annotates_a_prd_scenario_with_its_question_and_provenance(
+    tmp_path, monkeypatch
+):
+    """A stored EvalResult carries no question text, so the Evals tab could
+    only render an opaque id. The join supplies it, and marks the row as
+    PRD-designed — which is what makes a pass on it worth something."""
+    monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
+    (tmp_path / "latest.json").write_text(json.dumps(_run_with(["DF-01"])))
+
+    row = client.get("/api/evals").json()["latest"]["results"][0]
+
+    assert row["provenance"] == "prd"
+    assert row["turns"] == ["Population of Alameda County, California?"]
+    assert row["notes"]
+
+
+def test_evals_endpoint_marks_a_post_hoc_scenario_as_authored(tmp_path, monkeypatch):
+    """PM-08 restores a deleted red row and was written against a system that
+    already worked, so it must never be presented as PRD-designed evidence."""
+    monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
+    (tmp_path / "latest.json").write_text(json.dumps(_run_with(["PM-08"])))
+
+    row = client.get("/api/evals").json()["latest"]["results"][0]
+
+    assert row["provenance"] == "authored"
+
+
+def test_evals_endpoint_serves_an_unknown_scenario_id_rather_than_failing(
+    tmp_path, monkeypatch
+):
+    """An older run may reference a scenario since renamed or removed. That's
+    a labeling gap, not a reason to 500 the whole tab."""
+    monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
+    (tmp_path / "latest.json").write_text(json.dumps(_run_with(["GONE-99"])))
+
+    response = client.get("/api/evals")
+
+    assert response.status_code == 200
+    row = response.json()["latest"]["results"][0]
+    assert row["provenance"] == "unknown"
+    assert row["turns"] == []
+    assert row["notes"] is None
+
+
+def test_evals_endpoint_annotates_the_previous_run_too(tmp_path, monkeypatch):
+    """The previous-run section renders the same way, and older files predate
+    the join entirely — they must still come back labeled."""
+    monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
+    (tmp_path / "20260805T000000Z.json").write_text(json.dumps(_run_with(["OT-01"])))
+    (tmp_path / "20260806T000000Z.json").write_text(json.dumps(_run_with(["DF-05"])))
+    (tmp_path / "latest.json").write_text(json.dumps(_run_with(["DF-05"])))
+
+    body = client.get("/api/evals").json()
+
+    assert body["previous"]["results"][0]["provenance"] == "prd"
+    assert body["previous"]["results"][0]["turns"] == ["What's the weather in San Francisco?"]
+
+
+def test_evals_endpoint_still_serves_results_when_scenario_metadata_is_unavailable(
+    tmp_path, monkeypatch
+):
+    """A deployment without evals/scenarios.py importable must still serve the
+    stored results, just unlabeled. Losing the labels is a degradation; losing
+    the tab is an outage."""
+    import sys
+
+    monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
+    (tmp_path / "latest.json").write_text(json.dumps(_run_with(["DF-01"])))
+    # A sys.modules entry of None makes the import inside _scenario_index
+    # raise, which is the real failure shape it guards against.
+    monkeypatch.setitem(sys.modules, "evals.scenarios", None)
+
+    response = client.get("/api/evals")
+
+    assert response.status_code == 200
+    row = response.json()["latest"]["results"][0]
+    assert row["scenario_id"] == "DF-01"
+    assert row["provenance"] == "unknown"
+
+
+def test_prd_scenario_ids_all_exist_in_the_golden_set():
+    """PRD_SCENARIO_IDS is hand-maintained alongside the scenarios it labels;
+    a typo there would silently mislabel a row as authored."""
+    from evals.scenarios import GOLDEN_SCENARIOS, PRD_SCENARIO_IDS
+
+    assert PRD_SCENARIO_IDS <= {s.id for s in GOLDEN_SCENARIOS}
+
+
 def test_traces_endpoint_returns_empty_list_for_unknown_session():
     response = client.get("/api/traces", params={"session_id": "s-unknown"})
     assert response.status_code == 200

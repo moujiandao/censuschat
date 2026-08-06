@@ -224,6 +224,37 @@
   .answer-preview { color: var(--muted); font-size: 12.5px; max-width: 320px; }
   .empty-state { color: var(--muted); font-size: 13.5px; padding: 8px 4px; }
 
+  /* Provenance: designed in the PRD before any agent code existed, vs.
+     authored later against a system that already worked. */
+  .badge.prd { background: color-mix(in srgb, var(--accent, #6ea8fe) 18%, transparent); color: var(--accent, #6ea8fe); }
+  .badge.authored, .badge.unknown { background: color-mix(in srgb, var(--muted) 15%, transparent); color: var(--muted); }
+
+  .eval-section { margin: 26px 0 10px; }
+  .eval-section h2 { font-size: 14px; margin: 0 0 4px; }
+  .section-lead { color: var(--muted); font-size: 12.5px; margin: 0 0 12px; max-width: 70ch; line-height: 1.5; }
+  .scenario-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; display: block; margin-bottom: 4px; }
+  .q-text { display: block; margin-bottom: 4px; }
+  .q-turn2 { color: var(--muted); }
+  .row-note { color: var(--muted); font-size: 12px; line-height: 1.45; margin-top: 6px; max-width: 60ch; }
+  .row-note b { color: var(--error); font-weight: 600; }
+
+  /* Demo probes — hand-run by a reviewer, not part of any recorded run. */
+  .probe-list { display: grid; gap: 10px; margin-bottom: 6px; }
+  .probe {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; cursor: pointer; text-align: left; width: 100%;
+    font: inherit; color: inherit; display: block;
+  }
+  .probe:hover { border-color: var(--muted); }
+  .probe .pq { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  .probe .pw { color: var(--muted); font-size: 12.5px; margin-top: 6px; line-height: 1.45; }
+  .probe .pmeta { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 8px; }
+
+  details.backlog { margin: 22px 0 8px; border-top: 1px solid var(--border); padding-top: 14px; }
+  details.backlog summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+  details.backlog summary::marker { color: var(--muted); }
+  .backlog-cat { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding-top: 14px; }
+
   /* Flow diagram panel */
   .flow-turn {
     border: 1px solid var(--border);
@@ -655,18 +686,26 @@
   };
   let evalsLoaded = false;
 
+  // Extracted so the Evals tab's demo probes can hand a question back to
+  // Chat without duplicating the show/hide logic.
+  function activateTab(name) {
+    tabButtons.forEach(function (b) {
+      b.classList.toggle("active", b.dataset.tab === name);
+    });
+    Object.keys(panels).forEach(function (k) {
+      panels[k].classList.toggle("active", k === name);
+    });
+    if (name === "evals" && !evalsLoaded) {
+      loadEvals();
+    }
+    if (name === "trace") {
+      loadTraces();
+    }
+  }
+
   tabButtons.forEach(function (btn) {
     btn.addEventListener("click", function () {
-      tabButtons.forEach(function (b) { b.classList.remove("active"); });
-      btn.classList.add("active");
-      Object.keys(panels).forEach(function (k) { panels[k].classList.remove("active"); });
-      panels[btn.dataset.tab].classList.add("active");
-      if (btn.dataset.tab === "evals" && !evalsLoaded) {
-        loadEvals();
-      }
-      if (btn.dataset.tab === "trace") {
-        loadTraces();
-      }
+      activateTab(btn.dataset.tab);
     });
   });
 
@@ -677,76 +716,210 @@
     return div.innerHTML;
   }
 
-  function renderEvalRun(run, label) {
-    if (!run) return "";
-    const all = run.results || [];
-    // A "pending" row is authored but never executed — a specification of
-    // intended behaviour, not evidence of it. It must never be confused
-    // with a pass or a fail, which is why it gets its own badge and is
-    // counted separately from the pass rate (D-018).
-    const executed = all.filter(function (r) { return r.status !== "pending"; });
-    const pending = all.filter(function (r) { return r.status === "pending"; });
+  // textContent/innerHTML escapes & < > but leaves quotes alone, which is
+  // fine for element text and wrong inside a quoted attribute. Anything
+  // interpolated into an attribute goes through this instead.
+  function escapeAttr(s) {
+    return escapeHtml(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
 
-    const rows = all.map(function (r) {
-      const isPending = r.status === "pending";
-      const badge = isPending
-        ? '<span class="badge pending">pending</span>'
-        : (r.passed
-            ? '<span class="badge pass">pass</span>'
-            : '<span class="badge fail">fail</span>');
-      const checks = isPending
-        ? "<span class='muted-cell'>not run</span>"
-        : (r.checks || [])
-            .map(function (c) { return (c.passed ? "✓ " : "✗ ") + c.check.type; })
-            .join("<br>");
+  // The three probes from README §"Evaluating the running demo". They are
+  // hand-run by a reviewer in the Chat tab, so they appear in no EvalRun —
+  // but each duplicates a golden scenario, and naming that link here is what
+  // stops the two lists drifting apart. Static content, no endpoint (D-017).
+  const DEMO_PROBES = [
+    {
+      q: "What is the total population of Wyoming?",
+      watch: "Expect 581,348, streaming token by token rather than a blank wait. The Flow Diagram shows resolve_geography → search_census_variables → run_census_sql with the real SQL and returned row.",
+      scenario: "DF-05",
+    },
+    {
+      q: "How many people live in Washington County?",
+      watch: "Thirty states have one. Expect the agent to list candidates and ask, never to silently pick. Enforced twice: a prompt instruction, and a code backstop that blocks run_census_sql outright (D-014).",
+      scenario: "AMB-01",
+    },
+    {
+      q: "How many people will live in Texas in 2050?",
+      watch: "The ACS measures the past. Expect a fast refusal explaining why, with zero tool calls. Declined by the agent itself, unlike an off-topic question, which the guardrail classifier stops earlier.",
+      scenario: "UN-01",
+    },
+  ];
+
+  function renderProbes() {
+    const cards = DEMO_PROBES.map(function (p) {
       return (
-        "<tr" + (isPending ? " class='pending-row'" : "") + ">" +
-        "<td>" + escapeHtml(r.scenario_id) + "</td>" +
-        "<td>" + escapeHtml(r.category) + "</td>" +
-        "<td>" + badge + "</td>" +
-        "<td>" + checks + "</td>" +
-        "<td>" + (isPending ? "—" : r.elapsed_s.toFixed(1) + "s") + "</td>" +
-        '<td class="answer-preview">' +
-          escapeHtml((r.answer_final || "").slice(0, 140)) + "</td></tr>"
+        '<button type="button" class="probe" data-q="' + escapeAttr(p.q) + '">' +
+        '<span class="pq">' + escapeHtml(p.q) + "</span>" +
+        '<div class="pw">' + escapeHtml(p.watch) + "</div>" +
+        '<div class="pmeta">Click to run in Chat · same question as ' +
+          escapeHtml(p.scenario) + "</div></button>"
       );
     }).join("");
 
+    return (
+      "<div class='eval-section'><h2>Demo probes — hand-run</h2>" +
+      "<p class='section-lead'>Three questions to paste into Chat, each exercising a " +
+      "different required behavior. These are run by hand, so they appear in no " +
+      "recorded run below; each one duplicates a golden scenario, named on the card.</p></div>" +
+      "<div class='probe-list'>" + cards + "</div>"
+    );
+  }
+
+  function provenanceBadge(p) {
+    if (p === "prd") return '<span class="badge prd" title="Designed in docs/plans/02-prd.md §7 before any agent code existed">PRD §7</span>';
+    if (p === "authored") return '<span class="badge authored" title="Written after the system worked, so a pass is weaker evidence">authored</span>';
+    // Either the id is absent from evals/scenarios.py (an older run naming a
+    // since-renamed row) or scenario metadata failed to load entirely. Both
+    // mean the same thing to a reader: provenance is unknown, don't infer it.
+    return '<span class="badge unknown" title="Provenance unavailable — no scenario with this id in evals/scenarios.py, or scenario metadata failed to load">unlabeled</span>';
+  }
+
+  function questionCell(r) {
+    const turns = r.turns || [];
+    if (!turns.length) return "<span class='muted-cell'>question text unavailable</span>";
+    // A multi-turn scenario's follow-up is the whole point of the row, so
+    // show every turn rather than just the opener.
+    return turns.map(function (t, i) {
+      const shown = t.length > 160 ? t.slice(0, 160) + "…" : t;
+      return "<span class='q-text" + (i ? " q-turn2" : "") + "'>" +
+        (i ? "↳ " : "") + escapeHtml(shown) + "</span>";
+    }).join("");
+  }
+
+  function renderExecuted(rows) {
+    const body = rows.map(function (r) {
+      const badge = r.passed
+        ? '<span class="badge pass">pass</span>'
+        : '<span class="badge fail">fail</span>';
+      // /api/evals serves json.loads output with no pydantic re-validation on
+      // read, so nothing constrains check.type to the CheckType enum by the
+      // time it reaches here — escape it like every other served field.
+      const checks = (r.checks || [])
+        .map(function (c) { return (c.passed ? "✓ " : "✗ ") + escapeHtml(c.check.type); })
+        .join("<br>");
+      // A red row's reasoning is the most important thing on the page: it is
+      // what separates a deliberate, triaged failure from rot.
+      const note = (!r.passed && r.notes)
+        ? "<div class='row-note'><b>Why this is red:</b> " + escapeHtml(r.notes) + "</div>"
+        : "";
+      const answer = r.answer_final
+        ? "<div class='answer-preview'>" + escapeHtml(r.answer_final.slice(0, 180)) + "</div>"
+        : "";
+      return (
+        "<tr><td><span class='scenario-id'>" + escapeHtml(r.scenario_id) + "</span>" +
+          provenanceBadge(r.provenance) + "</td>" +
+        "<td>" + questionCell(r) + answer + note + "</td>" +
+        "<td>" + escapeHtml(r.category) + "</td>" +
+        "<td>" + badge + "</td>" +
+        "<td>" + checks + "</td>" +
+        "<td>" + r.elapsed_s.toFixed(1) + "s</td></tr>"
+      );
+    }).join("");
+
+    return (
+      "<table class='evals'><thead><tr><th>Scenario</th><th>Question &amp; answer</th>" +
+      "<th>Category</th><th>Result</th><th>Checks</th><th>Time</th></tr></thead>" +
+      "<tbody>" + body + "</tbody></table>"
+    );
+  }
+
+  function renderBacklog(rows) {
+    if (!rows.length) return "";
+    // Grouped by category so the shape of the gap is legible at a glance:
+    // six stress rows and five injection rows say more than 25 flat lines.
+    const byCat = {};
+    rows.forEach(function (r) {
+      (byCat[r.category] = byCat[r.category] || []).push(r);
+    });
+    const body = Object.keys(byCat).sort().map(function (cat) {
+      const header = "<tr><td colspan='2' class='backlog-cat'>" +
+        escapeHtml(cat) + " · " + byCat[cat].length + "</td></tr>";
+      return header + byCat[cat].map(function (r) {
+        return (
+          "<tr class='pending-row'>" +
+          "<td><span class='scenario-id'>" + escapeHtml(r.scenario_id) + "</span></td>" +
+          "<td>" + questionCell(r) +
+            (r.notes ? "<div class='row-note'>" + escapeHtml(r.notes) + "</div>" : "") +
+          "</td></tr>"
+        );
+      }).join("");
+    }).join("");
+
+    return (
+      "<details class='backlog'><summary>Backlog — " + rows.length +
+        " scenarios authored, never run</summary>" +
+      "<p class='section-lead'>A specification of intended behavior, not evidence of it. " +
+      "Excluded from the pass rate in both directions: an unrun backlog must not " +
+      "deflate a real measurement, and must not be hidden either. Each carries a " +
+      "judge_groundedness check, which is unimplemented (issue #21), so every row " +
+      "would fail the moment it ran.</p>" +
+      "<table class='evals'><tbody>" + body + "</tbody></table></details>"
+    );
+  }
+
+  function renderEvalRun(run, label) {
+    if (!run) return "";
+    const all = run.results || [];
+    // "pending" is a run state, "provenance" is where the case came from —
+    // two independent axes. A row can be PRD-designed and unrun, or authored
+    // and executed (UN-08, PM-08 restore two deleted red rows).
+    const executed = all.filter(function (r) { return r.status !== "pending"; });
+    const pending = all.filter(function (r) { return r.status === "pending"; });
+    const passed = executed.filter(function (r) { return r.passed; }).length;
+    const fromPrd = executed.filter(function (r) { return r.provenance === "prd"; }).length;
+
     const pendingStat = pending.length
       ? "<div class='eval-stat'><div class='n'>" + pending.length +
-        "</div><div class='l'>pending (not run)</div></div>"
+        "</div><div class='l'>authored, never run</div></div>"
       : "";
 
     return (
-      "<h2 style='font-size:14px;margin:20px 0 8px'>" + label + "</h2>" +
+      "<div class='eval-section'><h2>" + label + "</h2>" +
+      "<p class='section-lead'>Run by <code>make eval</code> against the real stack: " +
+      "real Anthropic, real Snowflake, real guardrail. The pass rate counts executed " +
+      "rows only.</p></div>" +
       "<div class='eval-summary'>" +
+        "<div class='eval-stat'><div class='n'>" + passed + "/" + executed.length + "</div>" +
+          "<div class='l'>executed passing</div></div>" +
         "<div class='eval-stat'><div class='n'>" + (run.pass_rate * 100).toFixed(0) + "%</div>" +
-          "<div class='l'>pass rate — executed only</div></div>" +
-        "<div class='eval-stat'><div class='n'>" + executed.length + "</div><div class='l'>executed</div></div>" +
+          "<div class='l'>pass rate</div></div>" +
+        "<div class='eval-stat'><div class='n'>" + fromPrd + "</div>" +
+          "<div class='l'>designed pre-code</div></div>" +
         pendingStat +
         "<div class='eval-stat'><div class='n'>" + escapeHtml(run.git_sha) + "</div><div class='l'>git sha</div></div>" +
       "</div>" +
-      "<table class='evals'><thead><tr><th>Scenario</th><th>Category</th><th>Result</th><th>Checks</th><th>Time</th><th>Answer</th></tr></thead>" +
-      "<tbody>" + rows + "</tbody></table>"
+      renderExecuted(executed) +
+      renderBacklog(pending)
     );
   }
 
   async function loadEvals() {
     evalsLoaded = true;
+    // The probes are static, so they render even if /api/evals fails —
+    // a reviewer with a broken results file can still exercise the demo.
+    let html = renderProbes();
     try {
       const res = await fetch("/api/evals");
       const data = await res.json();
       if (!data.latest) {
-        evalsContentEl.innerHTML = '<p class="empty-state">No eval runs recorded yet.</p>';
-        return;
+        html += '<p class="empty-state">No eval runs recorded yet.</p>';
+      } else {
+        html += renderEvalRun(data.latest, "Latest run · " + new Date(data.latest.run_at).toLocaleString());
+        if (data.previous) {
+          html += renderEvalRun(data.previous, "Previous run · " + new Date(data.previous.run_at).toLocaleString());
+        }
       }
-      let html = renderEvalRun(data.latest, "Latest run (" + new Date(data.latest.run_at).toLocaleString() + ")");
-      if (data.previous) {
-        html += renderEvalRun(data.previous, "Previous run (" + new Date(data.previous.run_at).toLocaleString() + ")");
-      }
-      evalsContentEl.innerHTML = html;
     } catch (e) {
-      evalsContentEl.innerHTML = '<p class="empty-state">Couldn\'t load eval results.</p>';
+      html += '<p class="empty-state">Couldn\'t load eval results.</p>';
     }
+    evalsContentEl.innerHTML = html;
+    evalsContentEl.querySelectorAll(".probe").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        activateTab("chat");
+        inputEl.value = btn.dataset.q;
+        inputEl.focus();
+      });
+    });
   }
 
   // ---------- Flow Diagram tab ----------

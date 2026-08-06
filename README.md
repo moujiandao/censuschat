@@ -35,6 +35,11 @@ Paste these into the Chat tab. Each one exercises a different required
 behavior. Open the **Flow Diagram** tab after each to see the tool calls that
 produced the answer.
 
+These three are also listed at the top of the **Evals** tab, where clicking one
+loads it into Chat. They are run by hand, so they appear in no recorded eval
+run — but each duplicates a golden scenario (`DF-05`, `AMB-01`, `UN-01`), named
+there so the two lists cannot drift apart.
+
 **1. Happy path — grounded retrieval**
 
 ```
@@ -94,7 +99,7 @@ flowchart TD
     F -->|REFUSE| Z
     F -->|"ALLOW — or fails OPEN"| G
 
-    G["Tool loop<br/>max 2 retries · 50s watchdog"] --> H["search_census_variables<br/>resolve_geography<br/>local SQLite, no network"]
+    G["Tool loop<br/>8 rounds · 2 retries · 50s watchdog"] --> H["search_census_variables<br/>resolve_geography<br/>local SQLite, no network"]
     H -.-> G
     G --> J["run_census_sql"]
     J --> K{"validate_sql<br/>TRUST BOUNDARY"}
@@ -159,9 +164,13 @@ number.
 - **Session state** is full-history replay from SQLite keyed by `session_id`
   (`src/sessions.py`) — no summarization, no vector store. Multi-turn context
   survives a page reload.
-- **Bounded recovery**: after a SQL error or zero-row result, at most 2
-  retries (re-search or rewrite), then an honest failure that explains what
-  was tried.
+- **Two independent bounds on the tool loop**, worth not conflating:
+  `MAX_RECOVERY_RETRIES = 2` limits *retries after a failure* (a SQL error or
+  zero rows → re-search or rewrite, then an honest failure explaining what was
+  tried), while `_MAX_TOOL_LOOP_ITERATIONS = 8` caps *total rounds* even when
+  every call succeeds. The second is what a genuinely multi-step question runs
+  into — see the `PM-08` red row under [Testing and evals](#testing-and-evals).
+  A 50-second watchdog bounds wall-clock independently of both.
 - **Degraded mode**: Snowflake reachability is checked once at boot and
   cached (**D-015**), because rule 13 forbids the request path from probing
   Snowflake. A snapshot-missing or Snowflake-down boot still serves 200s.
@@ -169,7 +178,7 @@ number.
   snowflake-connector-python. Models pinned in one module
   (`src/model_config.py`): Sonnet for the agent, Haiku for the classifier.
 - **Interface contract** is `src/contracts.py`, treated as frozen. Decisions
-  and interpretation calls are logged in `docs/decisions.md` (D-001 … D-018).
+  and interpretation calls are logged in `docs/decisions.md` (D-001 … D-020).
 
 ### What each tab shows
 
@@ -178,7 +187,7 @@ The frontend is one static HTML file, vanilla JS, CDN-free, no build step.
 | Tab | Shows |
 |---|---|
 | **Chat** | The agent itself. SSE token streaming, a tool-status line, session id persisted in `localStorage`. |
-| **Evals** | `evals/results/latest.json` rendered directly — per-scenario pass/fail and the individual checks behind each. |
+| **Evals** | Three sections, deliberately separated: the hand-run **demo probes** below (click one to load it into Chat), the **executed** rows from `evals/results/latest.json` with each scenario's question, provenance badge, checks and answer, and the **backlog** of authored-but-never-run scenarios behind a toggle. A row's badge says whether it was designed in the PRD before any code existed or authored afterward — the two are not equally strong evidence. |
 | **Flow Diagram** | The current turn's real SSE events as a timeline: guardrail decision, each tool call with args and a bounded result digest, elapsed ms. This is the fastest way to see *why* an answer came out the way it did. |
 | **Trace Logging** | Per-turn spans with latency and input/output token counts per model call. An in-process stand-in for Langfuse, not a replacement — see [What's cut](#whats-cut-and-why). |
 | **Data Source** | A static description of the dataset: provenance, the CBG grain, the table allowlist, the 28-group topic taxonomy, variable naming, and the known data traps. |
@@ -261,7 +270,7 @@ the repo).
 |---|---|---|
 | `SNOWFLAKE_ACCOUNT` | yes | |
 | `SNOWFLAKE_USER` | yes | |
-| `SNOWFLAKE_PRIVATE_KEY_PATH` | yes | Key-pair auth; the file itself is never committed |
+| `SNOWFLAKE_PRIVATE_KEY_PATH` | yes | Key-pair auth; the file itself is never committed. **Locally this is a host path; in the deployed container it is the mount target `/run/secrets/snowflake_key.pem`** — see the compose table below |
 | `SNOWFLAKE_WAREHOUSE` | yes | |
 | `SNOWFLAKE_ROLE` | yes | |
 | `SNOWFLAKE_PRIVATE_KEY_PASSPHRASE` | no | Only if the key is encrypted |
@@ -270,13 +279,30 @@ the repo).
 | `ANTHROPIC_API_KEY` | yes | Agent and guardrail |
 | `SNAPSHOT_DB_PATH` | no | Defaults to `data/snapshot.sqlite3` |
 | `SESSION_DB_PATH` | no | Defaults to `data/sessions.sqlite3` |
-| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST` | no | Reserved; full Langfuse integration is cut |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | no | Reserved; full Langfuse integration is cut (rule 17 is served by the in-app Trace Logging tab instead) |
+
+Three further variables exist **only for `docker-compose.yml`** and are never
+read by application code, so they won't appear if you go looking for them in
+`src/`:
+
+| Variable | Used by | Notes |
+|---|---|---|
+| `SNOWFLAKE_PRIVATE_KEY_HOST_PATH` | compose | Host path to the `.pem`, used as the bind-mount *source*. Distinct from `SNOWFLAKE_PRIVATE_KEY_PATH`, which is the path *inside* the container |
+| `BASIC_AUTH_USER` | Caddy | |
+| `BASIC_AUTH_HASH` | Caddy | bcrypt hash from `caddy hash-password --plaintext '<password>'`. Caddy never sees the plaintext |
+
+If `SNOWFLAKE_PRIVATE_KEY_HOST_PATH` is unset, `docker compose` fails with
+`invalid spec: :/run/secrets/snowflake_key.pem:ro: empty section between
+colons` — an unhelpful message for a simple missing variable.
+
+> Avoid `docker compose config` on a populated host: it inlines `env_file`,
+> printing every secret in `.env` as plaintext.
 
 ---
 
 ## Testing and evals
 
-**327 tests, `make test`.** TDD (failing test first) on every deterministic
+**338 tests, `make test`.** TDD (failing test first) on every deterministic
 layer: the SQL trust boundary (`validate_sql`, 175 tests), guardrail routing,
 bounded-recovery counting, the ambiguity backstop, the wall-clock watchdog,
 degraded-mode detection, FTS ranking, `normalize_value`, and the eval scorer
@@ -291,11 +317,11 @@ passed the entire mocked suite and was only caught against the real database.
 **`make eval`** runs the golden set against the real stack (real Anthropic,
 real Snowflake, real guardrail) and writes an `EvalRun` to `evals/results/`.
 
-- **11 scenarios executed**, 11/11 passing in the latest run. These are a
-  verbatim subset of the 30 designed in `docs/plans/02-prd.md` §7 — the PRD's
-  own IDs, turns, and expectations, authored during scaffolding *before* any
-  agent code existed, so they were not reverse-engineered from a working
-  system.
+- **14 scenarios executed**, 13 passing in the latest run (92.9%). The
+  original 11 are a verbatim subset of the 30 designed in
+  `docs/plans/02-prd.md` §7 — the PRD's own IDs, turns, and expectations,
+  authored during scaffolding *before* any agent code existed, so they were
+  not reverse-engineered from a working system.
 - **25 scenarios authored but never executed** (`status="pending"`), covering
   injection beyond one shape, malformed input, NULL and top-coded values, and
   a worst-case latency comparison. They are a specification of intended
@@ -309,14 +335,19 @@ would be as misleading as hiding the backlog. A pending row serializes as
 `passed: false` with no checks, which means *no evidence*, not *failed*; the
 `status` field is what the UI renders on.
 
-Red rows are kept and triaged, never deleted to make a run look clean — the
-Evals tab renders whatever the last run produced. The current run happens to
-have none, which is exactly why `evals/README.md` documents where the harness
-*under*-verifies: `PM-02`'s check only asserts the answer contains "median"
-and doesn't error, while the behavior the PRD actually wants — explaining
-that medians can't be aggregated — is a `judge_groundedness` question, and
-that check is unimplemented. An earlier ad hoc run found two real failures,
-one still unfixed and recorded in `docs/reflection.md`.
+**The one red row is deliberate.** `PM-08` ("average household income in
+Texas?") is kept and triaged rather than deleted to make the run look clean —
+it exhausts the 8-round tool-loop cap while discovering a
+numerator/denominator pair, and is honestly recorded as flaky (it produces a
+grounded answer in roughly two runs of three). Raising the cap trades against
+the 50-second watchdog, so it was left out of scope deliberately rather than
+overlooked; the scenario's own `notes` field carries that reasoning.
+
+A green run would not mean much on its own, which is why `evals/README.md`
+also documents where the harness *under*-verifies: `PM-02`'s check asserts
+only that the answer contains "median" and doesn't error, while the behavior
+the PRD actually wants — explaining that medians can't be aggregated — is a
+`judge_groundedness` question, and that check is unimplemented.
 
 ---
 
