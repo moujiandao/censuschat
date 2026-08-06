@@ -1,5 +1,22 @@
 # Changelog
 
+## [2026-08-06]
+
+### Added
+- Add `src/sqlgate.py` implementing `validate_sql`, the SQL trust boundary (issue #1, CLAUDE.md rules 1/5). TDD, 152 tests written first. Three gate behaviors beyond the issue's literal spec, all strictly more restrictive, recorded as D-010: LIMIT above the cap is clamped rather than preserved, zero-table statements are rejected, and `OBJECT_CONSTRUCT(*)`/`ARRAY_CONSTRUCT(*)`/`HASH(*)` are banned alongside `SELECT *` with `COUNT(*)` exempted
+- Add `src/app.py` and `src/agent.py` (placeholder pending issue #7): `POST /api/chat` streams `ChatEvent`s as SSE, every path terminates with `done` or `error`, mid-turn exceptions become an honest `error` event rather than a raw 500 (issue #6, CLAUDE.md rule 11)
+- Add `Dockerfile`, `docker-compose.yml`, `Caddyfile`, `deploy.sh`, `.dockerignore` (issue #9): Caddy reaches the app by compose service name; basic auth via bcrypt hash, plaintext only in `.env`/README; SQLite persistence via a named volume; deploy script polls `/api/health`
+- Add root `conftest.py` so `src/` resolves as a PEP 420 namespace package under pytest with no packaging step
+
+### Fixed
+- Escape control characters in `session_id` before logging (`src/app.py`) — an unvalidated client-supplied newline could otherwise forge fake log lines
+- Run the app container as a non-root user; verified the `chown`'d `/app/data` ownership survives being overlaid by a fresh named volume, and that the app starts and serves correctly under the new user
+
+### Verified
+- Full 178-test suite passes both on local Python 3.14 and inside the actual `python:3.13-slim` production container image — closes a build-vs-dev interpreter mismatch flagged in review
+- `(SELECT ...) LIMIT N` (the gate's output for a bare parenthesized query, an untested parse-tree shape) is valid Snowflake syntax and genuinely bounds the row count — confirmed against the real warehouse, returned exactly 200 rows; added as a permanent regression test
+- Ran a full code-review pass (code-reviewer subagent) over `src/sqlgate.py`, `src/app.py`, and the deploy scaffold before pushing; one finding (missing `.env.example`) was a false positive — the file is tracked and pushed, the reviewer's `Glob` missed a root-level dotfile
+
 ## [2026-08-05]
 
 ### Added
