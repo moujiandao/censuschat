@@ -6,6 +6,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ src/
+# Both are served at runtime, so both must be in the image: src/app.py's
+# GET / returns static/index.html (without this the whole web UI 500s in
+# the container while working fine locally), and GET /api/evals reads
+# evals/results/latest.json.
+COPY static/ static/
+COPY evals/ evals/
 
 # Snapshot + session-store SQLite files land here (issues #2, #8), mounted
 # as a named volume in docker-compose.yml so they persist across restarts.
