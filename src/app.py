@@ -23,7 +23,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from src.agent import agent_turn
@@ -99,11 +99,17 @@ async def _stream_turn(session_id: str, message: str):
     )
 
 
+@app.get("/")
+async def index() -> FileResponse:
+    # One static HTML file, vanilla JS, no build step (CLAUDE.md rule 15).
+    return FileResponse("static/index.html")
+
+
 @app.get("/api/health")
 async def health() -> dict:
-    # health_report() does blocking I/O (file stat + a live Snowflake
-    # connection attempt) — off the event loop, same as agent_turn's tool
-    # calls and session-store I/O.
+    # health_report() does blocking I/O (a file stat, plus reading the
+    # boot-time-cached Snowflake result) — off the event loop, same as
+    # agent_turn's tool calls and session-store I/O.
     return await asyncio.to_thread(health_report)
 
 

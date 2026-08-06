@@ -13,3 +13,6 @@ __pycache__/
 
 # NOTE: evals/results/ is deliberately NOT ignored. EvalRun JSON artifacts are
 # committed, including red rows (CLAUDE.md rule 20). Do not add it here.
+
+# Playwright MCP browser-test scratch output — not part of the repo
+.playwright-mcp/
