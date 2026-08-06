@@ -1,11 +1,12 @@
-"""Agent loop — src/contracts.py:agent_turn (issue #7, M2 tracer bullet).
+"""Agent loop — src/contracts.py:agent_turn (issues #7 and #11).
 
-Minimal scope per issue #7: session replay -> Sonnet tool loop with exactly
-the three tools (CLAUDE.md rule 4) -> grounded, streamed answer. Deliberately
-excludes the guardrail (issue #11), bounded recovery loop (issue #12), and
-50s watchdog (issue #14) — all M3. Their eventual hookup points are the
-top of this function (guardrail, before history replay) and the tool loop
-below (recovery, watchdog); nothing here needs restructuring to add them.
+Pipeline: guardrail -> session replay -> Sonnet tool loop with exactly the
+three tools (CLAUDE.md rule 4) -> grounded, streamed answer. A REFUSE
+verdict short-circuits before the tool loop — Sonnet and Snowflake are
+never touched for a refused turn. Still deliberately excludes the bounded
+recovery loop (issue #12) and 50s watchdog (issue #14) — both M3; the tool
+loop below is their eventual hookup point, nothing here needs restructuring
+to add them.
 
 No agent framework (CLAUDE.md rule 14) — a hand-written loop over the
 Anthropic SDK's async streaming client, so tool_start/tool_end/token events
@@ -28,8 +29,11 @@ from src.contracts import (
     ChatMessage,
     EventType,
     GeoLevel,
+    GuardrailAction,
+    RefusalCategory,
     SqlRejected,
 )
+from src.guardrail import classify_input
 from src.model_config import AGENT_MODEL
 from src.sessions import append_message, get_session
 
@@ -42,6 +46,19 @@ _client = anthropic.AsyncAnthropic()
 _MAX_TOOL_LOOP_ITERATIONS = 8
 
 _MAX_TOKENS = 4096
+
+_REFUSAL_MESSAGES: dict[RefusalCategory | None, str] = {
+    RefusalCategory.OFF_TOPIC: (
+        "I can only help with questions about US Census demographic data "
+        "(population, income, housing, and similar ACS statistics)."
+    ),
+    RefusalCategory.ADVERSARIAL: (
+        "I can't do that. I can help with questions about US Census "
+        "demographic data."
+    ),
+    RefusalCategory.INAPPROPRIATE: "I can't help with that.",
+    None: "I can only help with questions about US Census demographic data.",
+}
 
 # Architecture §2/PRD §4.2: the join topology (CBG decomposition, roll-up
 # recipes, table-number -> physical-table mapping) is closed and tiny, so it
@@ -188,6 +205,7 @@ async def agent_turn(
     _trace_turn_stub(session_id)
 
     session = await asyncio.to_thread(get_session, session_id)
+    recent_turns = session.messages[-2:]
     messages: list[dict[str, Any]] = [
         {"role": m.role, "content": m.content} for m in session.messages
     ]
@@ -195,6 +213,19 @@ async def agent_turn(
     await asyncio.to_thread(
         append_message, session_id, ChatMessage(role="user", content=user_message)
     )
+
+    verdict = await asyncio.to_thread(classify_input, user_message, recent_turns)
+    if verdict.action == GuardrailAction.REFUSE:
+        refusal = _REFUSAL_MESSAGES.get(verdict.category, _REFUSAL_MESSAGES[None])
+        yield ChatEvent(type=EventType.TOKEN, data={"text": refusal})
+        await asyncio.to_thread(
+            append_message, session_id, ChatMessage(role="assistant", content=refusal)
+        )
+        yield ChatEvent(
+            type=EventType.DONE,
+            data={"elapsed_ms": int((time.monotonic() - turn_start) * 1000)},
+        )
+        return
 
     streamed_text_parts: list[str] = []
 
