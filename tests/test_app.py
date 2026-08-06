@@ -201,7 +201,7 @@ def test_evals_endpoint_returns_latest_run(tmp_path, monkeypatch):
 
 def test_evals_endpoint_returns_previous_run_when_two_distinct_runs_exist(tmp_path, monkeypatch):
     """latest.json always mirrors the newest timestamped file (that's the
-    invariant evals/build_run_from_manual.py maintains), so distinguishing
+    invariant evals/run_evals.py maintains), so distinguishing
     "one run ever" from "a real previous run" requires two *distinct*
     timestamped files, not just one alongside latest.json."""
     monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)

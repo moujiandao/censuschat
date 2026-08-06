@@ -65,8 +65,9 @@ caught that bug during M2, not during the final sprint.
 
 With more time I would, in priority order: (1) fix the state-level
 mean-substitution query that currently exhausts the tool-loop iteration
-cap (found in the manual eval run, `evals/README.md`) — this is a real,
-reproducible failure on a legitimate question type; (2) wire
+cap (found in an earlier ad hoc run; note the current golden subset does
+*not* cover it, so it would pass a clean `make eval` today) — this is a
+real, reproducible failure on a legitimate question type; (2) wire
 `normalize_value`'s top-code handling into the actual query-result
 rendering path — it exists as a tested pure function but nothing calls it
 yet, so a top-coded value ($250,000+ household income) can still reach a
@@ -108,7 +109,7 @@ what real tracing infrastructure is for.
   judgment call should be revisited.
 - **The guardrail occasionally over-refuses a genuinely unanswerable
   question** rather than letting it reach `resolve_geography` and return
-  an honest zero-candidate "not found." In the manual eval run, "What's
+  an honest zero-candidate "not found." In an earlier ad hoc run, "What's
   the population of Atlantis?" was refused as off-topic rather than
   reaching the tool loop. Defensible for a fictional place, but it means
   the "reasonable but unanswerable given the dataset" requirement is less
@@ -137,23 +138,41 @@ Deliberately *not* unit-tested: whether the model phrases a good answer,
 picks the right tool, or handles a specific natural-language phrasing
 well. That's LLM behavior, not deterministic code, and a mocked unit test
 asserting on generated text is close to worthless — it tests the mock, not
-the model. The intended mechanism for that is a golden-eval suite (30
-named scenarios, an LLM-as-judge groundedness check) — scoped, partly
-designed, and cut for time in this final sprint in favor of shipping a
-working, deployed demo. In its place: individual live verification against
-the real Anthropic + Snowflake backends after nearly every feature
-(documented in `CHANGELOG.md` — this is also how the SQL-quoting bug and
-the mean-substitution failure were actually found, not by the mocked
-suite, which passed the whole time), plus one small manual eval run
-(`evals/README.md`) covering the PRD's own named edge cases as a
-lower-fidelity stand-in for the real harness.
+the model. The intended mechanism for that is a golden-eval suite, designed
+up front in PRD §7: 30 scenarios across 9 categories, each grounded in a
+verified dataset fact, plus an LLM-as-judge groundedness check. That design
+predates any agent code, which I think is the single most valuable thing
+about it — the test cases were not reverse-engineered from a working
+system.
 
-If I were to add one thing to the test suite specifically: a repeatable,
-automated version of the manual eval run — same scenarios, run on every
-change, with results diffed against the previous run rather than eyeballed
-once. That's the actual gap between what exists now and a harness that
-would catch a regression like the mean-substitution failure automatically
-instead of by chance during a final manual pass.
+11 of those 30 now run for real (`make eval`, `evals/`), verbatim, against
+the live stack, scoring six deterministic check types and writing a
+committed `EvalRun` artifact. The remaining gaps are specific rather than
+vague: `judge_groundedness` isn't implemented (so the checks verify that a
+turn resolved the right geography and variable and didn't error, but not
+that the *prose* is faithful to the rows — that's the real groundedness
+question); the `conflicting` category has zero coverage because both its
+scenarios need the decennial tables I cut; and `PM-02`'s check is
+frankly weak, asserting only that the answer says "median" when what the
+PRD wants is an explanation of why medians can't be aggregated. The live
+answer did explain it — but the check wouldn't have caught it if it
+hadn't, and I'd rather say that than let 11/11 imply more than it does.
+
+Alongside the harness, individual live verification after nearly every
+feature (documented in `CHANGELOG.md`) is what actually caught the two
+worst bugs in the project — the SQL identifier-quoting failure and the
+mean-substitution tool-loop exhaustion — neither of which the 322-test
+mocked suite ever flagged, because both are properties of real model
+behavior against a real database.
+
+One process note worth recording, because it is the kind of mistake that
+survives when nobody looks: the first version of this eval directory held
+7 scenarios I wrote myself that **reused PRD scenario IDs for different
+questions**. It looked like the golden set and wasn't. That surfaced only
+because someone asked a direct question about provenance — "who created
+the golden set?" — which is a good argument for treating eval provenance
+as something to state explicitly in the artifact rather than assume is
+obvious. `evals/README.md` now does.
 
 ## What I deliberately left out, and why
 
@@ -167,10 +186,9 @@ backend nobody can actually try is a worse submission than an honestly
 incomplete one with a working demo. The Evals, Flow Diagram, and Trace
 Logging tabs I initially planned to cut too, but went back and built once
 the core chat interface and critical fix were live — all three are real,
-not stubs: the Evals tab renders the frozen `EvalRun` schema
-(`src/contracts.py`) built from the manual scenario run rather than the
-full harness (`evals/build_run_from_manual.py` reshapes it — an honest
-stand-in, not the real thing), the Flow Diagram tab renders each turn's
+not stubs: the Evals tab renders a real `EvalRun` (`src/contracts.py`)
+produced by `make eval` running 11 of the PRD's own golden scenarios
+against the live stack, the Flow Diagram tab renders each turn's
 actual guardrail/tool-call trace client-side by reusing the SSE events the
 chat UI already receives, and the Trace Logging tab adds a genuine
 (in-memory, in-process) span-level trace store — per-turn guardrail,

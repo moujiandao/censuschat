@@ -116,11 +116,14 @@ See `docs/reflection.md` for the full account. Short version: a working,
 tested, deployed core loop (agent, guardrail, bounded recovery, ambiguity
 handling, degraded mode, a chat UI with Chat/Evals/Flow Diagram/Trace
 Logging tabs) took priority over the decennial-redistricting data source,
-real Langfuse tracing, and a fully automated 30-scenario eval harness with
-an LLM judge — all real, all scoped and partly designed (see the
-closed-out GitHub issues), none finished. The Evals tab renders a real
-run, but one built from a small manual scenario set (`evals/`), not the
-full harness. The Trace Logging tab (`src/tracing.py`) renders real,
+real Langfuse tracing, and the full 30-scenario eval suite with an LLM
+judge — all real, all scoped and partly designed (see the closed-out
+GitHub issues), none finished. The eval harness *is* real (`make eval`,
+11 of the PRD's 30 golden scenarios run verbatim against the live stack,
+11/11 passing), but `judge_groundedness` is unimplemented and the
+`conflicting` category has no coverage — `evals/README.md` states exactly
+what each check does and doesn't verify. The Trace Logging tab
+(`src/tracing.py`) renders real,
 per-turn span data (guardrail, model calls with token counts, tool calls
 with latency) but is in-memory and in-process only — a stand-in for rule
 17's actual Langfuse requirement, not a replacement for it.
