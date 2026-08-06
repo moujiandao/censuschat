@@ -132,6 +132,24 @@
     background: var(--error);
     color: #fff;
   }
+  /* Live progress shown INSIDE the assistant bubble. A tool-using turn
+     emits no prose for ~15s (guardrail + first model call + tool round
+     trips all precede the answer), so an empty bubble reads as a frozen
+     app. This puts the activity where the user is already looking. */
+  .bubble.pending { color: var(--muted); font-style: italic; }
+  .bubble.pending::after {
+    content: "";
+    display: inline-block;
+    width: 1em;
+    text-align: left;
+    animation: dots 1.2s steps(4, end) infinite;
+  }
+  @keyframes dots {
+    0%   { content: ""; }
+    25%  { content: "."; }
+    50%  { content: ".."; }
+    75%  { content: "..."; }
+  }
   .status-line {
     font-size: 12px;
     color: var(--muted);
@@ -612,9 +630,29 @@
     }
   }
 
+  // Plain-language progress, keyed by tool name. The raw function names are
+  // still shown in the Flow Diagram / Trace tabs for the technical view.
+  const PROGRESS_LABEL = {
+    resolve_geography: "Looking up the geography",
+    search_census_variables: "Finding the right census variable",
+    run_census_sql: "Querying Snowflake",
+  };
+
+  function setPending(bubble, text) {
+    if (bubble._done) return;   // never overwrite real answer text
+    bubble.classList.add("pending");
+    bubble.textContent = text;
+  }
+
+  function clearPending(bubble) {
+    bubble._done = true;
+    bubble.classList.remove("pending");
+  }
+
   async function sendMessage(message) {
     addRow("user").textContent = message;
     const assistantBubble = addRow("assistant");
+    setPending(assistantBubble, "Thinking");
     const flowSteps = startFlowTurn(message);
     let toolStepsSeen = false;
     setBusy(true);
@@ -671,18 +709,26 @@
           }
 
           if (event.type === "token") {
+            if (!assistantText) clearPending(assistantBubble);
             assistantText += event.data.text;
             assistantBubble.textContent = assistantText;
             logEl.scrollTop = logEl.scrollHeight;
           } else if (event.type === "tool_start") {
             toolStepsSeen = true;
             setStatus("using " + event.data.tool + "…");
+            setPending(
+              assistantBubble,
+              PROGRESS_LABEL[event.data.tool] || ("Running " + event.data.tool)
+            );
             const step = addFlowStep(flowSteps, event.data.tool + " — running…");
             step._tool = event.data.tool;
             step._argRows = describeArgs(event.data.tool, event.data.args_preview || "");
             setFlowDetail(step, step._argRows);
           } else if (event.type === "tool_end") {
             setStatus(event.data.ok ? "" : "a tool call failed, recovering…");
+            if (!event.data.ok) {
+              setPending(assistantBubble, "That query failed — retrying");
+            }
             const items = flowSteps.querySelectorAll("li");
             const last = items[items.length - 1];
             if (last) {
@@ -702,6 +748,7 @@
             }
           } else if (event.type === "error") {
             ended = true;
+            clearPending(assistantBubble);
             assistantBubble.classList.add("error");
             assistantBubble.textContent = assistantText || event.data.message;
             if (assistantText) {
@@ -713,6 +760,13 @@
             setStatus("");
           } else if (event.type === "done") {
             ended = true;
+            if (!assistantText) {
+              // Terminated cleanly but produced no prose — honest rather
+              // than an empty bubble left spinning forever.
+              clearPending(assistantBubble);
+              assistantBubble.textContent =
+                "(the turn finished without producing an answer)";
+            }
             const finalStep = toolStepsSeen
               ? addFlowStep(flowSteps, "Final answer streamed", "ok")
               : addFlowStep(flowSteps, "Short-circuited — no tools called", "fail");
@@ -742,6 +796,7 @@
         setStatus("");
         addFlowStep(flowSteps, "Stream ended without a terminal event", "fail");
         if (!assistantText) {
+          clearPending(assistantBubble);
           assistantBubble.classList.add("error");
           assistantBubble.textContent = "The response stopped unexpectedly. Please try again.";
         }
