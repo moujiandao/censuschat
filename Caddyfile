@@ -1,0 +1,11 @@
+{$DOMAIN:censuschat.brianmar.com} {
+	basic_auth {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+
+	reverse_proxy app:8000 {
+		# Disables Caddy's response buffering interval — required for SSE.
+		# Cloudflare's own buffering is a separate concern, checked in #10.
+		flush_interval -1
+	}
+}

@@ -1,0 +1,12 @@
+.venv/
+.git/
+.env
+*.pem
+*.p8
+__pycache__/
+*.pyc
+.pytest_cache/
+data/
+tests/
+docs/assignment.pdf
+.DS_Store

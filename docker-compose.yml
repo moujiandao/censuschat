@@ -1,0 +1,45 @@
+# Deploy target: EC2, Caddy in front, app reached by compose service name
+# (CLAUDE.md rule 18 — Caddy must never address the app via localhost).
+#
+# Two env vars exist ONLY for this file, not for local dev's .env:
+#   SNOWFLAKE_PRIVATE_KEY_HOST_PATH — host filesystem path to the .pem,
+#     used below as the bind-mount source. The app container instead reads
+#     SNOWFLAKE_PRIVATE_KEY_PATH=/run/secrets/snowflake_key.pem (the mount
+#     target), so the deployed .env sets that var to the container path,
+#     not the host path scripts/sf_query.py uses locally.
+#   BASIC_AUTH_HASH — bcrypt hash of BASIC_AUTH_PASS, generated with
+#     `caddy hash-password --plaintext '<password>'` on the deploy host.
+#     Caddy never sees the plaintext.
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - data:/app/data
+      - ${SNOWFLAKE_PRIVATE_KEY_HOST_PATH}:/run/secrets/snowflake_key.pem:ro
+    expose:
+      - "8000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - BASIC_AUTH_USER=${BASIC_AUTH_USER}
+      - BASIC_AUTH_HASH=${BASIC_AUTH_HASH}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  data:
+  caddy_data:
+  caddy_config:
