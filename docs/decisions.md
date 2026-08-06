@@ -274,3 +274,39 @@ continued adversarial self-review after the issue's stated exit criteria
 were already met and the first commit was closed — each was verified
 empirically before being called fixed, both by the implementing agent and
 independently against the current code (see `CHANGELOG.md`).
+
+---
+
+## D-011 — Median-variable detection is unverified against live data (2026-08-05)
+
+**Status: flagged assumption, not yet empirically verified. Needs a live
+Snowflake check before the `conflicting`/`direct_fact` golden evals involving
+a median table can be trusted.**
+
+D-009/C-3 requires `VariableHit.geo_levels` to return `[GeoLevel.BLOCK_GROUP]`
+for the ~28 median-table variables and all five levels otherwise — the
+mechanism that prevents a median from being silently (and wrongly) averaged
+up to county/state. `src/tools.py:_geo_levels_for` implements this by
+checking whether `"median"` (case-insensitive) appears in the variable's
+`TABLE_TITLE`, on the assumption that ACS median-variable titles reliably
+start with "Median ..." by Census naming convention.
+
+**Why an assumption instead of a verified list:** no live Snowflake
+connection was available in the session that built `src/tools.py` (issues
+#3/#4/#5), so the actual 28 table numbers referenced in D-009/PRD §3 could
+not be pulled and hardcoded the way `ALLOWED_TABLES`/`TOP_CODES` were.
+Rule 12 wants PROVISIONAL items resolved from schema-notes evidence, not
+assumption — this is exactly that gap, made explicit here rather than
+silently shipped.
+
+**Failure mode if wrong:** a false negative (a median table whose title
+doesn't contain "median") would incorrectly get all five geo_levels and
+could pass a median through the exact silent-wrong-average bug C-3 exists to
+prevent. A false positive (a non-median table containing "median" in its
+title for an unrelated reason) would only over-restrict — annoying, not
+wrong.
+
+**Next step:** run `TABLE_TITLE` against the real
+`2020_METADATA_CBG_FIELD_DESCRIPTIONS` table and confirm the substring
+heuristic's precision/recall against the actual 28-table list before relying
+on it for the `make eval` golden set.

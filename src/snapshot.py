@@ -27,11 +27,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import snowflake.connector
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import serialization
-
 from src.contracts import SnapshotError, SnapshotInfo
+from src.snowflake_conn import connect as _connect
 
 SNAPSHOT_DB_PATH = Path(os.environ.get("SNAPSHOT_DB_PATH", "data/snapshot.sqlite3"))
 
@@ -45,14 +42,6 @@ _BREADCRUMB_COLUMNS = [f"FIELD_LEVEL_{n}" for n in range(1, 9)] + [
 ]
 
 _ESTIMATE_SUFFIX = re.compile(r"e\d+$")
-
-_REQUIRED_ENV_VARS = [
-    "SNOWFLAKE_ACCOUNT",
-    "SNOWFLAKE_USER",
-    "SNOWFLAKE_PRIVATE_KEY_PATH",
-    "SNOWFLAKE_WAREHOUSE",
-    "SNOWFLAKE_ROLE",
-]
 
 
 def _variables_query() -> str:
@@ -79,41 +68,6 @@ def _should_index_variable(table_number: str, table_id: str) -> bool:
     if table_number.startswith("B99"):
         return False
     return _ESTIMATE_SUFFIX.search(table_id) is not None
-
-
-def _load_private_key(path: str, passphrase: str | None) -> bytes:
-    with open(path, "rb") as f:
-        pem_bytes = f.read()
-    key = serialization.load_pem_private_key(
-        pem_bytes,
-        password=passphrase.encode() if passphrase else None,
-        backend=default_backend(),
-    )
-    return key.private_bytes(
-        encoding=serialization.Encoding.DER,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
-
-
-def _connect() -> snowflake.connector.SnowflakeConnection:
-    missing = [v for v in _REQUIRED_ENV_VARS if not os.environ.get(v)]
-    if missing:
-        raise RuntimeError(f"Missing required env vars: {', '.join(missing)}")
-
-    private_key_der = _load_private_key(
-        os.environ["SNOWFLAKE_PRIVATE_KEY_PATH"],
-        os.environ.get("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE"),
-    )
-    return snowflake.connector.connect(
-        account=os.environ["SNOWFLAKE_ACCOUNT"],
-        user=os.environ["SNOWFLAKE_USER"],
-        private_key=private_key_der,
-        warehouse=os.environ["SNOWFLAKE_WAREHOUSE"],
-        role=os.environ["SNOWFLAKE_ROLE"],
-        database=os.environ.get("SNOWFLAKE_DATABASE"),
-        schema=os.environ.get("SNOWFLAKE_SCHEMA"),
-    )
 
 
 def _rows_as_dicts(cursor: Any) -> list[dict[str, Any]]:
