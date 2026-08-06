@@ -23,7 +23,7 @@ FIPS string; no place/CBSA/ZCTA geography exists.
 
 ## D-002 — Two architecture §7 eval exemplars are void (2026-08-05)
 
-**Status:** deviation from a locked section. **Needs approval.**
+**Status:** deviation from a locked section. **Approved by Brian at M1.**
 
 Architecture §7 names two exemplars that assume geography this dataset does
 not have:
@@ -101,3 +101,98 @@ wrong.
 Minor: the architecture doc lives at `docs/01-architecture.md`, not
 `docs/plans/01-architecture.md` as referenced in the original build brief.
 The PRD is at `docs/plans/02-prd.md` as specified.
+
+---
+
+## D-007 — Star projection rejected at the SQL gate (2026-08-05)
+
+**Status:** refinement, not a deviation — no approval required. Architecture
+§4 says "banned constructs rejected" without enumerating them; this fills in
+a member. Recorded here because it changes what the gate rejects.
+
+`SELECT *` / `SELECT t.*` now fails `validate_sql`, mapped to the existing
+`SqlViolation.BANNED_CONSTRUCT` rather than a new enum member, so
+`contracts.py` stays frozen (CLAUDE.md rule 12).
+
+Three properties compose into a failure none has alone: the B/C tables
+average ~280 columns (8,164 field codes over 29 tables); Snowflake is
+columnar, so projection width *is* scan cost; and the gate injects
+`LIMIT 200` and passes the query. `SELECT * FROM ..."2020_CBG_B01"`
+therefore returns ~56,000 cells into the model context — a query that
+defeats both the row limit and the scan budget while passing validation.
+
+**The generalizable point:** `SQL_ROW_LIMIT` protects tokens, the projection
+rule protects scan cost. They are different resources, and a gate that
+bounds one while ignoring the other is only half a gate.
+
+**Cost accepted:** none identified. No legitimate census question needs an
+unbounded projection over a 280-column table, and column-level exploration
+is served by the local snapshot rather than Snowflake.
+
+---
+
+## D-008 — Variable search indexes estimate fields only (2026-08-05)
+
+**Status:** refinement, not a deviation — no approval required. Architecture
+§4 specifies FTS5 "over variable label+description" without specifying which
+rows are indexed. Recorded here because it changes what the agent can find.
+
+`m`-suffixed margin-of-error rows are excluded from the FTS corpus, joining
+the existing `B99*` exclusion. With both filters the indexed corpus is
+~3,300 rows rather than 8,164.
+
+Estimate and MOE columns pair exactly 1:1 (schema-notes §4: 4,060 of each in
+2019), are both `NUMBER(38,0)`, and carry near-identical labels. An indexed
+MOE row is therefore a retrieval hit that reads like the answer: a user
+asking for "median household income" could receive `B19013m1`, a 90%
+confidence-interval half-width, rendered as a dollar figure. This is the
+same class of failure as the `B99*` allocation tables surfacing in FTS
+probe 2 (Appendix A) — a plausible-looking wrong variable, which is worse
+than no hit.
+
+**Cost accepted:** none material. MOE remains fully reachable — the agent
+derives the `m` column from a resolved `e` column by suffix substitution.
+It simply cannot *search* its way to one. If margin-of-error reporting
+later becomes a first-class feature, it is a schema-card rule, not a
+retrieval problem.
+
+---
+
+## D-009 — Three contracts changes applied to the interface freeze (2026-08-05)
+
+**Status:** approved by Brian at M1. `src/contracts.py` edited under
+CLAUDE.md rule 12.
+
+All four PROVISIONALs resolved in the same pass — `ALLOWED_TABLES` (31
+tables), `GeoLevel` (5 members), `SENTINEL_CODES` (verified empty),
+`DEFAULT_VINTAGE` (2020). Evidence and citations in `docs/plans/02-prd.md`
+§3. Beyond those, three changes altered the interface itself:
+
+**C-1 — `CensusValue.top_coded: bool`.** `MAX(B19013e1) = 250001` is the
+Census "$250,000 or more" top-code, with 776 CBGs sitting exactly there.
+A top-code is a *real value carrying special meaning*, which is a different
+thing from suppression — so it needed its own flag rather than being folded
+into `suppressed`. Added `TOP_CODES: dict[str, float]` alongside it, keyed
+by table number.
+
+**C-2 — `VariableHit.source: Literal["acs", "decennial"]`.** Required by
+D-004. Defaults to `"acs"`, so nothing changes until the redistricting
+tables land at M3.
+
+**C-3 — `VariableHit.geo_levels` reinterpreted as aggregation validity.**
+No signature change; semantics only. The field was dead under the
+availability reading, because every ACS variable in this share is available
+at all five levels via roll-up, making it a constant. Under the validity
+reading, count variables carry all five levels and the 28 median tables
+carry `[BLOCK_GROUP]` only.
+
+**Why C-3 is the load-bearing one:** the most likely wrong answer this
+system can produce is a median averaged up to county or state. That error
+is invisible — it returns a plausible number with no error and no empty
+result. Encoding the rule in a field the retrieval layer must populate makes
+it a data property that tests can assert on, rather than a sentence in a
+prompt that the model may or may not honor.
+
+**Cost accepted:** `normalize_value` gains an optional `variable_id`
+parameter to look up top-codes. That is a signature widening, not a break —
+existing single-argument calls still work.

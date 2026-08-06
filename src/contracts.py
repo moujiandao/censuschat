@@ -22,16 +22,62 @@ from pydantic import BaseModel, Field
 # PROVISIONAL constants — fill from docs/schema-notes.md at M1, cite evidence
 # --------------------------------------------------------------------------
 
-# Fully-qualified Snowflake table names the SQL gate accepts. Empty default
-# means validate_sql rejects everything — safe until recon fills it.
-ALLOWED_TABLES: frozenset[str] = frozenset()  # PROVISIONAL
+# --------------------------------------------------------------------------
+# RESOLVED at M1 from docs/schema-notes.md. See docs/plans/02-prd.md §3.
+# --------------------------------------------------------------------------
 
-# ACS jam/sentinel values that mean "suppressed / not applicable", mapped to a
-# short human label. Exact codes come from schema-notes (e.g. -666666666).
-SENTINEL_CODES: dict[float, str] = {}  # PROVISIONAL
+# 2020 vintage only (decision D-003). The 2019 tables are deliberately absent:
+# block groups were redrawn for 2020 and the 5-year windows overlap 4 of 5
+# years, so cross-vintage comparison is invalid. Excluding them here makes the
+# invalid query impossible at the trust boundary, not merely discouraged in
+# the prompt.
+#
+# Also deliberately absent:
+#   2020_CBG_B99          — allocation/imputation-rate tables, never a valid
+#                           answer to a demographic question
+#   2019_CBG_PATTERNS     — SafeGraph foot-traffic data, not Census
+#   2020_CBG_GEOMETRY_WKT — no map feature in scope; WKT bloats payloads
+_DEMOGRAPHIC_TABLES: tuple[str, ...] = (
+    "B01", "B02", "B03", "B07", "B08", "B09", "B11", "B12", "B14", "B15",
+    "B16", "B17", "B19", "B20", "B21", "B22", "B23", "B24", "B25", "B27",
+    "B28", "B29",
+    "C02", "C15", "C16", "C17", "C21", "C24",
+)
 
-# Default ACS vintage the agent assumes (and states) when the user gives none.
-DEFAULT_VINTAGE: int | None = None  # PROVISIONAL
+_METADATA_TABLES: tuple[str, ...] = (
+    "METADATA_CBG_FIELD_DESCRIPTIONS",
+    "METADATA_CBG_FIPS_CODES",
+    "METADATA_CBG_GEOGRAPHIC_DATA",
+)
+
+# Compared against catalog.db.name with quotes stripped. The physical
+# identifiers require double-quoting in SQL because they begin with a digit:
+#   US_CENSUS.PUBLIC."2020_CBG_B01"
+ALLOWED_TABLES: frozenset[str] = frozenset(
+    [f"US_CENSUS.PUBLIC.2020_CBG_{t}" for t in _DEMOGRAPHIC_TABLES]
+    + [f"US_CENSUS.PUBLIC.2020_{t}" for t in _METADATA_TABLES]
+    # M3 (decision D-004) adds, once VariableHit.source is populated:
+    #   US_CENSUS.PUBLIC.2020_REDISTRICTING_CBG_DATA
+    #   US_CENSUS.PUBLIC.2020_REDISTRICTING_METADATA_CBG_FIELD_DESCRIPTIONS
+)
+
+# VERIFIED EMPTY — this is a finding, not an unfilled blank. Do not "fix" it.
+# This loader represents suppression as real SQL NULL, not an ACS jam code:
+# B19013e1 across 220,333 rows has MIN=2499, zero negative values, and 8,299
+# NULLs. No -666666666, no 999999999 (schema-notes §6). normalize_value
+# therefore keys on `raw is None`, not on a code table.
+SENTINEL_CODES: dict[float, str] = {}
+
+# Census top-codes are a separate concept from suppression: a real value
+# carrying special meaning. MAX(B19013e1) = 250001 means "$250,000 or more",
+# with 776 CBGs sitting exactly there. Rendering it as "$250,001" is wrong.
+TOP_CODES: dict[str, float] = {"B19013": 250001.0}
+
+# ACS 2016–2020 5-year — the latest vintage with full coverage (242,335 CBGs,
+# 0 null population, 8,164 metadata fields). CBG-level ACS is published only
+# as a 5-year rolling estimate, so a number is never a point-in-time count and
+# must not be phrased as one.
+DEFAULT_VINTAGE: int = 2020
 
 MAX_RECOVERY_RETRIES: int = 2      # locked: bounded recovery loop
 TURN_DEADLINE_S: float = 50.0      # locked: soft watchdog under the 60s cap
@@ -44,16 +90,21 @@ SQL_STATEMENT_TIMEOUT_S: int = 25  # Snowflake session STATEMENT_TIMEOUT
 # --------------------------------------------------------------------------
 
 class GeoLevel(str, Enum):
-    """PROVISIONAL — confirm the exact levels present against schema-notes."""
+    """RESOLVED at M1. Every level here is derivable from the 12-char
+    CENSUS_BLOCK_GROUP by string truncation (schema-notes §2):
+    tract = SUBSTR(...,1,11), county = SUBSTR(...,1,5), state = SUBSTR(...,1,2).
+
+    PLACE, CBSA and ZCTA were REMOVED: 2020_METADATA_CBG_FIPS_CODES carries
+    only STATE, STATE_FIPS, COUNTY_FIPS, COUNTY, CLASS_CODE. No place, CBSA or
+    ZCTA identifier exists anywhere in the 73 objects, and there is no
+    crosswalk to derive one. City questions get the honest redirect in D-005.
+    """
 
     NATION = "nation"
     STATE = "state"
     COUNTY = "county"
-    PLACE = "place"            # incorporated cities/towns
     TRACT = "tract"
     BLOCK_GROUP = "block_group"
-    CBSA = "cbsa"              # metro/micro areas
-    ZCTA = "zcta"
 
 
 class GuardrailAction(str, Enum):
@@ -117,12 +168,34 @@ class SqlViolation(str, Enum):
 # --------------------------------------------------------------------------
 
 class VariableHit(BaseModel):
+    """A variable-search result.
+
+    geo_levels encodes AGGREGATION VALIDITY, not availability (change C-3).
+    Every ACS variable in this share is physically available at all five
+    levels via roll-up, so an availability reading would make the field a
+    constant. Under the validity reading it carries the single most important
+    correctness rule in the dataset:
+
+        count variables  -> all five levels (they roll up by SUM)
+        median variables -> [BLOCK_GROUP] only
+
+    Averaging block-group medians to county or state is methodologically
+    invalid and this share carries no published county/state medians. 28
+    median table numbers are affected. Where an aggregate table exists, the
+    agent computes a true mean instead — SUM(B19025e1)/SUM(B11001e1) — and
+    states the substitution.
+    """
+
     variable_id: str
     label: str
     description: str = ""
     geo_levels: list[GeoLevel] = Field(default_factory=list)
     years: list[int] = Field(default_factory=list)
     score: float  # FTS rank; higher is better
+    # ACS 5-year estimate vs decennial full count (change C-2, decision D-004).
+    # Without this the agent can silently mix a full count with a 5-year
+    # estimate — the exact failure the `conflicting` goldens probe.
+    source: Literal["acs", "decennial"] = "acs"
 
 
 class VariableSearchResult(BaseModel):
@@ -160,12 +233,22 @@ class QueryResult(BaseModel):
 
 
 class CensusValue(BaseModel):
-    """Normalized cell value. PROVISIONAL until SENTINEL_CODES is filled."""
+    """Normalized cell value. RESOLVED at M1.
+
+    Suppression in this share is real SQL NULL, not a jam code, so
+    normalize_value keys on `raw is None`. The `sentinel` field is retained
+    for interface stability but stays None unless SENTINEL_CODES is ever
+    populated.
+    """
 
     raw: Any
-    value: float | None              # None when suppressed / sentinel-coded
+    value: float | None              # None when suppressed
     suppressed: bool = False
     sentinel: str | None = None      # label of matched sentinel code, if any
+    # True when the raw value is a Census top-code — a real number carrying
+    # special meaning (change C-1). 250001 means "$250,000 or more", not
+    # $250,001. Callers must render the band, never the bare figure.
+    top_coded: bool = False
 
 
 class GuardrailVerdict(BaseModel):
@@ -275,11 +358,17 @@ def build_snapshot(force: bool = False) -> SnapshotInfo:
     raise NotImplementedError
 
 
-def normalize_value(raw: Any) -> CensusValue:
-    """Map a raw Snowflake cell to CensusValue using SENTINEL_CODES.
-    Sentinel-coded values MUST come back suppressed=True, value=None —
-    they are never rendered to the user as real numbers. PROVISIONAL until
-    schema-notes supplies the codes. Pure function: TDD target.
+def normalize_value(raw: Any, variable_id: str | None = None) -> CensusValue:
+    """Map a raw Snowflake cell to CensusValue. Pure function: TDD target.
+
+    Suppression is SQL NULL in this share (SENTINEL_CODES is verified empty),
+    so `raw is None` -> value=None, suppressed=True. NULL means "not
+    reported" and must never be coerced to 0.
+
+    When variable_id is supplied and its table number appears in TOP_CODES
+    with a matching value, top_coded=True — the caller renders the band
+    ("$250,000 or more"), never the bare number. Neither a suppressed nor a
+    top-coded value is ever rendered to the user as a plain figure.
     """
     raise NotImplementedError
 

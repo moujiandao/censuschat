@@ -34,8 +34,11 @@ in a prompt. This split is the direct answer to the assignment's
    boundary). Classifier error/timeout → allow, fail open.
 3. Agent loop: Sonnet with full session history replayed. System prompt =
    role + schema card + join examples + grounding/ambiguity rules + vintage
-   default. Tools: `search_census_variables`, `resolve_geography`,
-   `run_census_sql`. Tool calls stream `tool_start`/`tool_end` events.
+   default, built as a static module constant and cached with one
+   `cache_control` breakpoint — the 3–5 model calls per turn each resend it,
+   so caching pays within a single turn (PRD §6.1). Tools:
+   `search_census_variables`, `resolve_geography`, `run_census_sql`. Tool
+   calls stream `tool_start`/`tool_end` events.
 4. Recovery: on SQL error or zero rows the agent sees the failure verbatim
    and gets ≤2 retries (re-search or rewrite), then honest failure
    describing what was tried.
@@ -55,15 +58,22 @@ in a prompt. This split is the direct answer to the assignment's
   two, Snowflake for the third.
 - **SQL gate** (`src/sqlgate.py`): `validate_sql` — sqlglot
   (dialect="snowflake"), single statement, SELECT-only (CTEs fine), table
-  allowlist from `ALLOWED_TABLES`, banned constructs rejected, `LIMIT 200`
+  allowlist from `ALLOWED_TABLES`, banned constructs rejected (including
+  star projection — the tables average ~280 columns, so `SELECT *` is both
+  a full columnar scan and a context-window flood; PRD §5), `LIMIT 200`
   injected, sanitized SQL returned. Pure function; the primary TDD target.
 - **Snapshot builder** (`src/snapshot.py`): at startup, pull the
   attributes/metadata table and geography index into SQLite; FTS5 virtual
   table over variable label+description with coverage metadata columns
-  (geo levels, years per variable). Failure → boot degraded, surface via
-  `/api/health`, chat responds "I'm having trouble connecting to the data"
-  rather than crashing (maps to the assignment's graceful-degradation tip
-  verbatim).
+  (geo levels, years per variable). Corpus is estimate fields only —
+  `m`-suffixed margin-of-error rows and `B99*` allocation tables are
+  excluded, ~3,300 indexed rows from 8,164 raw (PRD §4.1). Geography index
+  is the FIPS table (~3.3K rows), never the per-CBG geographic-data table
+  (242K). The SQLite file lives on a Docker volume and survives restarts;
+  ACS vintage data is immutable, so there is nothing to invalidate. Failure
+  → boot degraded, surface via `/api/health`, chat responds "I'm having
+  trouble connecting to the data" rather than crashing (maps to the
+  assignment's graceful-degradation tip verbatim).
 - **Sessions** (`src/sessions.py`): SQLite, full history replay.
 - **Value normalization** (`normalize_value`): sentinel/jam codes →
   suppressed, never rendered as numbers. PROVISIONAL codes.

@@ -157,11 +157,21 @@ At startup, pull into local SQLite; Snowflake is untouched at request time
 except by `run_census_sql` (CLAUDE.md rule 13).
 
 - **Variables** — FTS5 virtual table over `TABLE_TITLE` + the ten breadcrumb
-  columns, plus `TABLE_UNIVERSE`, `TABLE_NUMBER`, `TABLE_ID`. ~8,164 rows.
+  columns, plus `TABLE_UNIVERSE`, `TABLE_NUMBER`, `TABLE_ID`. ~3,300 indexed
+  rows, from 8,164 raw (constraints 3 and 4 below remove roughly 60%). That
+  figure is derived from 2019's verified ratios — the 1:1 `e`/`m` split and
+  the 67-of-364 `B99` share — applied to 2020, not measured on 2020
+  directly. Confirm with a `COUNT(*)` when the builder lands; the exact
+  number changes nothing architecturally, but it should not be quoted in
+  the README as if measured.
 - **Geography** — 3,234 county rows + 51 state rows from
   `2020_METADATA_CBG_FIPS_CODES`, with a collision count per county name.
+  This is the FIPS table, **not** `2020_METADATA_CBG_GEOGRAPHIC_DATA` — that
+  one is 242,335 rows of per-CBG land area and centroids, 68× larger, and
+  answers no question a user asks by name. It stays allowlisted for
+  Snowflake-side density queries but is never snapshotted.
 
-Three builder constraints, each from recon (Appendix A) — violating any of
+Four builder constraints, each from recon (Appendix A) — violating any of
 them fails silently:
 
 1. **The 9th breadcrumb column is `"FIELD_LEVELl_9"`** — upstream typo,
@@ -172,6 +182,25 @@ them fails silently:
    probe queries at once — a total false negative that looked like a real
    result.
 3. **Exclude `TABLE_NUMBER LIKE 'B99%'`** from the indexed corpus.
+4. **Index estimate fields only — exclude `m`-suffixed margin-of-error rows.**
+   `TABLE_ID` suffix `e<n>` is the estimate, `m<n>` its margin of error, and
+   the pairing is exactly 1:1 (schema-notes §4: 4,060 of each in 2019). Both
+   are `NUMBER(38,0)` and their labels are near-identical, so an indexed MOE
+   row is a retrieval hit that reads like the answer. A user asking "median
+   household income" who gets `B19013m1` back gets a confidence interval
+   half-width rendered as a dollar figure. Halves the corpus and closes a
+   wrong-answer path; MOE stays reachable — the agent derives the `m` column
+   from a resolved `e` column by suffix, it just never *searches* for it.
+
+**The snapshot persists across restarts.** `build_snapshot(force=False)` is
+already specified as a no-op when a snapshot exists, but that only holds if
+the SQLite file outlives the container. Mount it on a Docker volume
+(CLAUDE.md rule 18 — compose on EC2). ACS vintage data is immutable, so
+there is nothing to invalidate between deploys. This turns every restart
+from "10–20s plus a live Snowflake dependency, including a warehouse resume"
+into an instant boot, and it strengthens degraded mode: the app degrades
+only when the cached file is missing *and* Snowflake is unreachable, rather
+than every time the box reboots while the warehouse is asleep.
 
 Failure → `SnapshotError`, boot degraded, surface via `/api/health`, chat
 answers "I'm having trouble connecting to the data." Never crash on startup.
@@ -203,6 +232,12 @@ correctness rules below, plus 2–3 worked SQL examples.
    (`Total population`, `Households`, `Workers 16 years and over`…). 462 CBGs
    have population > 0 and households = 0 (group quarters), so population and
    households are not interchangeable denominators (schema-notes §6).
+5. **Name every column; always aggregate or bound.** Never `SELECT *` (the
+   gate rejects it — §5). Every query either aggregates to the asked-for
+   level or carries its own `ORDER BY … LIMIT n` sized to the question,
+   typically 1 row for a single place, 2–5 for a comparison, 10 for a top-N.
+   The gate's `LIMIT 200` is a backstop against a runaway payload, not a
+   target to fill.
 
 ---
 
@@ -219,9 +254,29 @@ Two soft layers, one hard boundary (CLAUDE.md rule 5).
 - **SQL gate** (`validate_sql`, the trust boundary): sqlglot parse
   (`dialect="snowflake"`), exactly one statement, SELECT-only (CTEs
   resolving to SELECT are fine), every referenced table in `ALLOWED_TABLES`,
-  no banned constructs (DML/DDL/`INTO`/`CALL`/session vars), `LIMIT 200`
-  injected when absent, `STATEMENT_TIMEOUT_IN_SECONDS = 25` on the session.
+  no banned constructs (DML/DDL/`INTO`/`CALL`/session vars, **and star
+  projection**), `LIMIT 200` injected when absent,
+  `STATEMENT_TIMEOUT_IN_SECONDS = 25` on the session.
   User text is never interpolated into SQL anywhere (CLAUDE.md rule 1).
+
+**Star projection (`SELECT *`, `SELECT t.*`) is rejected**, mapped to the
+existing `SqlViolation.BANNED_CONSTRUCT` — no new enum member, so
+`contracts.py` stays frozen (CLAUDE.md rule 12). Three properties compose
+into a failure none of them has alone:
+
+1. The B/C tables are wide — 8,164 field codes across 29 physical tables,
+   averaging ~280 columns each (schema-notes §1).
+2. Snowflake is columnar, so projection width *is* the scan cost.
+   `SUM("B01003e1")` reads one column; `*` reads all ~280.
+3. The gate injects `LIMIT 200` and passes the query, so
+   `SELECT * FROM US_CENSUS.PUBLIC."2020_CBG_B01"` returns roughly 200 × 280
+   = 56,000 cells straight into the model's context.
+
+A gate that bounds rows while ignoring columns is only half a gate: the
+row limit is a *token* control, the projection rule is the *scan* control,
+and this query defeats both at once while passing validation. Rejecting it
+is one sqlglot check on the parsed projection list. TDD target alongside
+the injection and multi-statement cases (CLAUDE.md rule 19).
 
 Degraded mode: snapshot or Snowflake failure → banner from `/api/health`,
 and chat explains *why* rather than failing blank.
@@ -242,6 +297,48 @@ matches 30 states, so it asks; "population of Alameda County" does not.
 City/place policy (decided at M1): the dataset has no city boundaries.
 The agent says so and offers the containing county as an explicit
 substitute the user must accept — never silently equating city with county.
+
+Replay is cheap by construction, and this is load-bearing rather than
+incidental: `ChatMessage.role` is `Literal["user", "assistant"]` with no
+tool role, so tool results live only inside the turn that produced them and
+are dropped across turns. A 10-turn conversation replays prose, not
+accumulated SQL result sets. Do not "improve" the session store by
+persisting tool calls — that is what would make rule 16 expensive.
+
+### 6.1 Prompt caching
+
+One `cache_control` breakpoint on the last system block. Caching is a
+prefix match rendered `tools` → `system` → `messages`, so a single
+breakpoint there covers the three tool definitions *and* the schema card
+together — the whole stable prefix, roughly 2K tokens.
+
+This pays inside a single turn, not across a session, which is why it is
+worth the one line of code. Each turn makes 3–5 Sonnet calls (one per tool
+round trip), and every one of them resends that prefix. Uncached, four
+calls pay 4× full price on it. Cached: one write at 1.25× plus three reads
+at ~0.1× = 1.55×. About 60% off the stable span, recouped before the user
+sees their first answer.
+
+Three constraints, each of which fails silently rather than loudly:
+
+- **The prefix must be byte-stable.** No `datetime.now()`, no `session_id`,
+  no vintage string computed at request time anywhere in the system prompt
+  or tool definitions. The schema card is static content and must be built
+  as a module constant, not assembled per request. Serialize tool schemas
+  deterministically.
+- **Minimum cacheable prefix on Sonnet is 1024 tokens.** Below that,
+  caching no-ops with `cache_creation_input_tokens: 0` and no error. The
+  schema card plus rules plus three tool schemas should clear it
+  comfortably — verify with `count_tokens` at M2 rather than assuming.
+- **The Haiku classifier will not cache** (4096-token minimum, and its
+  prompt is far shorter). Expected, not a defect. Do not engineer around
+  it; the classifier's cost is its own short input.
+
+Verification is one assertion, and it belongs in the M2 exit criteria:
+`usage.cache_read_input_tokens > 0` on the second model call of a turn. If
+it reads zero across a turn, a silent invalidator is in the prefix — diff
+the rendered prompt bytes between two calls to find it. The Langfuse spans
+already required per model call (CLAUDE.md rule 17) are where this surfaces.
 
 ---
 
@@ -403,5 +500,28 @@ Architecture 01 §13 carries forward. Updated at M1:
 - **New — no city geography.** The most natural user question ("population of
   Austin") cannot be answered as asked. Mitigation: the honest-redirect
   policy in §6, covered by PM-03.
+- **New — Cloudflare sits in front of Caddy, so there are two proxies, not
+  one.** Architecture §13 anticipated only Caddy, which flushes
+  `text/event-stream` by default. Cloudflare is the layer known to buffer
+  responses, and a buffered stream arrives as one blob at the end — to a
+  reviewer that reads as a 30-second hang followed by a wall of text, failing
+  the assignment's interactivity requirement while the app is behaving
+  correctly. It also fails *only* in the deployed environment, the exact trap
+  the assignment's "Deployment Truth" tip names.
+  **Mitigation, cheapest first:** grey-cloud the DNS record (Cloudflare
+  resolves but does not proxy); or keep the proxy and set
+  `X-Accel-Buffering: no` plus `Cache-Control: no-cache` on the SSE response.
+  **M2 exit criterion amended:** "first token visible in the browser" must be
+  verified through Cloudflare *and* Caddy, not Caddy alone.
+- **New — TLS challenge conflict.** With Cloudflare proxying, Caddy's
+  automatic HTTPS via HTTP-01 can fail because Cloudflare terminates TLS
+  first. Either set Cloudflare SSL to Full (strict) with an origin
+  certificate, or switch Caddy to a DNS-01 challenge.
+- Basic auth **retained** (CLAUDE.md rule 18, no deviation). Rationale
+  recorded at M1: an unauthenticated endpoint calling Anthropic and Snowflake
+  per request is an unbounded cost exposure, and public URLs are scanned by
+  bots within hours. Credentials go at the top of the README (§10) so
+  reviewers are never blocked. Caddy stores a bcrypt hash; the plaintext
+  lives only in `.env` and the README.
 - SSE buffering behind Caddy, Docker service-name networking, Elastic IP,
   trial-account credits: unchanged, all proven at M2.
