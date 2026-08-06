@@ -1,2 +1,4 @@
 snowflake-connector-python==4.7.1
 python-dotenv==1.2.2
+sqlglot==30.15.0
+pytest==9.1.1
