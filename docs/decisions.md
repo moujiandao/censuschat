@@ -383,3 +383,76 @@ confirming a real self-correction isn't penalized.
 **Cost accepted:** none — this is strictly more conservative (tighter
 bound) than the literal exit-criteria reading, and the only reading
 consistent with rule 9's actual wording.
+
+---
+
+## D-014 — Ambiguous geography gets a code-enforced backstop, not prompt-only trust (2026-08-06)
+
+**Status:** refinement of issue #13's exit criteria, not a deviation from
+CLAUDE.md — no approval required. CLAUDE.md rule 10 and `GeoResolution`'s
+own docstring both use MUST language ("the agent MUST ask, never silently
+pick") for ambiguous geography. Issue #13's exit criterion 1 reads "Agent
+loop checks `GeoResolution.ambiguous` ... and asks a clarifying question
+instead of proceeding to SQL" — read literally, this asks for the *loop*
+(code), not just the system prompt, to check the flag.
+
+The rest of issue #13 (vintage-default framing, D-005's city/place redirect)
+is implemented as system-prompt guidance only, verified live rather than by
+unit test, per the issue's own Tests section ("agent-loop/LLM behavior...
+covered by golden evals, not mocked unit asserts") and CLAUDE.md rule 19's
+LLM-behavior exemption. Ambiguous-geography handling gets one exception:
+`GeoResolution.ambiguous` is itself a deterministic boolean already computed
+in code (`resolve_geography`, issue #4, TDD-covered), so unlike vintage
+framing or city-redirect judgment, there's a concrete flag to check — the
+same situation the SQL gate is in relative to the guardrail classifier
+(CLAUDE.md rule 5: soft prompt layer vs. hard code boundary), and the same
+lesson D-013 relearned empirically for bounded recovery: trusting the model
+alone on a MUST-level invariant is not a boundary.
+
+**Fix:** `src/agent.py:agent_turn` tracks `unresolved_ambiguous_geo`, a list
+accumulated across the whole turn; if `run_census_sql` is attempted while
+that list is non-empty, Snowflake is never called — the turn is
+force-terminated with a deterministic, code-generated clarifying question
+covering every unresolved candidate set (`_build_ambiguous_geo_clarification`),
+the same code-enforced-termination pattern `_build_recovery_failure_message`
+(D-013) already established. Scoped to `run_census_sql` only, matching the
+exit criterion's literal wording — an unrelated, *unambiguous*
+`resolve_geography` or `search_census_variables` call elsewhere in the turn
+has no effect on this state; an unrelated *ambiguous* one is added to the
+list alongside the first, and both must be resolved before `run_census_sql`
+may proceed. 3 new TDD tests (`tests/test_agent.py`) plus live verification
+of all four named golden scenarios (AMB-01 Washington County, AMB-02
+Franklin County, AMB-03 Orange County, PM-03 Austin→Travis redirect) against
+the real agent: in every live run the model asked correctly on its own
+before the backstop was even needed, which is the expected steady-state —
+the backstop is a safety net for the case it doesn't, and only the unit
+tests exercise that path directly (no live run was engineered to trigger
+it, since doing so would require adversarially prompting a well-behaved
+model).
+
+**Correction (code review, same day):** the first implementation tracked
+pending ambiguity in a single last-write-wins variable
+(`pending_ambiguous_geo: dict | None`), overwritten on *every*
+`resolve_geography` call regardless of query. An unrelated, unambiguous
+result for a second place later in the same turn silently cleared an
+earlier still-unresolved ambiguity, so a subsequent `run_census_sql` for
+the first (still-ambiguous) place passed the block check unblocked — a real
+silent-pick path, exactly what exit criterion 2 forbids, and realistically
+triggerable by any comparison question naming one of this project's own
+name-collision counties (Washington/Franklin/Orange, D-002) alongside an
+unambiguous one. The review also flagged the missing test for this exact
+shape. Fixed by switching to the append-only list described above (`Fix`,
+already updated to reflect the corrected behavior) and adding 2 more tests:
+one with both `resolve_geography` calls in the same model response, one
+with them split across separate tool-loop iterations — both confirm the
+ambiguity is still caught. Full suite (255 tests) re-verified green after
+the fix.
+
+**Cost accepted:** none — strictly more conservative than prompt-only trust,
+and the interpretation is at least as consistent with rule 10's MUST wording
+as the pure-prompt reading. Coarse by construction in the direction that
+matters for safety: once any ambiguous `resolve_geography` result appears
+in a turn, *any* later `run_census_sql` call in that turn is blocked, even
+one unrelated to that specific ambiguous place — avoiding a fragile "is
+this SQL about that geography" check. Live runs above never exercised this
+coarseness since the model resolved ambiguity before attempting SQL.

@@ -452,6 +452,177 @@ def test_recovery_budget_resets_across_separate_turns(monkeypatch):
     assert second_events[-2].data["text"] == "Found 7."
 
 
+def _geo_tool_block(tool_id: str, name: str = "Some County") -> SimpleNamespace:
+    return SimpleNamespace(
+        type="tool_use", name="resolve_geography", input={"name": name}, id=tool_id
+    )
+
+
+_AMBIGUOUS_GEO = {
+    "query": "Washington County",
+    "candidates": [
+        {"geo_id": "24043", "name": "Washington County, Maryland", "level": "county", "state": "MD"},
+        {"geo_id": "51191", "name": "Washington County, Virginia", "level": "county", "state": "VA"},
+    ],
+    "ambiguous": True,
+}
+
+_UNAMBIGUOUS_GEO = {
+    "query": "Travis County, Texas",
+    "candidates": [{"geo_id": "48453", "name": "Travis County, Texas", "level": "county", "state": "TX"}],
+    "ambiguous": False,
+}
+
+
+def test_ambiguous_geography_blocks_sql_and_forces_clarifying_question(monkeypatch):
+    """CLAUDE.md rule 10 / issue #13: ambiguous geography MUST prompt a
+    clarifying question, never a silent pick. If the model tries
+    run_census_sql anyway after an ambiguous resolve_geography, the loop
+    must intercept before Snowflake is ever touched and force a
+    deterministic clarifying question instead — code-enforced, not a
+    request the model can decline (same pattern as bounded recovery)."""
+    monkeypatch.setattr(agent, "classify_input", _allow_verdict)
+
+    def _run_tool_stub(name, tool_input):
+        if name == "resolve_geography":
+            return _AMBIGUOUS_GEO
+        raise AssertionError(f"{name} must never run while an ambiguous geography is unresolved")
+
+    monkeypatch.setattr(agent, "_run_tool", _run_tool_stub)
+
+    geo_response = SimpleNamespace(stop_reason="tool_use", content=[_geo_tool_block("g1", "Washington County")])
+    sql_response = SimpleNamespace(stop_reason="tool_use", content=[_sql_tool_block("t1")])
+    factory = _install_fake_client(monkeypatch, [_FakeStream([], geo_response), _FakeStream([], sql_response)])
+
+    events = _collect("s-ambiguous", "population of Washington County?")
+
+    assert len(factory.calls) == 2  # the model was never called a 3rd time
+    event_types = [e.type for e in events]
+    assert event_types == [
+        EventType.TOOL_START,
+        EventType.TOOL_END,
+        EventType.TOOL_START,
+        EventType.TOOL_END,
+        EventType.TOKEN,
+        EventType.DONE,
+    ]
+    assert events[3].data["ok"] is False  # the blocked run_census_sql attempt
+    clarifying_text = events[-2].data["text"]
+    assert "Washington County, Maryland" in clarifying_text
+    assert "Washington County, Virginia" in clarifying_text
+
+    session = sessions.get_session("s-ambiguous")
+    assert session.messages[-1].content == clarifying_text
+
+
+def test_ambiguous_geography_does_not_block_models_own_clarifying_question(monkeypatch):
+    """The normal, expected path: the model itself asks the user which
+    candidate they meant (end_turn, no further tool calls) — this must
+    complete normally and not be treated as a violation."""
+    monkeypatch.setattr(agent, "classify_input", _allow_verdict)
+    monkeypatch.setattr(agent, "_run_tool", lambda name, tool_input: _AMBIGUOUS_GEO)
+
+    geo_response = SimpleNamespace(stop_reason="tool_use", content=[_geo_tool_block("g1", "Washington County")])
+    ask_response = SimpleNamespace(stop_reason="end_turn", content=[])
+    factory = _install_fake_client(
+        monkeypatch,
+        [_FakeStream([], geo_response), _FakeStream(["Did you mean Maryland or Virginia?"], ask_response)],
+    )
+
+    events = _collect("s-ambiguous-ask", "population of Washington County?")
+
+    assert len(factory.calls) == 2
+    assert events[-1].type == EventType.DONE
+    assert events[-2].data["text"] == "Did you mean Maryland or Virginia?"
+
+
+def test_unambiguous_geography_does_not_block_subsequent_sql(monkeypatch):
+    """Regression guard against over-blocking: a resolve_geography result
+    with a single, unambiguous candidate must not trip the
+    clarifying-question backstop."""
+    monkeypatch.setattr(agent, "classify_input", _allow_verdict)
+    success_payload = {"columns": ["c"], "rows": [{"c": 5}], "row_count": 1, "truncated": False, "elapsed_ms": 5}
+    monkeypatch.setattr(agent, "_run_tool", _QueuedRunTool([_UNAMBIGUOUS_GEO, success_payload]))
+
+    geo_response = SimpleNamespace(stop_reason="tool_use", content=[_geo_tool_block("g1", "Travis County, Texas")])
+    sql_response = SimpleNamespace(stop_reason="tool_use", content=[_sql_tool_block("t1")])
+    final_response = SimpleNamespace(stop_reason="end_turn", content=[])
+    factory = _install_fake_client(
+        monkeypatch,
+        [_FakeStream([], geo_response), _FakeStream([], sql_response), _FakeStream(["Found 5."], final_response)],
+    )
+
+    events = _collect("s-unambiguous", "population of Travis County?")
+
+    assert len(factory.calls) == 3
+    assert events[-2].data["text"] == "Found 5."
+
+
+def test_unrelated_unambiguous_geography_does_not_clear_a_still_unresolved_ambiguity(monkeypatch):
+    """BLOCKING code-review finding: the first implementation tracked
+    pending ambiguity in a single last-write-wins variable, so an unrelated
+    *unambiguous* resolve_geography call later in the same turn silently
+    cleared an earlier still-unresolved ambiguity, letting a subsequent
+    run_census_sql through unblocked — a real silent-pick path issue #13's
+    exit criterion 2 forbids. Two resolve_geography calls in one model
+    response: one ambiguous (Washington County), one not (Travis County).
+    The backstop must still block run_census_sql afterward."""
+    monkeypatch.setattr(agent, "classify_input", _allow_verdict)
+
+    def _run_tool_stub(name, tool_input):
+        if name == "resolve_geography":
+            if tool_input.get("name") == "Washington County":
+                return _AMBIGUOUS_GEO
+            return _UNAMBIGUOUS_GEO
+        raise AssertionError(f"{name} must never run while an ambiguous geography is unresolved")
+
+    monkeypatch.setattr(agent, "_run_tool", _run_tool_stub)
+
+    geo_response = SimpleNamespace(
+        stop_reason="tool_use",
+        content=[_geo_tool_block("g1", "Washington County"), _geo_tool_block("g2", "Travis County, Texas")],
+    )
+    sql_response = SimpleNamespace(stop_reason="tool_use", content=[_sql_tool_block("t1")])
+    factory = _install_fake_client(monkeypatch, [_FakeStream([], geo_response), _FakeStream([], sql_response)])
+
+    events = _collect("s-ambiguous-mixed", "compare Washington County and Travis County?")
+
+    assert len(factory.calls) == 2
+    clarifying_text = events[-2].data["text"]
+    assert "Washington County, Maryland" in clarifying_text
+    assert "Washington County, Virginia" in clarifying_text
+
+
+def test_unrelated_unambiguous_geography_in_a_later_iteration_does_not_clear_ambiguity(monkeypatch):
+    """Same bug as above, but the two resolve_geography calls happen in
+    separate model responses (separate tool-loop iterations) rather than
+    the same batch — the tracked state must persist across iterations, not
+    just within one."""
+    monkeypatch.setattr(agent, "classify_input", _allow_verdict)
+
+    def _run_tool_stub(name, tool_input):
+        if name == "resolve_geography":
+            if tool_input.get("name") == "Washington County":
+                return _AMBIGUOUS_GEO
+            return _UNAMBIGUOUS_GEO
+        raise AssertionError(f"{name} must never run while an ambiguous geography is unresolved")
+
+    monkeypatch.setattr(agent, "_run_tool", _run_tool_stub)
+
+    first_geo = SimpleNamespace(stop_reason="tool_use", content=[_geo_tool_block("g1", "Washington County")])
+    second_geo = SimpleNamespace(stop_reason="tool_use", content=[_geo_tool_block("g2", "Travis County, Texas")])
+    sql_response = SimpleNamespace(stop_reason="tool_use", content=[_sql_tool_block("t1")])
+    factory = _install_fake_client(
+        monkeypatch, [_FakeStream([], first_geo), _FakeStream([], second_geo), _FakeStream([], sql_response)]
+    )
+
+    events = _collect("s-ambiguous-cross-iter", "compare Washington County and Travis County?")
+
+    assert len(factory.calls) == 3
+    clarifying_text = events[-2].data["text"]
+    assert "Washington County, Maryland" in clarifying_text
+
+
 def test_recent_turns_passed_to_guardrail_is_last_two_messages(monkeypatch):
     sessions.append_message("s-context", ChatMessage(role="user", content="turn 1"))
     sessions.append_message("s-context", ChatMessage(role="assistant", content="answer 1"))

@@ -1,4 +1,4 @@
-"""Agent loop — src/contracts.py:agent_turn (issues #7, #11, #12).
+"""Agent loop — src/contracts.py:agent_turn (issues #7, #11, #12, #13).
 
 Pipeline: guardrail -> session replay -> Sonnet tool loop with exactly the
 three tools (CLAUDE.md rule 4) -> grounded, streamed answer. A REFUSE
@@ -8,7 +8,11 @@ rejection or a genuine execution error) or a zero-row result counts against
 a per-turn recovery budget (MAX_RECOVERY_RETRIES, CLAUDE.md rule 9); once
 spent, the loop stops asking the model and emits a deterministic
 honest-failure message naming what was tried — code-enforced termination,
-not a request the model can decline.
+not a request the model can decline. An unresolved ambiguous
+`resolve_geography` result gets the same code-enforced treatment
+(CLAUDE.md rule 10): if the model tries `run_census_sql` anyway instead of
+asking, the turn is force-terminated with a deterministic clarifying
+question before Snowflake is ever touched.
 Still deliberately excludes the 50s watchdog (issue #14) — M3; nothing here
 needs restructuring to add it.
 
@@ -102,6 +106,11 @@ Aggregation pattern (SUM over the CBGs in the requested geography, using a varia
 Grounding — the single most important rule: every number in your answer must come from this turn's run_census_sql results. If a query returns zero rows, that is an honest "not found" — never state a number that didn't come back from a query. If something fails, say plainly what you tried and what happened; do not fabricate a plausible-sounding answer.
 
 This is a 5-year rolling estimate, never a point-in-time count — phrase answers accordingly ("an estimated X", not "there are exactly X").
+
+Ambiguity and defaults:
+- Every answer assumes 2020 ACS 5-year estimates (2016-2020) unless the user says otherwise. This is a default you apply, not a silent one — state it in your answer (e.g. "using 2020 ACS 5-year estimates...").
+- If resolve_geography returns ambiguous=True, it found 2+ matching places. You MUST ask the user which one they mean, naming each candidate — never guess or silently pick one, even if one seems more likely.
+- This data has no city or place boundaries, only state and county. If asked about a city (e.g. "Austin", "Springfield"), say plainly that no city boundary exists in this data, then offer the containing county by name as an explicit substitute — ask the user to confirm before using it. Never silently answer with the county's number as if it were the city's; a city is usually a fraction of its county's population.
 """
 
 _TOOL_DEFS: list[dict[str, Any]] = [
@@ -207,6 +216,24 @@ def _build_recovery_failure_message(recovery_log: list[str]) -> str:
     )
 
 
+def _build_ambiguous_geo_clarification(unresolved: list[dict[str, Any]]) -> str:
+    """Deterministic, code-generated stop (CLAUDE.md rule 10 / issue #13:
+    ambiguous geography MUST prompt a clarifying question, never a silent
+    pick — a contract-level MUST, not a suggestion). Same
+    code-enforced-termination pattern as _build_recovery_failure_message, so
+    it can't be skipped by a model that tries to proceed to SQL anyway.
+    Takes every unresolved ambiguity from this turn, not just one — a turn
+    can accumulate more than one (e.g. a comparison question naming two
+    ambiguous counties)."""
+    sections = []
+    for geo_resolution in unresolved:
+        candidates = geo_resolution.get("candidates", [])
+        names = "\n".join(f"- {c['name']}" for c in candidates)
+        query = geo_resolution.get("query") or "that"
+        sections.append(f'"{query}" matches more than one place:\n{names}')
+    return "\n\n".join(sections) + "\n\nWhich one did you mean?"
+
+
 def _trace_turn_stub(session_id: str) -> None:
     """Wiring point for issue #18 (Langfuse). One trace per agent_turn
     invocation, session_id in metadata, spans for guardrail/tool/model
@@ -252,6 +279,15 @@ async def agent_turn(
     recovery_attempts = 0
     recovery_log: list[str] = []
     recovery_exhausted = False
+    # A list, not a single overwritten variable: an unrelated resolve_geography
+    # call elsewhere in the turn must never clear a still-unresolved
+    # ambiguity (code review of issue #13 caught the single-variable version
+    # doing exactly that — an unambiguous result for place B silently
+    # cleared an unresolved ambiguous result for place A, letting a later
+    # run_census_sql through unblocked). Only appended to, never cleared,
+    # for the rest of the turn.
+    unresolved_ambiguous_geo: list[dict[str, Any]] = []
+    ambiguity_blocked = False
 
     for _ in range(_MAX_TOOL_LOOP_ITERATIONS):
         async with _client.messages.stream(
@@ -275,6 +311,34 @@ async def agent_turn(
         for block in response.content:
             if block.type != "tool_use":
                 continue
+
+            # Ambiguity policy (CLAUDE.md rule 10 / issue #13): an unresolved
+            # ambiguous resolve_geography result MUST produce a clarifying
+            # question, never a silent pick — a contract-level MUST per
+            # GeoResolution.ambiguous's own docstring. Trusting the model's
+            # own judgment via the system prompt alone mirrors the SQL-gate
+            # lesson (rule 5/D-013): a soft instruction is not a boundary.
+            # If the model tries run_census_sql anyway while an ambiguity is
+            # still unresolved, Snowflake is never touched — the turn is
+            # force-terminated with a deterministic clarifying question
+            # instead. Scoped to run_census_sql only, matching the issue's
+            # literal exit criterion ("...instead of proceeding to SQL");
+            # an unrelated *unambiguous* resolve_geography elsewhere in the
+            # turn has no effect on this check (it isn't appended to
+            # unresolved_ambiguous_geo). An unrelated *ambiguous* one is
+            # tracked alongside the first — both must be resolved before
+            # run_census_sql may proceed.
+            if block.name == "run_census_sql" and unresolved_ambiguous_geo:
+                yield ChatEvent(
+                    type=EventType.TOOL_START,
+                    data={"tool": block.name, "args_preview": _preview(block.input)},
+                )
+                yield ChatEvent(
+                    type=EventType.TOOL_END,
+                    data={"tool": block.name, "ok": False, "elapsed_ms": 0},
+                )
+                ambiguity_blocked = True
+                break
 
             yield ChatEvent(
                 type=EventType.TOOL_START,
@@ -338,6 +402,11 @@ async def agent_turn(
                 elif result_payload.get("row_count") == 0:
                     recovery_attempts += 1
                     recovery_log.append("run_census_sql returned zero rows")
+            elif block.name == "resolve_geography" and not is_error and result_payload.get("ambiguous"):
+                unresolved_ambiguous_geo.append(result_payload)
+
+        if ambiguity_blocked:
+            break
 
         messages.append({"role": "user", "content": tool_results})
 
@@ -361,8 +430,12 @@ async def agent_turn(
             data={"text": streamed_text_parts[-1]},
         )
 
-    if recovery_exhausted:
-        failure_text = _build_recovery_failure_message(recovery_log)
+    if recovery_exhausted or ambiguity_blocked:
+        failure_text = (
+            _build_ambiguous_geo_clarification(unresolved_ambiguous_geo)
+            if ambiguity_blocked
+            else _build_recovery_failure_message(recovery_log)
+        )
         yield ChatEvent(type=EventType.TOKEN, data={"text": failure_text})
         await asyncio.to_thread(
             append_message, session_id, ChatMessage(role="assistant", content=failure_text)
