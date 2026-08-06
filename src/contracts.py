@@ -11,6 +11,7 @@ and must be resolved from that file, never from assumption.
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator
 from datetime import datetime
 from enum import Enum
@@ -371,7 +372,17 @@ def normalize_value(raw: Any, variable_id: str | None = None) -> CensusValue:
     ("$250,000 or more"), never the bare number. Neither a suppressed nor a
     top-coded value is ever rendered to the user as a plain figure.
     """
-    raise NotImplementedError
+    if raw is None:
+        return CensusValue(raw=raw, value=None, suppressed=True)
+
+    value = float(raw)
+    top_coded = False
+    if variable_id:
+        match = re.match(r"^([A-Z]+\d+)", variable_id)
+        if match and TOP_CODES.get(match.group(1)) == value:
+            top_coded = True
+
+    return CensusValue(raw=raw, value=value, suppressed=False, top_coded=top_coded)
 
 
 # --------------------------------------------------------------------------
