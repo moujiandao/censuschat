@@ -18,6 +18,8 @@
 - Add PRD §12 risk entries for the Cloudflare-in-front-of-Caddy topology: architecture §13 assumed a single proxy, but Cloudflare is the layer that buffers, and a buffered SSE stream reads as a hang then a wall of text — failing the interactivity requirement in the deployed environment only; M2's "first token visible" exit criterion now must be verified through Cloudflare, not just Caddy
 - Add PRD §12 note that Cloudflare TLS termination can break Caddy's HTTP-01 challenge, requiring Full (strict) with an origin cert or a switch to DNS-01
 - Add PRD §12 rationale for retaining basic auth (CLAUDE.md rule 18, no deviation): an unauthenticated endpoint calling Anthropic and Snowflake per request is an unbounded cost exposure, with credentials at the top of the README so reviewers are never blocked
+- Add `scripts/check_env.py`, which authenticates every credential in `.env` and prints PASS/FAIL without ever printing a secret value; uses `models.list()` for the Anthropic check so verification costs zero tokens. Serves the M6 clean-env exit criterion as well as local use
+- Add 5 GitHub milestones (M2–M6) and 28 issues, each carrying Context, Exit criteria, and a TDD test list per CLAUDE.md rule 19
 
 ### Changed
 - Resolve all four `src/contracts.py` PROVISIONALs: `ALLOWED_TABLES` (31 tables, 2020 only), `GeoLevel` (5 members), `SENTINEL_CODES` (verified empty), `DEFAULT_VINTAGE` (2020)
