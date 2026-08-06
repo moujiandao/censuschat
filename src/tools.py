@@ -29,6 +29,7 @@ from src.contracts import (
 from src import snapshot as _snapshot
 from src.snowflake_conn import connect as _connect
 from src.sqlgate import validate_sql
+from src.us_states import NAME_TO_ABBR
 
 _ALL_GEO_LEVELS: list[GeoLevel] = [
     GeoLevel.NATION,
@@ -38,24 +39,19 @@ _ALL_GEO_LEVELS: list[GeoLevel] = [
     GeoLevel.BLOCK_GROUP,
 ]
 
-# USPS postal abbreviations — public, static reference data (not PROVISIONAL;
-# unrelated to the Snowflake schema-notes recon). Falls back to the full name
-# for any state not in this table rather than raising.
-_STATE_POSTAL_ABBR: dict[str, str] = {
-    "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR",
-    "California": "CA", "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE",
-    "District of Columbia": "DC", "Florida": "FL", "Georgia": "GA", "Hawaii": "HI",
-    "Idaho": "ID", "Illinois": "IL", "Indiana": "IN", "Iowa": "IA",
-    "Kansas": "KS", "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME",
-    "Maryland": "MD", "Massachusetts": "MA", "Michigan": "MI", "Minnesota": "MN",
-    "Mississippi": "MS", "Missouri": "MO", "Montana": "MT", "Nebraska": "NE",
-    "Nevada": "NV", "New Hampshire": "NH", "New Jersey": "NJ", "New Mexico": "NM",
-    "New York": "NY", "North Carolina": "NC", "North Dakota": "ND", "Ohio": "OH",
-    "Oklahoma": "OK", "Oregon": "OR", "Pennsylvania": "PA", "Rhode Island": "RI",
-    "South Carolina": "SC", "South Dakota": "SD", "Tennessee": "TN", "Texas": "TX",
-    "Utah": "UT", "Vermont": "VT", "Virginia": "VA", "Washington": "WA",
-    "West Virginia": "WV", "Wisconsin": "WI", "Wyoming": "WY",
-}
+
+def _normalize_state(state: str) -> str:
+    """The geography table's `state` column is the two-letter postal
+    abbreviation (verified against live Snowflake — schema-notes.md's
+    "state/county FIPS -> names" description is misleading here). A caller
+    may type either form ("California" or "CA"); normalize to the
+    abbreviation before matching. Falls back to the input unchanged when
+    it's neither a known name nor a 2-letter code, so an unmatched state
+    fails the lookup honestly rather than raising."""
+    stripped = state.strip()
+    if len(stripped) == 2:
+        return stripped.upper()
+    return NAME_TO_ABBR.get(stripped.lower(), stripped)
 
 
 def _geo_levels_for(label: str) -> list[GeoLevel]:
@@ -130,8 +126,8 @@ def resolve_geography(name: str, level_hint: GeoLevel | None = None) -> GeoResol
         if level_hint in (None, GeoLevel.STATE):
             for geo_id, geo_name, state in conn.execute(
                 "SELECT geo_id, name, state FROM geography "
-                "WHERE level = 'state' AND LOWER(name) = LOWER(?)",
-                (name,),
+                "WHERE level = 'state' AND (LOWER(name) = LOWER(?) OR state = ?)",
+                (name, _normalize_state(name)),
             ):
                 rows.append((geo_id, geo_name, "state", state))
 
@@ -140,8 +136,8 @@ def resolve_geography(name: str, level_hint: GeoLevel | None = None) -> GeoResol
                 county_query = conn.execute(
                     "SELECT geo_id, name, state FROM geography "
                     "WHERE level = 'county' AND LOWER(county) = LOWER(?) "
-                    "AND LOWER(state) = LOWER(?)",
-                    (county_part, state_part),
+                    "AND state = ?",
+                    (county_part, _normalize_state(state_part)),
                 )
             else:
                 county_query = conn.execute(
@@ -155,12 +151,7 @@ def resolve_geography(name: str, level_hint: GeoLevel | None = None) -> GeoResol
         conn.close()
 
     candidates = [
-        GeoCandidate(
-            geo_id=geo_id,
-            name=geo_name,
-            level=GeoLevel(level),
-            state=_STATE_POSTAL_ABBR.get(state, state),
-        )
+        GeoCandidate(geo_id=geo_id, name=geo_name, level=GeoLevel(level), state=state)
         for geo_id, geo_name, level, state in rows
     ]
     # Deterministic regardless of SQLite row order.

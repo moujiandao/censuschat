@@ -277,36 +277,75 @@ independently against the current code (see `CHANGELOG.md`).
 
 ---
 
-## D-011 — Median-variable detection is unverified against live data (2026-08-05)
+## D-011 — Median-variable detection verified against live data (2026-08-05, resolved 2026-08-06)
 
-**Status: flagged assumption, not yet empirically verified. Needs a live
-Snowflake check before the `conflicting`/`direct_fact` golden evals involving
-a median table can be trusted.**
+**Status: resolved. Verified against live Snowflake during issue #7 — the
+substring heuristic has 100% precision and recall against the real
+28-table list.**
 
 D-009/C-3 requires `VariableHit.geo_levels` to return `[GeoLevel.BLOCK_GROUP]`
-for the ~28 median-table variables and all five levels otherwise — the
+for the 28 median-table variables and all five levels otherwise — the
 mechanism that prevents a median from being silently (and wrongly) averaged
 up to county/state. `src/tools.py:_geo_levels_for` implements this by
 checking whether `"median"` (case-insensitive) appears in the variable's
-`TABLE_TITLE`, on the assumption that ACS median-variable titles reliably
-start with "Median ..." by Census naming convention.
+`TABLE_TITLE`.
 
-**Why an assumption instead of a verified list:** no live Snowflake
-connection was available in the session that built `src/tools.py` (issues
-#3/#4/#5), so the actual 28 table numbers referenced in D-009/PRD §3 could
-not be pulled and hardcoded the way `ALLOWED_TABLES`/`TOP_CODES` were.
-Rule 12 wants PROVISIONAL items resolved from schema-notes evidence, not
-assumption — this is exactly that gap, made explicit here rather than
-silently shipped.
+**Originally flagged as an unverified assumption** (issues #3/#4/#5 session
+had no live Snowflake connection). Resolved once live access became
+available (issue #7 session):
 
-**Failure mode if wrong:** a false negative (a median table whose title
-doesn't contain "median") would incorrectly get all five geo_levels and
-could pass a median through the exact silent-wrong-average bug C-3 exists to
-prevent. A false positive (a non-median table containing "median" in its
-title for an unrelated reason) would only over-restrict — annoying, not
-wrong.
+```sql
+SELECT COUNT(DISTINCT TABLE_NUMBER)
+FROM US_CENSUS.PUBLIC."2020_METADATA_CBG_FIELD_DESCRIPTIONS"
+WHERE LOWER(TABLE_TITLE) LIKE '%median%'
+-- 28, exact match to the D-009/PRD §3 count
+```
 
-**Next step:** run `TABLE_TITLE` against the real
-`2020_METADATA_CBG_FIELD_DESCRIPTIONS` table and confirm the substring
-heuristic's precision/recall against the actual 28-table list before relying
-on it for the `make eval` golden set.
+Listing all 28 (`B01002*` median-age variants, `B19013`/`B19049`/`B19113`/
+`B19202`/`B29004` median income variants, `B20002`/`B20017` median earnings,
+`B25018`/`B25021`/`B25035`/`B25037`/`B25039`/`B25058`/`B25064`/`B25071`/
+`B25077`/`B25083`/`B25088`/`B25092` median housing variants) confirms every
+row's `TABLE_TITLE` literally starts with "Median" — zero false positives,
+zero false negatives. The heuristic needs no change.
+
+---
+
+## D-012 — Two `2020_METADATA_CBG_FIPS_CODES` shape corrections found via live build (2026-08-06)
+
+**Status:** refinement, not a deviation — no approval required. Found
+building the real snapshot (`build_snapshot(force=True)` against live
+Snowflake) while verifying issue #7's DF-01 golden scenario end-to-end.
+Neither synthetic test fixture (issues #2, #3/4/5) encoded the real data
+shape, so both were invisible to the full 224-test suite before this.
+
+**1. `STATE` is the two-letter postal abbreviation, not the full name.**
+`schema-notes.md`'s "state/county FIPS → names" description reads as "full
+names." Verified: `SELECT DISTINCT STATE, STATE_FIPS ... WHERE STATE_FIPS IN
+('06','17')` → `CA`/`06`, `IL`/`17`. `src/tools.py`'s original
+`_STATE_POSTAL_ABBR` lookup (full name → abbreviation) had the transform
+backwards — it was applied to a value that was already an abbreviation.
+Fixed by adding `src/us_states.py` (bidirectional USPS name↔abbreviation
+reference data, static and public, unrelated to the Snowflake recon):
+`src/snapshot.py` now builds the display `name` field (`"Alameda County,
+California"`) from the raw abbreviation at build time; `src/tools.py`
+normalizes a caller's full-name or abbreviation input to the abbreviation
+before matching the `state` column, which stores the abbreviation
+unconverted (matching `GeoCandidate.state`'s documented contract, "postal
+abbr, for disambiguation display").
+
+**2. 13 county-grain rows have `STATE = NULL`.** `STATE_FIPS` 60/66/69/78 —
+American Samoa, Guam, Northern Mariana Islands, U.S. Virgin Islands — carry
+a `COUNTY` (county-equivalent) name but no `STATE` value; the column is
+genuinely empty for territories, not a data-loader defect. `build_snapshot`
+originally NOT-NULLed `geography.state` and crashed on the real data
+(`sqlite3.IntegrityError`) the first time it ran against Snowflake instead
+of a fixture. Fixed by excluding rows with `STATE IS NULL` from the
+geography index — out of scope for this share's state+county lookup (every
+golden scenario and `resolve_geography`'s own contract are 50-states-and-DC
+only), and inventing a territory display-name policy with zero evidence
+behind it would be worse than an honest exclusion.
+
+**Cost accepted:** none material. Territories were never in scope for any
+golden scenario; the abbreviation fix is a pure correctness fix with no
+tradeoff — `resolve_geography("Alameda County, California")` returned zero
+candidates before it, `06001` after.

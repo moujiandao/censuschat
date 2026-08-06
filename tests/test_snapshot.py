@@ -194,6 +194,28 @@ def test_build_snapshot_excludes_b99_and_moe_rows_from_built_corpus(monkeypatch)
     assert indexed_ids == {"B19013e1"}
 
 
+def test_build_snapshot_excludes_null_state_territory_rows(monkeypatch):
+    """13 real FIPS rows (American Samoa, Guam, N. Mariana Islands, USVI)
+    have STATE = NULL — county-equivalent name only, no state name. Found
+    against live Snowflake, not covered by any prior synthetic fixture."""
+    variable_rows = [("B19013e1", "B19013", "Median Household Income", "Households", "text")]
+    geo_rows = [
+        ("Illinois", "17", "Cook County", "031", "H1"),
+        (None, "60", "Eastern District", "010", "H1"),
+    ]
+    monkeypatch.setattr(snapshot, "_connect", make_fake_connect(variable_rows, geo_rows))
+
+    info = build_snapshot()
+
+    conn = sqlite3.connect(snapshot.SNAPSHOT_DB_PATH)
+    rows = conn.execute("SELECT geo_id, state FROM geography").fetchall()
+    conn.close()
+
+    assert ("17031", "Illinois") in rows
+    assert not any(geo_id.startswith("60") for geo_id, _ in rows)
+    assert info.geo_rows == 2
+
+
 def test_build_snapshot_writes_county_and_state_geo_rows(monkeypatch):
     variable_rows = [("B19013e1", "B19013", "Median Household Income", "Households", "text")]
     geo_rows = [

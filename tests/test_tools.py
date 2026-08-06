@@ -90,6 +90,13 @@ def _default_variable_rows():
 
 
 def _default_geo_rows():
+    """STATE is the two-letter postal abbreviation for the three real rows
+    (CA/IL/WA) — verified against live Snowflake; schema-notes.md's
+    "state/county FIPS -> names" description undersells that it's the
+    abbreviation, not the full name. The Washington/Jefferson/Franklin
+    synthetic collision rows use fake per-row STATE_FIPS/STATE identifiers
+    purely to generate distinct ambiguous candidates; they're never matched
+    against a real state name or abbreviation in these tests."""
     rows = []
     for i in range(30):
         rows.append((f"WashState{i:02d}", f"W{i:02d}", "Washington County", "001", "H1"))
@@ -97,9 +104,9 @@ def _default_geo_rows():
         rows.append((f"JeffState{i:02d}", f"J{i:02d}", "Jefferson County", "001", "H1"))
     for i in range(24):
         rows.append((f"FrankState{i:02d}", f"F{i:02d}", "Franklin County", "001", "H1"))
-    rows.append(("California", "06", "Alameda County", "001", "H1"))
-    rows.append(("Illinois", "17", "Cook County", "031", "H1"))
-    rows.append(("Washington", "53", "King County", "033", "H1"))
+    rows.append(("CA", "06", "Alameda County", "001", "H1"))
+    rows.append(("IL", "17", "Cook County", "031", "H1"))
+    rows.append(("WA", "53", "King County", "033", "H1"))
     return rows
 
 
@@ -260,6 +267,26 @@ def test_level_hint_state_returns_state_not_same_named_county(monkeypatch):
     assert result.ambiguous is False
     assert len(result.candidates) == 1
     assert result.candidates[0].level == GeoLevel.STATE
+    assert result.candidates[0].geo_id == "53"
+
+
+def test_county_lookup_accepts_state_abbreviation(monkeypatch):
+    """D-012: the geography table's state column stores the postal
+    abbreviation. A caller passing the abbreviation directly (not just the
+    full name) must resolve the same candidate — this is the exact
+    normalization _normalize_state exists for."""
+    _seed_snapshot(monkeypatch)
+    result = tools.resolve_geography("Cook County, IL")
+    assert result.ambiguous is False
+    assert len(result.candidates) == 1
+    assert result.candidates[0].geo_id == "17031"
+
+
+def test_level_hint_state_accepts_abbreviation(monkeypatch):
+    _seed_snapshot(monkeypatch)
+    result = tools.resolve_geography("WA", level_hint=GeoLevel.STATE)
+    assert result.ambiguous is False
+    assert len(result.candidates) == 1
     assert result.candidates[0].geo_id == "53"
 
 

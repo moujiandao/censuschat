@@ -29,6 +29,7 @@ from typing import Any
 
 from src.contracts import SnapshotError, SnapshotInfo
 from src.snowflake_conn import connect as _connect
+from src.us_states import ABBR_TO_NAME
 
 SNAPSHOT_DB_PATH = Path(os.environ.get("SNAPSHOT_DB_PATH", "data/snapshot.sqlite3"))
 
@@ -78,19 +79,32 @@ def _rows_as_dicts(cursor: Any) -> list[dict[str, Any]]:
 def _expand_geo_rows(county_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """County rows are the FIPS table's native grain; state rows are
     synthesized by deduplicating on STATE_FIPS (2020_METADATA_CBG_FIPS_CODES
-    carries no separate state-level rows)."""
+    carries no separate state-level rows).
+
+    13 rows (verified against live Snowflake, STATE_FIPS 60/66/69/78 —
+    American Samoa, Guam, N. Mariana Islands, U.S. Virgin Islands) have
+    STATE = NULL: the territory has no "state name" column value, only a
+    county-equivalent (COUNTY) name. Out of scope for this share's
+    state/county geography index (D-005-adjacent: golden scenarios and
+    resolve_geography's contract are both state+county only) — excluded
+    rather than inventing a display-name policy with no evidence behind it.
+    """
     expanded: list[dict[str, Any]] = []
     seen_states: set[str] = set()
 
     for row in county_rows:
+        if row["STATE"] is None:
+            continue
+        state_abbr = row["STATE"]
+        state_name = ABBR_TO_NAME.get(state_abbr, state_abbr)
         state_fips = row["STATE_FIPS"]
         county_fips = row["COUNTY_FIPS"]
         expanded.append(
             {
                 "level": "county",
                 "geo_id": f"{state_fips}{county_fips}",
-                "name": f"{row['COUNTY']}, {row['STATE']}",
-                "state": row["STATE"],
+                "name": f"{row['COUNTY']}, {state_name}",
+                "state": state_abbr,
                 "state_fips": state_fips,
                 "county": row["COUNTY"],
                 "county_fips": county_fips,
@@ -103,8 +117,8 @@ def _expand_geo_rows(county_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 {
                     "level": "state",
                     "geo_id": state_fips,
-                    "name": row["STATE"],
-                    "state": row["STATE"],
+                    "name": state_name,
+                    "state": state_abbr,
                     "state_fips": state_fips,
                     "county": None,
                     "county_fips": None,
