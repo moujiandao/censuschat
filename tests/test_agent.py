@@ -247,7 +247,7 @@ def test_allow_verdict_runs_tool_round_trip_before_final_answer(monkeypatch):
 
 def test_tool_end_events_carry_a_result_summary(monkeypatch):
     """Wiring test: _summarize_tool_result's output must actually reach
-    the client on TOOL_END (that's what the Flow Diagram renders), not
+    the client on TOOL_END (that's what the Turn Detail tab renders), not
     just exist as a pure function. Covers both a successful tool and a
     failing one, since they take different branches."""
     monkeypatch.setattr(agent, "classify_input", _allow_verdict)

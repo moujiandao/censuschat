@@ -60,9 +60,10 @@ entry, flagged inline.
     config module: Sonnet for the agent, Haiku for the classifier.
 15. Frontend is one static HTML file (vanilla JS, CDN assets only, no build
     step) with three tabs: Chat, Evals, Flow Diagram.
-    *Shipped with five tabs — Trace Logging and Data Source added. The tab
-    list is a minimum surface, not a cap; the single-file/no-build half is
-    the binding half and holds. **D-017**.*
+    *Shipped with five tabs — Trace Logging and Data Source added, and "Flow
+    Diagram" ships as **Turn Detail** (it shows one turn's real events, not a
+    diagram). The tab list is a minimum surface, not a cap; the
+    single-file/no-build half is the binding half and holds. **D-017**.*
 16. Session state = full history replay from SQLite keyed by `session_id`.
 17. Every turn is one Langfuse trace: `session_id` in metadata; spans for
     guardrail, each tool call, and each model call; token counts and

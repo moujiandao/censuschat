@@ -15,9 +15,10 @@ consumes this + schema-notes and must not re-decide anything here.
 >
 > - **§5 Observability** — Langfuse was cut. The span model shipped
 >   in-process (`src/tracing.py`, Trace Logging tab). **D-021**.
-> - **§6 Frontend** — five tabs shipped, not three; the Flow Diagram tab
->   renders the current turn's live SSE events rather than a static mermaid
->   render, and there is no `docs/diagrams/flow.mmd`. **D-017**. The static
+> - **§6 Frontend** — five tabs shipped, not three; §6's "Flow Diagram" ships
+>   as **Turn Detail**, and it renders the current turn's live SSE events
+>   rather than a static mermaid render, so there is no
+>   `docs/diagrams/flow.mmd`. **D-017**. The static
 >   architecture render lives instead at `docs/flow-diagram.html` (annotated,
 >   self-contained, mermaid via CDN) — open it in a browser.
 > - **§7 Eval plan** — scenarios live in `evals/scenarios.py` as typed

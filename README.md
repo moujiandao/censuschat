@@ -32,7 +32,7 @@ or Snowflake is unreachable.
 ### Three probes, in order
 
 Paste these into the Chat tab. Each one exercises a different required
-behavior. Open the **Flow Diagram** tab after each to see the tool calls that
+behavior. Open the **Turn Detail** tab after each to see the tool calls that
 produced the answer.
 
 These three are also at the top of the **Evals** tab, where clicking one loads
@@ -47,7 +47,7 @@ What is the total population of Wyoming?
 
 Expect **581,348**. This is the real figure this share returns, confirmed by
 direct query and asserted as a literal string in the eval suite (`DF-05`).
-*Watch for:* tokens streaming rather than a blank wait, and a Flow Diagram
+*Watch for:* tokens streaming rather than a blank wait, and a Turn Detail view
 showing `resolve_geography` → `search_census_variables` → `run_census_sql`
 with the actual SQL and returned row.
 
@@ -61,7 +61,7 @@ Thirty states have a Washington County. *Watch for:* the agent listing
 candidates and asking which one, rather than silently picking the largest or
 the first. This is enforced twice — as a system-prompt instruction, and as a
 code-level backstop that blocks `run_census_sql` outright if the model tries
-to proceed on an unresolved ambiguity (**D-014**). The Flow Diagram shows the
+to proceed on an unresolved ambiguity (**D-014**). The Turn Detail tab shows the
 blocked call when the backstop fires.
 
 **3. Unanswerable — fast, honest refusal**
@@ -72,7 +72,7 @@ How many people will live in Texas in 2050?
 
 The ACS is a measurement of the past, not a projection. *Watch for:* a quick
 refusal that explains *why* the dataset cannot answer it, with **zero tool
-calls** in the Flow Diagram — the assignment's "fast-fail" path. Note the
+calls** in the Turn Detail tab — the assignment's "fast-fail" path. Note the
 mechanism: this one passes the guardrail and is declined by the agent itself,
 whereas an off-topic question ("What's the weather in San Francisco?") is
 stopped earlier by the guardrail classifier.
@@ -193,7 +193,7 @@ The frontend is one static HTML file, vanilla JS, CDN-free, no build step.
 |---|---|
 | **Chat** | The agent itself. SSE token streaming, a tool-status line, session id persisted in `localStorage`. |
 | **Evals** | Three sections. **Try it yourself** is the three probes below, click one to load it into Chat. **Test results** is `evals/results/latest.json`: 14 examples with the question asked, the checks that ran, the answer, and timing; any red row carries its triage inline. **Run history** is a scenario × commit grid over every recorded run, so a regression is visible as one cell flipping rather than as a pass rate moving for unknown reasons. |
-| **Flow Diagram** | The current turn's real SSE events as a timeline: guardrail decision, each tool call with args and a bounded result digest, elapsed ms. This is the fastest way to see *why* an answer came out the way it did. |
+| **Turn Detail** | The current turn's real SSE events as a timeline: guardrail decision, each tool call with args and a bounded result digest, elapsed ms. This is the fastest way to see *why* an answer came out the way it did. |
 | **Trace Logging** | Per-turn spans with latency and input/output token counts per model call. An in-process stand-in for Langfuse, not a replacement — see [What's cut](#whats-cut-and-why). |
 | **Data Source** | A static description of the dataset: provenance, the CBG grain, the table allowlist, the 28-group topic taxonomy, variable naming, and the known data traps. |
 

@@ -190,7 +190,7 @@
   }
   button:disabled { opacity: 0.5; cursor: default; }
 
-  /* Evals + Flow panels (scrollable content areas) */
+  /* Evals + Turn Detail panels (scrollable content areas) */
   .scroll-area {
     flex: 1;
     overflow-y: auto;
@@ -260,7 +260,7 @@
   .probe .pmeta { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 8px; }
 
 
-  /* Flow diagram panel */
+  /* Turn Detail panel */
   .flow-turn {
     border: 1px solid var(--border);
     border-radius: 10px;
@@ -402,7 +402,7 @@
     <nav class="tabs">
       <button type="button" data-tab="chat" class="active">Chat</button>
       <button type="button" data-tab="evals">Evals</button>
-      <button type="button" data-tab="flow">Flow Diagram</button>
+      <button type="button" data-tab="flow">Turn Detail</button>
       <button type="button" data-tab="trace">Trace Logging</button>
       <button type="button" data-tab="datasource">Data Source</button>
     </nav>
@@ -734,7 +734,7 @@
   const DEMO_PROBES = [
     {
       q: "What is the total population of Wyoming?",
-      watch: "Expect 581,348, streaming token by token rather than a blank wait. The Flow Diagram shows resolve_geography → search_census_variables → run_census_sql with the real SQL and returned row.",
+      watch: "Expect 581,348, streaming token by token rather than a blank wait. The Turn Detail tab shows resolve_geography → search_census_variables → run_census_sql with the real SQL and returned row.",
     },
     {
       q: "How many people live in Washington County?",
@@ -760,7 +760,7 @@
       "<div class='eval-section'><h2>Try it yourself</h2>" +
       "<p class='section-lead'>Three questions worth asking first, each showing a " +
       "different required behavior. Click one to load it into Chat, then open the " +
-      "Flow Diagram tab to see the tool calls behind the answer.</p></div>" +
+      "Turn Detail tab to see the tool calls behind the answer.</p></div>" +
       "<div class='probe-list'>" + cards + "</div>"
     );
   }
@@ -1004,7 +1004,7 @@
     });
   }
 
-  // ---------- Flow Diagram tab ----------
+  // ---------- Turn Detail tab ----------
   let turnCounter = 0;
 
   function startFlowTurn(message) {
@@ -1194,7 +1194,7 @@
   }
 
   // Plain-language progress, keyed by tool name. The raw function names are
-  // still shown in the Flow Diagram / Trace tabs for the technical view.
+  // still shown in the Turn Detail / Trace tabs for the technical view.
   const PROGRESS_LABEL = {
     resolve_geography: "Looking up the geography",
     search_census_variables: "Finding the right census variable",

@@ -221,7 +221,7 @@ _ARGS_PREVIEW_CAP = 500
 def _preview(tool_input: dict[str, Any]) -> str:
     """Bounded rendering of a tool's arguments for TOOL_START. Capped at
     500 rather than the original 200 so a real aggregation query's SQL is
-    visible end-to-end in the Flow Diagram (a typical one runs ~140 chars,
+    visible end-to-end in the Turn Detail tab (a typical one runs ~140 chars,
     but a multi-CTE comparison exceeded the old cap and got truncated
     mid-statement, which is exactly when you most want to read it)."""
     return json.dumps(tool_input)[:_ARGS_PREVIEW_CAP]
@@ -237,7 +237,7 @@ def _summarize_tool_result(
     error_detail: str | None,
 ) -> dict[str, Any]:
     """Bounded, user-safe summary of what a tool call actually returned,
-    carried on TOOL_END so the Flow Diagram / Trace Logging tabs can show
+    carried on TOOL_END so the Turn Detail / Trace Logging tabs can show
     *what ran and what came back*, not just a name and a duration.
 
     Two properties this must hold:
