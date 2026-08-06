@@ -141,6 +141,48 @@ def test_refuse_verdict_with_unmapped_category_uses_default_message(monkeypatch)
     assert events[0].data["text"] == agent._REFUSAL_MESSAGES[None]
 
 
+def test_degraded_mode_short_circuits_before_guardrail_and_tool_loop(monkeypatch):
+    """issue #15 / PRD §4.1: when the snapshot is missing and Snowflake is
+    unreachable, the turn must respond with an honest message instead of
+    crashing, hanging, or reaching the guardrail/model/Snowflake at all."""
+    monkeypatch.setattr(agent, "is_degraded", lambda: True)
+
+    def _classify_should_not_be_called(message, recent_turns):
+        raise AssertionError("the guardrail must never run on a degraded turn")
+
+    monkeypatch.setattr(agent, "classify_input", _classify_should_not_be_called)
+
+    def _stream_should_not_be_called(**kwargs):
+        raise AssertionError("Sonnet must never be called on a degraded turn")
+
+    monkeypatch.setattr(
+        agent, "_client", SimpleNamespace(messages=SimpleNamespace(stream=_stream_should_not_be_called))
+    )
+
+    events = _collect("s-degraded", "population of Wyoming?")
+
+    assert [e.type for e in events] == [EventType.TOKEN, EventType.DONE]
+    assert events[0].data["text"] == agent._DEGRADED_MESSAGE
+
+    session = sessions.get_session("s-degraded")
+    assert [m.role for m in session.messages] == ["user", "assistant"]
+    assert session.messages[1].content == agent._DEGRADED_MESSAGE
+
+
+def test_not_degraded_reaches_guardrail_normally(monkeypatch):
+    """Regression guard: is_degraded() == False must not affect the normal
+    pipeline at all."""
+    monkeypatch.setattr(agent, "is_degraded", lambda: False)
+    monkeypatch.setattr(agent, "classify_input", _allow_verdict)
+    final_message = SimpleNamespace(stop_reason="end_turn", content=[])
+    factory = _install_fake_client(monkeypatch, [_FakeStream(["ok"], final_message)])
+
+    events = _collect("s-not-degraded", "population of Wyoming?")
+
+    assert len(factory.calls) == 1
+    assert events[-2].data["text"] == "ok"
+
+
 def test_allow_verdict_reaches_tool_loop_and_terminates(monkeypatch):
     monkeypatch.setattr(
         agent,

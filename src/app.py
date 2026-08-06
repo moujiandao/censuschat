@@ -5,23 +5,48 @@ with DONE or ERROR, no hangs, no unhandled exceptions reaching the client.
 Because streaming has already started by the time an error can occur, a
 mid-turn exception cannot become an HTTP 500 — it becomes an ERROR event on
 the open stream instead.
+
+Startup builds the local snapshot (issue #2) and checks Snowflake
+reachability (issue #15) via a lifespan handler; a SnapshotError there must
+never crash the app (SnapshotError's own docstring in src/contracts.py) —
+it boots degraded instead, reported by /api/health (src/health.py).
+Snowflake reachability is checked exactly this once — CLAUDE.md rule 13
+means neither /api/health nor a chat turn's degraded check may probe it
+again at request time; both read this boot-time result from src/health.py.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from src.agent import agent_turn
-from src.contracts import ChatEvent, EventType
+from src.contracts import ChatEvent, EventType, SnapshotError
+from src.health import check_snowflake_reachability, health_report
+from src.snapshot import build_snapshot
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        await asyncio.to_thread(build_snapshot)
+    except SnapshotError:
+        logger.warning(
+            "Snapshot build failed at startup; booting in degraded mode", exc_info=True
+        )
+    await asyncio.to_thread(check_snowflake_reachability)
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 _TERMINAL_EVENTS = {EventType.DONE, EventType.ERROR}
 
@@ -76,9 +101,10 @@ async def _stream_turn(session_id: str, message: str):
 
 @app.get("/api/health")
 async def health() -> dict:
-    # Minimal liveness check for the deploy script. Issue #15 (degraded mode)
-    # enriches this with snapshot/Snowflake reachability status.
-    return {"status": "ok"}
+    # health_report() does blocking I/O (file stat + a live Snowflake
+    # connection attempt) — off the event loop, same as agent_turn's tool
+    # calls and session-store I/O.
+    return await asyncio.to_thread(health_report)
 
 
 @app.post("/api/chat")

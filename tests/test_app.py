@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.app import app
-from src.contracts import ChatEvent, EventType
+from src.contracts import ChatEvent, EventType, SnapshotError
 
 client = TestClient(app)
 
@@ -104,3 +104,76 @@ def test_generator_ending_without_terminal_event_still_ends_honestly():
 
     events = _parse_sse(response.text)
     assert events[-1]["type"] == "error"
+
+
+def test_health_endpoint_returns_health_report(monkeypatch):
+    monkeypatch.setattr(
+        "src.app.health_report", lambda: {"status": "ok", "snapshot": "ok", "snowflake": "ok"}
+    )
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "snapshot": "ok", "snowflake": "ok"}
+
+
+def test_health_endpoint_reports_degraded(monkeypatch):
+    monkeypatch.setattr(
+        "src.app.health_report",
+        lambda: {"status": "degraded", "snapshot": "missing", "snowflake": "unreachable"},
+    )
+    response = client.get("/api/health")
+    assert response.json()["status"] == "degraded"
+
+
+def test_startup_survives_snapshot_error_and_reports_degraded(monkeypatch):
+    """issue #15 exit criteria 1/2: a SnapshotError at boot must not crash
+    the app — it must still start and /api/health must report degraded."""
+
+    def _raise(force=False):
+        raise SnapshotError("boom")
+
+    monkeypatch.setattr("src.app.build_snapshot", _raise)
+    monkeypatch.setattr("src.app.check_snowflake_reachability", lambda: False)
+    monkeypatch.setattr(
+        "src.app.health_report",
+        lambda: {"status": "degraded", "snapshot": "missing", "snowflake": "unreachable"},
+    )
+
+    with TestClient(app) as booted_client:
+        response = booted_client.get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "degraded"
+
+
+def test_startup_checks_snowflake_reachability_exactly_once(monkeypatch):
+    """CLAUDE.md rule 13: Snowflake reachability is a boot-time-only check
+    (src/health.py). Confirms the lifespan handler actually calls it, since
+    /api/health and agent_turn now both rely entirely on this happening at
+    startup rather than probing live themselves."""
+    calls = []
+    monkeypatch.setattr("src.app.build_snapshot", lambda force=False: None)
+    monkeypatch.setattr("src.app.check_snowflake_reachability", lambda: calls.append(1) or True)
+    monkeypatch.setattr(
+        "src.app.health_report", lambda: {"status": "ok", "snapshot": "ok", "snowflake": "ok"}
+    )
+
+    with TestClient(app):
+        pass
+
+    assert len(calls) == 1
+
+
+def test_startup_with_healthy_snapshot_does_not_crash(monkeypatch):
+    """Regression guard: a normal boot (build_snapshot succeeds) must not
+    be affected by the lifespan handler."""
+    monkeypatch.setattr("src.app.build_snapshot", lambda force=False: None)
+    monkeypatch.setattr("src.app.check_snowflake_reachability", lambda: True)
+    monkeypatch.setattr(
+        "src.app.health_report", lambda: {"status": "ok", "snapshot": "ok", "snowflake": "ok"}
+    )
+
+    with TestClient(app) as booted_client:
+        response = booted_client.get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"

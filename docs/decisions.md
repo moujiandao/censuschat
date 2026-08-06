@@ -456,3 +456,76 @@ in a turn, *any* later `run_census_sql` call in that turn is blocked, even
 one unrelated to that specific ambiguous place — avoiding a fragile "is
 this SQL about that geography" check. Live runs above never exercised this
 coarseness since the model resolved ambiguity before attempting SQL.
+
+---
+
+## D-015 — Snowflake reachability checked once at startup, not live per-request (2026-08-06)
+
+**Status:** genuine deviation risk, resolved by Brian's explicit approval —
+not a self-classified refinement like D-013/D-014.
+
+Issue #15 (degraded mode + `/api/health`) requires knowing whether
+Snowflake is currently reachable. The only way to know that for certain is
+a live connection attempt. CLAUDE.md rule 13 reads, without qualification:
+"At request time, Snowflake is touched solely by `run_census_sql`." A
+straightforward implementation of issue #15's exit criteria — live-probing
+Snowflake from both `/api/health` and `agent_turn`'s per-turn degraded
+check — does exactly what rule 13 forbids, on every `/api/health` call and
+on every chat turn whenever the local snapshot happens to be missing.
+
+Code review (issue #15's first pass) flagged this correctly as BLOCKING:
+no `docs/decisions.md` entry recorded the deviation, and the top-level
+CLAUDE.md requires an entry plus Brian's explicit approval *before*
+deviating from a numbered rule — not documentation after the fact, which
+is how D-013/D-014 handled their own judgment calls (both self-classified
+as refinements of ambiguous exit-criteria wording, not deviations from an
+unambiguous rule). This case is different in kind: rule 13's text is not
+ambiguous, so this could not be resolved the same way.
+
+Two compliant-vs-deviating designs were presented:
+- **Keep live per-request probing**, log it as an approved rule 13
+  deviation. Health status stays continuously accurate, at the cost of a
+  standing exception to the rule on every request.
+- **Check once at startup, cache the result.** `/api/health` and
+  `agent_turn` read the cached value only — Snowflake is never touched at
+  request time for this purpose, so rule 13 stays intact with no
+  deviation at all. Cost: the cached value can go stale if Snowflake
+  changes state mid-run without an app restart.
+
+**Decision (Brian, 2026-08-06):** the cached-at-startup design. Reasoning
+recorded at the time: `/api/health` has no continuous production consumer
+— `deploy.sh` only polls it for up to 60s right after a fresh deploy, and
+there is no `docker-compose` healthcheck stanza — so the staleness
+downside costs nothing today; nothing is watching that would catch a
+mid-run change either way. And a genuine mid-session Snowflake outage is
+already surfaced honestly the moment it matters: the next `run_census_sql`
+call fails and bounded recovery (issue #12, `MAX_RECOVERY_RETRIES`) gives
+an honest failure — that path is independent of `/api/health` and doesn't
+need a fresh reachability probe to work correctly.
+
+**Fix:** `src/health.py:check_snowflake_reachability()` is the only live
+Snowflake probe in the module, called exactly once — from
+`src/app.py`'s `lifespan` handler, alongside the existing `build_snapshot()`
+call — and cached in a module-level variable. `is_degraded()` (the chat
+hot path) and `health_report()` (`/api/health`) both read the cached value
+only; tests assert the underlying connect function is never called from
+either. Rule 13 is fully intact: Snowflake is touched at request time
+solely by `run_census_sql`, exactly as written — no deviation to log.
+
+**Related fix, same review round:** the connect call itself
+(`src/snowflake_conn.py:connect`) had no timeout, so even the once-at-
+startup probe (and `build_snapshot`'s own connection, and every
+`run_census_sql` call) could hang indefinitely on a slow-but-not-erroring
+Snowflake. Added `SNOWFLAKE_CONNECT_TIMEOUT_S=10` (`src/contracts.py`),
+applied unconditionally as `login_timeout` — bounds only the login/auth
+phase, so it can never interact with `SQL_STATEMENT_TIMEOUT_S` (which only
+governs query execution after a session already exists). Live-verified: a
+real `run_census_sql` query against an allowlisted table still succeeds
+with the timeout in place.
+
+**Cost accepted:** `/api/health` and the chat degraded-check can report
+stale Snowflake status between app restarts. Judged acceptable per Brian's
+reasoning above; revisit if `/api/health` ever gains a continuous
+production consumer (e.g. a `docker-compose` healthcheck or external
+uptime monitor), at which point a periodic background refresh would be
+worth adding.

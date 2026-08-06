@@ -1,8 +1,11 @@
-"""Agent loop — src/contracts.py:agent_turn (issues #7, #11, #12, #13, #14).
+"""Agent loop — src/contracts.py:agent_turn (issues #7, #11, #12, #13, #14, #15).
 
-Pipeline: guardrail -> session replay -> Sonnet tool loop with exactly the
-three tools (CLAUDE.md rule 4) -> grounded, streamed answer. A REFUSE
-verdict short-circuits before the tool loop — Sonnet and Snowflake are
+Pipeline: degraded-mode check -> guardrail -> session replay -> Sonnet tool
+loop with exactly the three tools (CLAUDE.md rule 4) -> grounded, streamed
+answer. If the snapshot is missing and Snowflake is unreachable (PRD §4.1),
+the turn short-circuits with an honest message before even the guardrail
+runs — Sonnet and Snowflake are never touched. A REFUSE verdict
+short-circuits before the tool loop similarly — Sonnet and Snowflake are
 never touched for a refused turn. Any `run_census_sql` failure (gate
 rejection or a genuine execution error) or a zero-row result counts against
 a per-turn recovery budget (MAX_RECOVERY_RETRIES, CLAUDE.md rule 9); once
@@ -48,6 +51,7 @@ from src.contracts import (
     SqlRejected,
 )
 from src.guardrail import classify_input
+from src.health import is_degraded
 from src.model_config import AGENT_MODEL
 from src.sessions import append_message, get_session
 
@@ -75,6 +79,15 @@ _REFUSAL_MESSAGES: dict[RefusalCategory | None, str] = {
     RefusalCategory.INAPPROPRIATE: "I can't help with that.",
     None: "I can only help with questions about US Census demographic data.",
 }
+
+# Issue #15 / PRD §4.1, §5: an honest message rather than crashing, hanging,
+# or fabricating an answer when the snapshot is missing and Snowflake is
+# unreachable — the app literally has no way to search variables, resolve
+# geography, or run a query.
+_DEGRADED_MESSAGE = (
+    "I'm having trouble connecting to the census data right now, so I "
+    "can't answer this. Please try again in a few minutes."
+)
 
 # Architecture §2/PRD §4.2: the join topology (CBG decomposition, roll-up
 # recipes, table-number -> physical-table mapping) is closed and tiny, so it
@@ -302,6 +315,21 @@ async def agent_turn(
     await asyncio.to_thread(
         append_message, session_id, ChatMessage(role="user", content=user_message)
     )
+
+    # Issue #15 / PRD §4.1: checked before the guardrail so a degraded turn
+    # doesn't also spend a Haiku call it has no use for. is_degraded()
+    # short-circuits its own live Snowflake probe whenever a snapshot
+    # exists, so this costs nothing extra on a healthy turn.
+    if await asyncio.to_thread(is_degraded):
+        yield ChatEvent(type=EventType.TOKEN, data={"text": _DEGRADED_MESSAGE})
+        await asyncio.to_thread(
+            append_message, session_id, ChatMessage(role="assistant", content=_DEGRADED_MESSAGE)
+        )
+        yield ChatEvent(
+            type=EventType.DONE,
+            data={"elapsed_ms": int((time.monotonic() - turn_start) * 1000)},
+        )
+        return
 
     verdict = await asyncio.to_thread(classify_input, user_message, recent_turns)
     if verdict.action == GuardrailAction.REFUSE:

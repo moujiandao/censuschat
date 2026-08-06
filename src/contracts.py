@@ -83,6 +83,7 @@ MAX_RECOVERY_RETRIES: int = 2      # locked: bounded recovery loop
 TURN_DEADLINE_S: float = 50.0      # locked: soft watchdog under the 60s cap
 SQL_ROW_LIMIT: int = 200           # LIMIT injected by the gate when absent
 SQL_STATEMENT_TIMEOUT_S: int = 25  # Snowflake session STATEMENT_TIMEOUT
+SNOWFLAKE_CONNECT_TIMEOUT_S: int = 10  # bounds the login/auth handshake only
 
 
 # --------------------------------------------------------------------------

@@ -15,6 +15,8 @@ import snowflake.connector
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 
+from src.contracts import SNOWFLAKE_CONNECT_TIMEOUT_S
+
 REQUIRED_ENV_VARS = [
     "SNOWFLAKE_ACCOUNT",
     "SNOWFLAKE_USER",
@@ -58,6 +60,12 @@ def connect(
         role=os.environ["SNOWFLAKE_ROLE"],
         database=os.environ.get("SNOWFLAKE_DATABASE"),
         schema=os.environ.get("SNOWFLAKE_SCHEMA"),
+        # Bounds only the login/auth handshake (issue #15 review finding:
+        # an unbounded connect() can hang app startup indefinitely). Safe to
+        # apply unconditionally — unlike a network_timeout, this never
+        # interacts with SQL_STATEMENT_TIMEOUT_S on a long-but-valid query,
+        # since it only covers the phase before a session exists.
+        login_timeout=SNOWFLAKE_CONNECT_TIMEOUT_S,
     )
     if session_parameters:
         kwargs["session_parameters"] = session_parameters
