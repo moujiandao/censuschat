@@ -26,17 +26,20 @@
 
 ## Fast-Build Execution Profile
 
-TDD is required here, but narrowly. Use it for deterministic trust boundaries,
-state transitions, scoring, readiness, and regressions. Do not create unit tests
-for passive dataclass fields, CSS declarations, documentation prose, or model
-wording already owned by the live eval suite.
+Keep every TDD case required by the approved spec. TDD covers all deterministic
+trust boundaries, state transitions, scoring, readiness behavior, and named
+regressions. Build speed comes from avoiding redundant tests and speculative
+abstractions, not from reducing behavioral coverage. Passive CSS declarations,
+documentation prose, and stochastic model wording remain outside unit-test
+scope because structural UI tests, review, and live evals own those concerns.
 
 - Start each behavior cluster with one failing acceptance test or one compact
   parameterized matrix, not one test per helper or AST node.
 - Implement the shortest path that makes the cluster pass. Extract a helper
   only when two call sites or a testability boundary require it.
-- Add another test only for a named invariant, a boundary in the approved spec,
-  or a failure actually observed during implementation.
+- Add another test for every named invariant and boundary in the approved spec,
+  plus any failure actually observed during implementation. Combine equivalent
+  cases into parameterized matrices without dropping assertions.
 - Run only the owning test files during red-green cycles. Run the full offline
   suite immediately before each commit and at each checkpoint.
 - The current offline suite takes about 2.2 seconds for 375 tests, so full-suite
