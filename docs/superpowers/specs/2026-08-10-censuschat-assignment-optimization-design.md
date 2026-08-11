@@ -61,10 +61,12 @@ The following decisions are binding for P0:
 - Permit one tool-free answer-repair call when at least eight seconds remain.
 - Preserve the three public tools and the existing `ChatEvent` contract.
 - Permit one additive, eval-only contract deviation, recorded as D-024.
-- Make only narrow frontend changes: Guided Review and build/eval provenance.
+- Replace the five overlapping tabs with four reviewer-facing tabs in this
+  order: Chat, Evidence, Evals, Trust Rules. Add Guided Review and build/eval
+  provenance without redesigning the visual system.
 - Enforce a real 50-second internal deadline and accurate readiness.
-- Defer rate limits, spend quotas, tenancy, retention, and full tab
-  consolidation.
+- Defer rate limits, spend quotas, tenancy, retention, and advanced Evidence
+  filtering or pagination.
 - Do not add 2019 ACS, Decennial data, an agent framework, a provider
   abstraction, a dependency, or an LLM judge in P0.
 
@@ -160,6 +162,12 @@ observer. The eval runner supplies a collector and receives the completed
 `TurnRecord`. This is an internal seam and does not change the HTTP or
 `ChatEvent` contract.
 
+The existing geography snapshot adds one synthetic nation row with
+`geo_id="US"`, `level="nation"`, and `name="United States"`.
+`resolve_geography` recognizes `United States`, `US`, and `USA` as exact aliases.
+This uses the existing `GeoLevel.NATION` contract and gives national SQL the
+same discoverable lineage as state and county SQL.
+
 #### `src/semantic_gate.py`
 
 Owns context-sensitive SQL authorization. It runs before `validate_sql`, which
@@ -182,8 +190,9 @@ The gate parses Snowflake SQL with the existing `sqlglot` dependency and:
   recorded in the ledger.
 - Rejects any vintage other than `DEFAULT_VINTAGE`, even though the static
   table allowlist remains a second defense.
-- Allows a query with no geography predicate so national aggregation remains
-  representable.
+- Requires an unambiguous geography for every SQL query. A synthetic
+  `GeoLevel.NATION` entry resolves `United States`, `US`, and `USA`; only that
+  evidence authorizes a query with no CBG prefix predicate.
 - Returns the authorized variable and geography IDs for `QueryEvidence`.
 
 The gate does not determine whether a median may be aggregated, whether two
@@ -454,9 +463,23 @@ timestamp, so it is not presented as a live probe.
 Deployment verification inspects readiness JSON and expected app version. An
 HTTP 200 with `ready=false` is a failed deployment.
 
-## 7. Narrow reviewer experience
+## 7. Reviewer experience
 
-### 7.1 Guided Review
+### 7.1 Four-tab information architecture
+
+The P0 navigation contains exactly four top-level tabs, in this order:
+
+1. **Chat**
+2. **Evidence**
+3. **Evals**
+4. **Trust Rules**
+
+Turn Detail and Trace Logging become one Evidence tab because both are views of
+the same trace store. Data Source becomes Trust Rules and retains its source
+inventory. Internal DOM keys may remain unchanged where doing so avoids
+unnecessary code churn, but no retired tab label remains visible.
+
+### 7.2 Guided Review
 
 The Chat tab gains one collapsible Guided Review card. It preserves a single
 session and provides these steps:
@@ -466,12 +489,39 @@ session and provides these steps:
 3. Ask for Washington County population, then answer `Oregon`.
 4. Ask for median household income in California.
 5. Ask for Texas population in 2050.
-6. Open the existing turn evidence view.
+6. Open the Evidence tab for the completed turn.
 
 Each step labels the requirement it proves. The card loads prompts but does not
 auto-submit them, so the reviewer remains in control.
 
-### 7.2 Eval provenance
+### 7.3 Evidence tab
+
+Evidence combines current-turn inspection and historical trace selection in
+one surface.
+
+Required layout:
+
+- A session and turn picker sourced from `/api/trace-sessions` and
+  `/api/traces`.
+- A turn summary containing outcome, elapsed time, model rounds, tool count,
+  answer-validation status, repair count, and terminal reason.
+- One ordered timeline containing guardrail, model, tool, semantic-gate,
+  answer-validation, repair, and terminal spans.
+- Expandable details for sanitized arguments, bounded tool results, latency,
+  token usage, and validation violations.
+- Automatic selection of the newest completed Chat turn when the reviewer
+  opens Evidence.
+- An honest empty state when no trace exists.
+
+The two former rendering paths are removed. One selected turn and one timeline
+state drive the Evidence view, so Turn Detail and Trace Logging cannot disagree
+about the same turn.
+
+Full query rows remain excluded from the browser. Evidence displays the bounded
+trace summary; the eval observer retains complete in-memory rows only during an
+eval run.
+
+### 7.4 Evals provenance
 
 The Evals tab displays separate summaries for:
 
@@ -485,15 +535,152 @@ It also displays deployed app version, eval Git SHA, scenario-spec hash, and
 snapshot fingerprint. A mismatch between the app and eval SHA is prominent and
 cannot be rendered as a current green result.
 
-### 7.3 Documentation truth sweep
+### 7.5 Trust Rules tab
+
+Trust Rules replaces Data Source while retaining the current source inventory
+at the top. It then presents the complete data-to-answer policy catalog below.
+
+Every rule card contains:
+
+- A stable rule ID.
+- A plain-language behavior statement.
+- One status badge.
+- One concrete example or transformation.
+- The enforcing module or prompt/eval location.
+- The deterministic test or golden scenario that supplies evidence.
+
+Status badges have exact meanings:
+
+- `Enforced now`: deterministic code exists before this sprint.
+- `Enforced by P0`: deterministic code is required by this spec.
+- `Prompt + eval`: model behavior is instructed and tested, but not hard-gated.
+- `Data scope`: a verified property or deliberate coverage boundary.
+- `Deferred`: intentionally outside P0 and not presented as enforced.
+
+The tab uses native `<details>` sections and the existing visual system. Filter
+controls may show all rules or one status. It adds no endpoint, dependency, or
+build step.
+
+#### Source and coverage
+
+| ID | Status | Rule |
+|---|---|---|
+| `SRC-01` | Data scope | Use the 2020 ACS five-year vintage, representing 2016-2020. |
+| `SRC-02` | Enforced now | Never mix 2019 and 2020 tables. |
+| `SRC-03` | Enforced now | Search every indexed estimate field in the selected vintage. |
+| `SRC-04` | Enforced now | Exclude margin-of-error fields from ordinary variable discovery. |
+| `SRC-05` | Enforced now | Exclude `B99*` allocation statistics from demographic answers. |
+| `SRC-06` | Enforced now | Exclude SafeGraph foot-traffic and unused geometry tables. |
+| `SRC-07` | Enforced now | Perform variable and geography discovery against local SQLite. |
+| `SRC-08` | Enforced now | Touch Snowflake at request time only through the SQL tool. |
+| `SRC-09` | Data scope | The CBG key encodes nation, state, county, tract, and block-group rollups; P0 named resolution covers nation, state, and county, not city, ZIP, CBSA, or place boundaries. |
+| `SRC-10` | Enforced now | Exclude territory rows lacking the canonical state identity required by the geography contract. |
+
+#### Geography and intent
+
+| ID | Status | Rule |
+|---|---|---|
+| `GEO-01` | Enforced now | Normalize state names and postal abbreviations to one canonical geography. |
+| `GEO-02` | Enforced now | Sort geography candidates deterministically. |
+| `GEO-03` | Enforced now | Ask when multiple counties match; never choose the most likely candidate. |
+| `GEO-04` | Enforced now | Block SQL while a geography ambiguity remains unresolved. |
+| `GEO-05` | Prompt + eval | Require explicit confirmation before substituting a county for a city. |
+| `GEO-06` | Enforced now | Treat an unknown demographic subject as a lookup attempt, not automatically off-topic. |
+| `GEO-07` | Enforced by P0 | Require every SQL geography literal to come from current-turn resolution. |
+| `GEO-08` | Enforced by P0 | Resolve the United States as a nation geography and allow no CBG predicate only with that evidence. |
+
+#### SQL and lineage
+
+| ID | Status | Rule |
+|---|---|---|
+| `SQL-01` | Enforced now | Never interpolate user text into SQL. |
+| `SQL-02` | Enforced by P0 | Require every estimate variable to come from current-turn variable search. |
+| `SQL-03` | Enforced by P0 | Preserve case-sensitive quoted variable identifiers. |
+| `SQL-04` | Enforced now | Parse using the Snowflake dialect. |
+| `SQL-05` | Enforced now | Permit exactly one statement. |
+| `SQL-06` | Enforced now | Permit read-only queries only. |
+| `SQL-07` | Enforced now | Require at least one allowed physical table. |
+| `SQL-08` | Enforced now | Reject every nonallowlisted table. |
+| `SQL-09` | Enforced now | Reject `INTO`, session variables, commands, dynamic identifiers, and unmodeled functions. |
+| `SQL-10` | Enforced now | Reject star projections except `COUNT(*)`. |
+| `SQL-11` | Enforced now | Inject or clamp the row limit to 200. |
+| `SQL-12` | Enforced now | Apply bounded Snowflake connection and statement timeouts. |
+| `SQL-13` | Enforced now | Enforce one allowed vintage per query. |
+| `SQL-14` | Enforced by P0 | Run semantic lineage validation before the static SQL gate and Snowflake. |
+
+#### Returned-value normalization
+
+| ID | Status | Rule |
+|---|---|---|
+| `VAL-01` | Enforced by P0 | Convert SQL `NULL` to `not reported`, never zero. |
+| `VAL-02` | Data scope | Treat suppression separately from a real numeric value. This share represents suppression as `NULL`. |
+| `VAL-03` | Enforced by P0 | Convert median-income top code `$250,001` to `$250,000 or more`. |
+| `VAL-04` | Enforced by P0 | Apply top-code interpretation only to a directly selected source variable, not an unrelated aggregate with the same value. |
+| `VAL-05` | Enforced by P0 | Retain raw result values only in the current-turn evidence ledger. |
+| `VAL-06` | Enforced by P0 | Give the model normalized rows instead of raw special values. |
+| `VAL-07` | Enforced by P0 | Never persist complete result rows in durable traces. |
+| `VAL-08` | Enforced by P0 | Require displayed counts, currency, and percentages to match an allowed normalized result exactly. |
+| `VAL-09` | Enforced now | Treat zero returned rows as `not found`, never as a numeric zero. |
+
+#### Statistical interpretation
+
+| ID | Status | Rule |
+|---|---|---|
+| `STAT-01` | Prompt + eval | Roll count variables up from block groups using `SUM`. |
+| `STAT-02` | Prompt + eval | Never sum or average block-group medians into a county or state median. |
+| `STAT-03` | Prompt + eval | When valid variables exist, compute a true mean as `SUM(numerator) / SUM(denominator)` and state the substitution. |
+| `STAT-04` | Prompt + eval | Check numerator and denominator universes before division. |
+| `STAT-05` | Enforced by P0 | Require differences, ratios, and percentages to be computed in SQL and returned as result columns. |
+| `STAT-06` | Prompt + eval | Describe ACS values as estimates, not exact point-in-time counts. |
+| `STAT-07` | Prompt + eval | State the ACS 2016-2020 five-year basis once in a numeric answer. |
+| `STAT-08` | Deferred | Enforce full aggregation validity and universe compatibility before Snowflake. |
+
+#### Answer cleanup and grounding
+
+| ID | Status | Rule |
+|---|---|---|
+| `ANS-01` | Enforced by P0 | Ground every numeric data claim in complete current-turn query evidence. |
+| `ANS-02` | Enforced by P0 | Buffer the final answer until validation finishes. |
+| `ANS-03` | Enforced by P0 | Do not expose or persist text from tool-use rounds. |
+| `ANS-04` | Enforced by P0 | Reject planning narration such as `I'll look` or `Found it` from final prose. |
+| `ANS-05` | Enforced by P0 | Reject an empty or nonnumeric non-answer after a successful numeric query. |
+| `ANS-06` | Prompt + eval | Keep variable IDs and FIPS codes in Evidence by default, not normal Chat prose, unless the user asks for methodology. |
+| `ANS-07` | Enforced by P0 | Attempt at most one tool-free answer repair. |
+| `ANS-08` | Enforced by P0 | Start answer repair only when at least eight seconds remain. |
+| `ANS-09` | Enforced by P0 | Revalidate repaired prose against the same evidence. |
+| `ANS-10` | Enforced by P0 | After failed repair, return a deterministic response containing no unverified number. |
+| `ANS-11` | Enforced by P0 | Persist exactly the answer emitted to the user. |
+| `ANS-12` | Enforced by P0 | Exclude rejected user messages and canned refusals from future model context. |
+
+#### Guardrails, recovery, and transport
+
+| ID | Status | Rule |
+|---|---|---|
+| `OPS-01` | Enforced now | Refuse clearly off-topic, adversarial, or inappropriate input. |
+| `OPS-02` | Enforced now | Allow borderline and unknown-subject demographic questions to reach discovery. |
+| `OPS-03` | Enforced now | Fail the classifier open on its own timeout or error. |
+| `OPS-04` | Enforced now | Permit at most two SQL-error or zero-row recovery attempts. |
+| `OPS-05` | Enforced by P0 | Enforce one 50-second absolute turn deadline. |
+| `OPS-06` | Enforced by P0 | Start no new expensive work with fewer than eight seconds remaining. |
+| `OPS-07` | Enforced now | Emit start and end events for every tool call. |
+| `OPS-08` | Enforced now | Terminate every stream with exactly one `done` or `error`. |
+| `OPS-09` | Enforced now | Sanitize user-visible and logged errors. |
+| `OPS-10` | Enforced now | Return a nonblank degraded-mode explanation when required data paths are unavailable. |
+| `OPS-11` | Enforced by P0 | Finalize traces on success, refusal, timeout, and unexpected error. |
+
+A deterministic UI test requires all 72 catalog IDs to be unique and requires
+every card to contain a recognized category, status, example, and evidence
+field. It also pins the four visible tab labels and their order.
+
+### 7.6 Documentation truth sweep
 
 The README opens with the same five-minute review path, the one-sentence request
 flow, and a rubric map with `claim`, `evidence`, and `known limit` columns.
 
 Update stale current-state claims about trace persistence, answer grounding,
-prompt caching, Snowflake call count, and watchdog hardness. Historical
-pre-code documents remain intact and receive targeted supersession annotations
-only where required.
+prompt caching, Snowflake call count, watchdog hardness, and the retired tab
+names. Historical pre-code documents remain intact and receive targeted
+supersession annotations only where required.
 
 ## 8. Error handling and observability
 
@@ -525,6 +712,15 @@ latencies, and token usage, not full result sets.
 
 All deterministic behavior follows red-green-refactor. Required tests include:
 
+### Existing snapshot and tool tests
+
+- Builds exactly one synthetic nation geography alongside source-backed state
+  and county rows.
+- Resolves `United States`, `US`, and `USA` to the same unambiguous nation
+  candidate.
+- Keeps unsupported city, ZIP, CBSA, tract-name, and place-name resolution out
+  of the P0 contract.
+
 ### `tests/test_evidence.py`
 
 - Records variable hits, unambiguous geographies, raw rows, and normalized rows.
@@ -537,7 +733,9 @@ All deterministic behavior follows red-green-refactor. Required tests include:
 - Accepts a discovered variable and resolved state or county predicate.
 - Rejects an undiscovered estimate column.
 - Rejects an unresolved or ambiguous geography literal.
-- Accepts national aggregation without a geography predicate.
+- Accepts national aggregation without a CBG predicate only when nation
+  geography evidence exists.
+- Rejects an unfiltered aggregation without nation geography evidence.
 - Rejects mixed or nondefault vintage references.
 - Handles aliases, CTEs, quoted identifiers, `LIKE` prefixes, and `SUBSTR`
   predicates.
@@ -602,7 +800,8 @@ Implementation planning must decompose P0 into these ordered packages:
    regression overlay, tri-state scoring, provenance, and scorer tests.
 4. **Deadline and readiness:** absolute budget, endpoint semantics, deployment
    verification, and deterministic tests.
-5. **Reviewer surface:** Guided Review, provenance display, and documentation
+5. **Reviewer surface:** four-tab navigation, combined Evidence view, complete
+   Trust Rules catalog, Guided Review, provenance display, and documentation
    truth sweep.
 6. **Verification:** full offline suite, explicit approval for paid calls, one
    clean core run, three regression repetitions, human review, and committed
@@ -637,7 +836,10 @@ P0 implementation is complete when all of the following are true:
 - Regression reliability is displayed separately from the core score.
 - Eval artifacts identify the exact app, prompt, scorer, scenario set, models,
   and snapshot they measured.
-- Guided Review and README present the same coherent reviewer path.
+- Navigation is ordered Chat, Evidence, Evals, Trust Rules, with no separate
+  Turn Detail, Trace Logging, or Data Source tab.
+- Guided Review, Evidence, Trust Rules, and README present the same coherent
+  reviewer path and enforcement status.
 - The full offline suite passes.
 - A code-reviewer subagent returns PASS or all blocking findings are resolved
   before implementation is reported complete.
@@ -651,7 +853,7 @@ waived, until paid-call approval is given.
 
 Scope:
 
-- Consolidate the UI into Chat, Evals, and Evidence.
+- Add filtering, comparison, export, and pagination to the P0 Evidence view.
 - Add message and session bounds, per-session serialization, global concurrency
   limits, rate limits, and spend quotas.
 - Bind sessions and traces to authenticated principals.
