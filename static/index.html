@@ -218,11 +218,12 @@
         <table>
           <thead><tr><th>Query value</th><th>Answer-facing value</th></tr></thead>
           <tbody>
-            <tr><td>SQL NULL or a suppression code</td><td>Not reported, never a real number.</td></tr>
-            <tr><td>A known top code</td><td>A bounded value, such as “$250,000 or more.”</td></tr>
-            <tr><td>An ordinary estimate</td><td>The value returned by this turn's query.</td></tr>
+            <tr><td>SQL NULL in a directly selected or simply aliased demographic variable</td><td><code>not reported</code></td></tr>
+            <tr><td>A directly selected or simply aliased known top code</td><td>A bounded value, such as “$250,000 or more.”</td></tr>
+            <tr><td>Derived or aggregate projection</td><td>Returned unchanged. Derived and aggregate projections are not normalized.</td></tr>
           </tbody>
         </table>
+        <p class="section-lead">No numeric suppression codes were observed or transformed.</p>
       </article>
       <article class="info-card">
         <h2>Source, grain, and vintage</h2>
@@ -332,16 +333,22 @@
     }).join("");
   }
 
+  function suiteFor(row) {
+    return suiteOrder.indexOf(row.suite) !== -1 ? row.suite : "capability";
+  }
+
   function outcomeFor(row) {
-    return row.outcome || (row.passed ? "pass" : "fail");
+    return outcomeOrder.indexOf(row.outcome) !== -1
+      ? row.outcome
+      : (row.passed ? "pass" : "fail");
   }
 
   function renderEvalRows(rows) {
     return rows.map(function (row) {
       const outcome = outcomeFor(row);
       const checks = (row.checks || []).map(function (check) {
-        const checkOutcome = check.outcome || (check.passed ? "pass" : "fail");
-        return '<span class="badge ' + escapeHtml(checkOutcome) + '">' +
+        const checkOutcome = outcomeFor(check);
+        return '<span class="badge ' + checkOutcome + '">' +
           escapeHtml(checkOutcome) + "</span> " + escapeHtml(check.check && check.check.type);
       }).join("<br>");
       const answer = row.answer_final
@@ -352,7 +359,7 @@
         : "";
       return "<tr><td><span class='scenario-id'>" + escapeHtml(row.scenario_id) +
         "</span>" + escapeHtml(row.category) + "</td><td>" + questionCell(row) + answer +
-        notes + "</td><td><span class='badge " + escapeHtml(outcome) + "'>" +
+        notes + "</td><td><span class='badge " + outcome + "'>" +
         escapeHtml(outcome) + "</span></td><td>" + checks + "</td></tr>";
     }).join("");
   }
@@ -384,7 +391,7 @@
       (run.git_sha ? " at commit " + escapeHtml(run.git_sha) : "") +
       (modelIds.length ? ". Models: " + escapeHtml(modelIds.join(", ")) : "") + ".</p>";
     suiteOrder.forEach(function (suite) {
-      html += renderSuite(suite, (run.results || []).filter(function (row) { return row.suite === suite; }));
+      html += renderSuite(suite, (run.results || []).filter(function (row) { return suiteFor(row) === suite; }));
     });
     html += '<p class="section-lead">CI logs and downloadable live-run artifacts are kept in GitHub Actions. This page shows the latest committed benchmark.</p>';
     return html;

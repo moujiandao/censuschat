@@ -315,6 +315,19 @@ def test_evals_endpoint_derives_suite_and_outcome_for_historical_rows(
     ]
 
 
+def test_evals_endpoint_preserves_explicit_suite_and_outcome(tmp_path, monkeypatch):
+    monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
+    run = _run_with(["DF-05"])
+    run["results"][0].update(
+        {"suite": "capability", "outcome": "inconclusive", "passed": False}
+    )
+    (tmp_path / "latest.json").write_text(json.dumps(run))
+
+    row = client.get("/api/evals").json()["latest"]["results"][0]
+
+    assert (row["suite"], row["outcome"]) == ("capability", "inconclusive")
+
+
 def test_evals_endpoint_keeps_an_unknown_scenario_id_rather_than_failing(
     tmp_path, monkeypatch
 ):

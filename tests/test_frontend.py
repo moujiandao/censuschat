@@ -46,3 +46,19 @@ def test_empty_and_failed_technical_views_have_explicit_copy():
     assert "Couldn't load evidence." in html
     assert "No eval runs recorded yet." in html
     assert "Couldn't load eval results." in html
+
+
+def test_normalization_copy_matches_the_implemented_result_seam():
+    html = _html()
+    assert "SQL NULL or a suppression code" not in html
+    assert "No numeric suppression codes were observed or transformed." in html
+    assert "Derived and aggregate projections are not normalized." in html
+
+
+def test_historical_eval_values_are_whitelisted_before_class_interpolation():
+    html = _html()
+    assert "function suiteFor(row)" in html
+    assert "function outcomeFor(row)" in html
+    assert "suiteOrder.indexOf(row.suite)" in html
+    assert "outcomeOrder.indexOf(row.outcome)" in html
+    assert '"badge " + escapeHtml(' not in html
