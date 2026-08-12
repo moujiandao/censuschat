@@ -14,6 +14,8 @@ import sqlite3
 import time
 from typing import Any
 
+from sqlglot import exp, parse_one
+
 from src.contracts import (
     ALLOWED_TABLES,
     DEFAULT_VINTAGE,
@@ -26,6 +28,7 @@ from src.contracts import (
     SqlRejected,
     VariableHit,
     VariableSearchResult,
+    normalize_value,
 )
 from src import snapshot as _snapshot
 from src.snowflake_conn import connect as _connect
@@ -39,6 +42,8 @@ _ALL_GEO_LEVELS: list[GeoLevel] = [
     GeoLevel.TRACT,
     GeoLevel.BLOCK_GROUP,
 ]
+
+_VARIABLE_ID_RE = re.compile(r"^[A-Z]+\d+[A-Z]\d+$", re.IGNORECASE)
 
 
 def _normalize_state(state: str) -> str:
@@ -191,6 +196,40 @@ def resolve_geography(name: str, level_hint: GeoLevel | None = None) -> GeoResol
     )
 
 
+def _projection_variable_ids(sql: str) -> dict[str, str]:
+    tree = parse_one(sql, read="snowflake")
+    result: dict[str, str] = {}
+    for projection in tree.selects:
+        variable_ids = {
+            column.name
+            for column in projection.find_all(exp.Column)
+            if _VARIABLE_ID_RE.fullmatch(column.name)
+        }
+        if isinstance(projection, exp.Column) and _VARIABLE_ID_RE.fullmatch(
+            projection.name
+        ):
+            variable_ids.add(projection.name)
+        if len(variable_ids) == 1:
+            result[projection.alias_or_name.upper()] = variable_ids.pop()
+    return result
+
+
+def _presentation_value(
+    column: str,
+    raw: Any,
+    variable_ids: dict[str, str],
+) -> Any:
+    variable_id = variable_ids.get(column.upper())
+    if variable_id is None:
+        return raw
+    normalized = normalize_value(raw, variable_id)
+    if normalized.suppressed:
+        return "not reported"
+    if normalized.top_coded:
+        return "$250,000 or more"
+    return raw
+
+
 def run_census_sql(sql: str) -> QueryResult:
     """The ONLY code path that touches Snowflake at request time (issue #5,
     CLAUDE.md rule 13). validate_sql -> execute with STATEMENT_TIMEOUT_IN_SECONDS
@@ -213,7 +252,14 @@ def run_census_sql(sql: str) -> QueryResult:
         conn.close()
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
-    row_dicts = [dict(zip(columns, row)) for row in rows]
+    variable_ids = _projection_variable_ids(gate_result.sql)
+    row_dicts = [
+        {
+            column: _presentation_value(column, raw, variable_ids)
+            for column, raw in zip(columns, row)
+        }
+        for row in rows
+    ]
     return QueryResult(
         columns=columns,
         rows=row_dicts,

@@ -7,6 +7,11 @@
 - Return the exact SQL-ready `physical_table` with every ACS variable search hit (D-024), so the agent copies `2020_CBG_B11` for `B11012e1` instead of spending a recovery attempt on the nonexistent `2020_CBG_B11012`.
 - Add an opt-in `NO_TOOL_ERRORS` golden-eval check (D-025) and apply it to MT-01, so a correct final answer no longer hides a failed table-routing attempt.
 
+## [2026-08-11]
+
+### Changed
+- Normalize suppressed and top-coded demographic values at the Snowflake result seam before they reach model-facing query results.
+
 ## [2026-08-06]
 
 ### Added

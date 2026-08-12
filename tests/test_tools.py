@@ -466,6 +466,44 @@ def test_run_census_sql_executes_valid_select_and_returns_query_result(monkeypat
     assert result.row_count == 1
 
 
+def test_run_census_sql_normalizes_null_demographic_value(monkeypatch):
+    sql = 'SELECT "B01003e1" AS population FROM US_CENSUS.PUBLIC."2020_CBG_B01"'
+    fake = FakeSqlConnection(columns=["POPULATION"], rows=[(None,)])
+    monkeypatch.setattr(tools, "_connect", lambda **kwargs: fake)
+
+    result = tools.run_census_sql(sql)
+
+    assert result.rows == [{"POPULATION": "not reported"}]
+
+
+def test_run_census_sql_renders_aliased_income_top_code(monkeypatch):
+    sql = 'SELECT "B19013e1" AS income FROM US_CENSUS.PUBLIC."2020_CBG_B19"'
+    fake = FakeSqlConnection(columns=["INCOME"], rows=[(250001.0,)])
+    monkeypatch.setattr(tools, "_connect", lambda **kwargs: fake)
+
+    result = tools.run_census_sql(sql)
+
+    assert result.rows == [{"INCOME": "$250,000 or more"}]
+
+
+def test_run_census_sql_preserves_ordinary_numbers_and_identifiers(monkeypatch):
+    sql = (
+        'SELECT CENSUS_BLOCK_GROUP, "B01003e1" AS population '
+        'FROM US_CENSUS.PUBLIC."2020_CBG_B01"'
+    )
+    fake = FakeSqlConnection(
+        columns=["CENSUS_BLOCK_GROUP", "POPULATION"],
+        rows=[("060014001001", 581348)],
+    )
+    monkeypatch.setattr(tools, "_connect", lambda **kwargs: fake)
+
+    result = tools.run_census_sql(sql)
+
+    assert result.rows == [
+        {"CENSUS_BLOCK_GROUP": "060014001001", "POPULATION": 581348}
+    ]
+
+
 def test_run_census_sql_sets_statement_timeout_on_session(monkeypatch):
     fake_conn = FakeSqlConnection(columns=["TABLE_ID"], rows=[])
     captured = {}
