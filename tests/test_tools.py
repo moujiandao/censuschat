@@ -486,6 +486,33 @@ def test_run_census_sql_renders_aliased_income_top_code(monkeypatch):
     assert result.rows == [{"INCOME": "$250,000 or more"}]
 
 
+def test_run_census_sql_does_not_top_code_aggregate(monkeypatch):
+    sql = (
+        'SELECT COUNT("B19013e1") AS income_count '
+        'FROM US_CENSUS.PUBLIC."2020_CBG_B19"'
+    )
+    fake = FakeSqlConnection(columns=["INCOME_COUNT"], rows=[(250001,)])
+    monkeypatch.setattr(tools, "_connect", lambda **kwargs: fake)
+
+    result = tools.run_census_sql(sql)
+
+    assert result.rows == [{"INCOME_COUNT": 250001}]
+
+
+def test_run_census_sql_preserves_computed_text_projection(monkeypatch):
+    sql = (
+        'SELECT CASE WHEN "B19013e1" IS NULL '
+        "THEN 'missing' ELSE 'reported' END AS income_status "
+        'FROM US_CENSUS.PUBLIC."2020_CBG_B19"'
+    )
+    fake = FakeSqlConnection(columns=["INCOME_STATUS"], rows=[("reported",)])
+    monkeypatch.setattr(tools, "_connect", lambda **kwargs: fake)
+
+    result = tools.run_census_sql(sql)
+
+    assert result.rows == [{"INCOME_STATUS": "reported"}]
+
+
 def test_run_census_sql_preserves_ordinary_numbers_and_identifiers(monkeypatch):
     sql = (
         'SELECT CENSUS_BLOCK_GROUP, "B01003e1" AS population '

@@ -200,17 +200,16 @@ def _projection_variable_ids(sql: str) -> dict[str, str]:
     tree = parse_one(sql, read="snowflake")
     result: dict[str, str] = {}
     for projection in tree.selects:
-        variable_ids = {
-            column.name
-            for column in projection.find_all(exp.Column)
-            if _VARIABLE_ID_RE.fullmatch(column.name)
-        }
-        if isinstance(projection, exp.Column) and _VARIABLE_ID_RE.fullmatch(
-            projection.name
+        if isinstance(projection, exp.Column):
+            column = projection
+        elif isinstance(projection, exp.Alias) and isinstance(
+            projection.this, exp.Column
         ):
-            variable_ids.add(projection.name)
-        if len(variable_ids) == 1:
-            result[projection.alias_or_name.upper()] = variable_ids.pop()
+            column = projection.this
+        else:
+            continue
+        if _VARIABLE_ID_RE.fullmatch(column.name):
+            result[projection.alias_or_name.upper()] = column.name
     return result
 
 
