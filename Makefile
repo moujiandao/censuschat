@@ -9,6 +9,8 @@ test:
 eval:
 	python -m evals.run_evals
 
+# Manual CI equivalent: python -m evals.run_evals --suite regression --ci --repeat 2 --output artifacts/regression.json
+
 # Rewrites the "What the ids on this page mean" table at the bottom of each
 # doc, so a bare `DF-05` or `D-020` resolves without opening two other files.
 # tests/test_id_reference.py fails if a doc is stale, so this is not something

@@ -7,23 +7,34 @@ treatment as production deterministic logic (CLAUDE.md rule 19).
 
 from __future__ import annotations
 
+import asyncio
 import json
+import sys
+from datetime import datetime, timezone
 
 import pytest
 
 from evals.run_evals import (
     Observation,
+    _ci_exit_code,
+    _ci_payload,
     _grounding_check,
+    _parse_args,
     _require_credentials,
     _run_all,
     _scenario_outcome,
     _score_check,
+    _select,
+    _select_suite,
 )
+from src.model_config import AGENT_MODEL, CLASSIFIER_MODEL
 from src.contracts import (
     Check,
     CheckResult,
     CheckType,
     EvalOutcome,
+    EvalResult,
+    EvalRun,
     EvalScenario,
     EvalSuite,
     ScenarioCategory,
@@ -53,6 +64,24 @@ def _obs(
 
 def _sql_call(ok: bool = True) -> dict:
     return {"tool": "run_census_sql", "args": '{"sql": "SELECT 1"}', "ok": ok, "summary": {}}
+
+
+def _run_with_outcome(outcome: EvalOutcome) -> EvalRun:
+    passed = outcome == EvalOutcome.PASS
+    result = EvalResult(
+        scenario_id="DF-05",
+        category=ScenarioCategory.DIRECT_FACT,
+        suite=EvalSuite.REGRESSION,
+        outcome=outcome,
+        passed=passed,
+        checks=[],
+    )
+    return EvalRun(
+        run_at=datetime.now(timezone.utc),
+        git_sha="abc123",
+        results=[result],
+        pass_rate=1.0 if passed else 0.0,
+    )
 
 
 def test_no_unhandled_error_passes_on_clean_done():
@@ -609,3 +638,89 @@ def test_unfiltered_run_does_write_results(tmp_path, monkeypatch):
 
     assert asyncio.run(run_evals.main()) == 0
     assert (tmp_path / "latest.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# CI mode
+# ---------------------------------------------------------------------------
+
+
+def test_ci_requires_explicit_output():
+    with pytest.raises(SystemExit):
+        _parse_args(["--suite", "regression", "--ci"])
+
+
+def test_ci_payload_keeps_both_trials_and_provenance():
+    run_one = _run_with_outcome(EvalOutcome.PASS)
+    run_two = _run_with_outcome(EvalOutcome.PASS)
+
+    payload = _ci_payload("regression", [run_one, run_two])
+
+    assert payload["suite"] == "regression"
+    assert payload["repeat"] == 2
+    assert len(payload["runs"]) == 2
+    assert payload["models"] == {
+        "agent": AGENT_MODEL,
+        "classifier": CLASSIFIER_MODEL,
+    }
+
+
+def test_regression_pass_power_k_requires_every_trial_to_pass():
+    passing_run = _run_with_outcome(EvalOutcome.PASS)
+    inconclusive_run = _run_with_outcome(EvalOutcome.INCONCLUSIVE)
+    failing_run = _run_with_outcome(EvalOutcome.FAIL)
+
+    assert _ci_exit_code("regression", [passing_run, passing_run]) == 0
+    assert _ci_exit_code("regression", [passing_run, inconclusive_run]) == 1
+    assert _ci_exit_code("regression", [passing_run, failing_run]) == 1
+
+
+def test_capability_ci_completion_is_not_a_regression_gate():
+    assert _ci_exit_code("capability", [_run_with_outcome(EvalOutcome.FAIL)]) == 0
+
+
+def test_suite_selection_precedes_only_intersection():
+    from evals.scenarios import GOLDEN_SCENARIOS
+
+    regression = _select_suite(GOLDEN_SCENARIOS, EvalSuite.REGRESSION)
+    selected = [scenario for scenario in regression if scenario.id in _select(["DF-01"])]
+
+    assert selected == []
+
+
+def test_ci_write_does_not_touch_benchmark_latest(tmp_path, monkeypatch):
+    import evals.run_evals as run_evals
+
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    latest = results_dir / "latest.json"
+    latest.write_bytes(b'{"benchmark": "unchanged"}\n')
+    before = latest.read_bytes()
+    output = tmp_path / "artifacts" / "regression.json"
+
+    async def fake_run_all(_scenarios):
+        return _run_with_outcome(EvalOutcome.PASS)
+
+    monkeypatch.setattr(run_evals, "RESULTS_DIR", results_dir)
+    monkeypatch.setattr(run_evals, "_require_credentials", lambda: None)
+    monkeypatch.setattr(run_evals, "_run_all", fake_run_all)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_evals",
+            "--suite",
+            "regression",
+            "--ci",
+            "--repeat",
+            "2",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert asyncio.run(run_evals.main()) == 0
+    assert latest.read_bytes() == before
+    payload = json.loads(output.read_text())
+    assert payload["repeat"] == 2
+    assert len(payload["runs"]) == 2

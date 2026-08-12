@@ -53,8 +53,10 @@ from src.contracts import (  # noqa: E402
     EvalResult,
     EvalRun,
     EvalScenario,
+    EvalSuite,
     EventType,
 )
+from src.model_config import AGENT_MODEL, CLASSIFIER_MODEL  # noqa: E402
 
 RESULTS_DIR = Path(__file__).parent / "results"
 
@@ -521,6 +523,14 @@ def _select(scenario_ids: list[str]) -> list[str]:
     return scenario_ids
 
 
+def _select_suite(
+    scenarios: list[EvalScenario], suite: EvalSuite | None
+) -> list[EvalScenario]:
+    if suite is None:
+        return scenarios
+    return [scenario for scenario in scenarios if scenario.suite == suite]
+
+
 async def _run_all(scenarios: list) -> EvalRun:
     """One complete pass over the set, scored, as a single EvalRun.
 
@@ -616,16 +626,53 @@ def _write(run: EvalRun) -> str:
     return stamp
 
 
-async def main() -> int:
-    from evals.scenarios import GOLDEN_SCENARIOS
+def _ci_payload(suite: str, runs: list[EvalRun]) -> dict:
+    return {
+        "mode": "ci",
+        "suite": suite,
+        "repeat": len(runs),
+        "models": {"agent": AGENT_MODEL, "classifier": CLASSIFIER_MODEL},
+        "runs": [json.loads(run.model_dump_json()) for run in runs],
+    }
 
+
+def _write_ci(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, indent=2))
+    temporary.replace(path)
+
+
+def _ci_exit_code(suite: str, runs: list[EvalRun]) -> int:
+    if suite == EvalSuite.CAPABILITY.value:
+        return 0
+    regression_outcomes = (
+        result.outcome
+        for run in runs
+        for result in run.results
+        if result.suite == EvalSuite.REGRESSION
+    )
+    return int(
+        any(
+            outcome in (EvalOutcome.FAIL, EvalOutcome.INCONCLUSIVE)
+            for outcome in regression_outcomes
+        )
+    )
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="python -m evals.run_evals")
+    parser.add_argument(
+        "--suite",
+        choices=(EvalSuite.REGRESSION.value, EvalSuite.CAPABILITY.value, "all"),
+        default="all",
+    )
     parser.add_argument(
         "--only",
         default="",
         help=(
             "Comma-separated scenario ids to run instead of the full executed "
-            "set. A filtered run writes NOTHING to evals/results/ — see below."
+            "set. A filtered benchmark run writes NOTHING to evals/results/."
         ),
     )
     parser.add_argument(
@@ -633,25 +680,42 @@ async def main() -> int:
         type=int,
         default=1,
         help=(
-            "Run the whole set N times, writing N separate result files. With "
-            "a live model one run is not a measurement: a scenario that passes "
-            "2 of 3 times is flaky, and a single run reports it as a clean "
-            "pass or a clean fail. The Evals tab groups runs by commit and "
-            "shows the ratio."
+            "Run the selected set N times. Benchmark mode writes N separate "
+            "result files; CI mode keeps all N trials in one artifact."
         ),
     )
-    args = parser.parse_args()
+    parser.add_argument("--ci", action="store_true")
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args(argv)
     if args.repeat < 1:
-        raise SystemExit("--repeat must be at least 1")
+        parser.error("--repeat must be at least 1")
+    if args.ci and not args.output:
+        parser.error("--ci requires --output PATH")
+    if args.output and not args.ci:
+        parser.error("--output is only valid with --ci")
+    return args
+
+
+async def main() -> int:
+    from evals.scenarios import GOLDEN_SCENARIOS
+
+    args = _parse_args()
     _require_credentials()
     only = _select([i.strip() for i in args.only.split(",") if i.strip()])
+    suite = None if args.suite == "all" else EvalSuite(args.suite)
+    scenarios = _select_suite(GOLDEN_SCENARIOS, suite)
+    if only:
+        scenarios = [scenario for scenario in scenarios if scenario.id in only]
 
-    scenarios = [s for s in GOLDEN_SCENARIOS if s.id in only] if only else GOLDEN_SCENARIOS
-
+    runs: list[EvalRun] = []
     for i in range(args.repeat):
         if args.repeat > 1:
             print(f"\n=== run {i + 1} of {args.repeat} ===", flush=True)
         run = await _run_all(scenarios)
+        runs.append(run)
+
+        if args.ci:
+            continue
 
         # A filtered run must never touch evals/results/. Its pass rate is over
         # a hand-picked subset, so writing it would overwrite the committed
@@ -663,6 +727,11 @@ async def main() -> int:
 
         stamp = _write(run)
         print(f"wrote evals/results/{stamp}.json and latest.json")
+
+    if args.ci:
+        _write_ci(args.output, _ci_payload(args.suite, runs))
+        print(f"wrote {args.output}")
+        return _ci_exit_code(args.suite, runs)
 
     return 0
 
