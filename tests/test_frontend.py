@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 def _html() -> str:
@@ -11,6 +12,15 @@ def test_exact_reviewer_tab_order():
     positions = [html.index(f">{label}</button>") for label in labels]
     assert positions == sorted(positions)
     assert html.count('data-tab="') == 4
+
+
+def test_tab_scroll_container_does_not_expose_vertical_scrollbar():
+    html = _html()
+    tabs_rule = re.search(r"\.tabs\s*\{([^}]*)\}", html)
+
+    assert tabs_rule is not None
+    assert "overflow-x: auto" in tabs_rule.group(1)
+    assert "overflow-y: hidden" in tabs_rule.group(1)
 
 
 def test_legacy_top_level_surfaces_are_removed():
