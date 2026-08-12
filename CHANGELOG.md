@@ -10,12 +10,14 @@
 ## [2026-08-11]
 
 ### Changed
+- Consolidate the reviewer interface into Chat, How It Works, Evidence, and Evals; preserve the durable trace store while removing duplicate trace renderers and the standalone flow diagram (D-027).
 - Normalize suppressed and top-coded demographic values at the Snowflake result seam before they reach model-facing query results.
 - Partition the 14 live eval scenarios into regression and capability suites, add additive tri-state outcomes, and make inconclusive grounding non-passing without breaking historical result parsing (D-026).
 - Reject blank answers, SQL attempts before ambiguity clarification, and invalid `SUM` or `AVG` aggregation of median variable `B19013e1` in deterministic eval scoring.
 - Reject CI artifacts under `evals/results` after path resolution, and distinguish infrastructure exceptions from informational capability failures in CI artifacts and exit status.
 
 ### Added
+- Add four curated Chat examples, an explicit protection-and-data-flow explanation, raw JSON disclosure for stored evidence, and suite-aware tri-state eval rendering.
 - Add credential-free pull-request CI and a protected manual live-regression workflow, backed by an explicit CI runner mode that keeps repeated trials in one artifact without touching committed benchmark results.
 
 ## [2026-08-06]
@@ -240,5 +242,6 @@ Decisions, recorded in full in [`docs/decisions.md`](docs/decisions.md).
 | `D-024` | Variable search returns the exact physical table |
 | `D-025` | Golden evals distinguish clean execution from recovery |
 | `D-026` | Eval suites and tri-state outcomes are additive |
+| `D-027` | The reviewer interface has four ordered surfaces |
 
 <!-- END id-reference -->

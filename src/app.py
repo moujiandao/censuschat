@@ -136,7 +136,14 @@ def _scenario_index() -> dict[str, dict]:
         logger.warning("evals.scenarios unavailable; serving unlabeled results")
         return {}
 
-    return {s.id: {"turns": list(s.turns), "notes": s.notes} for s in GOLDEN_SCENARIOS}
+    return {
+        s.id: {
+            "turns": list(s.turns),
+            "notes": s.notes,
+            "suite": s.suite.value,
+        }
+        for s in GOLDEN_SCENARIOS
+    }
 
 
 def _annotate(run: dict | None, index: dict[str, dict]) -> dict | None:
@@ -161,6 +168,12 @@ def _annotate(run: dict | None, index: dict[str, dict]) -> dict | None:
         meta = index.get(result.get("scenario_id"))
         result["turns"] = meta["turns"] if meta else []
         result["notes"] = meta["notes"] if meta else None
+        result["suite"] = result.get("suite") or (
+            meta["suite"] if meta else "capability"
+        )
+        result["outcome"] = result.get("outcome") or (
+            "pass" if result.get("passed") else "fail"
+        )
         kept.append(result)
     run["results"] = kept
     return run
@@ -192,7 +205,8 @@ def _history() -> list[dict]:
                 "git_sha": run.get("git_sha"),
                 "pass_rate": run.get("pass_rate"),
                 "scenarios": {
-                    r["scenario_id"]: r["passed"]
+                    r["scenario_id"]: r.get("outcome")
+                    or ("pass" if r.get("passed") else "fail")
                     for r in run.get("results", [])
                     if r.get("status") != "pending"
                 },
@@ -227,7 +241,7 @@ async def evals() -> dict:
 
 @app.get("/api/traces")
 async def traces(session_id: str) -> dict:
-    """Trace Logging + Turn Detail tabs (src/tracing.py, a lightweight
+    """Evidence tab traces (src/tracing.py, a lightweight
     stand-in for the full Langfuse integration in issue #18 — see
     docs/reflection.md).
 

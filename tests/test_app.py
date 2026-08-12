@@ -227,8 +227,8 @@ def test_evals_history_is_oldest_first_with_per_scenario_outcomes(tmp_path, monk
     history = client.get("/api/evals").json()["history"]
 
     assert [h["git_sha"] for h in history] == ["old111", "new222"]
-    assert history[0]["scenarios"] == {"DF-01": True}
-    assert history[1]["scenarios"] == {"DF-01": True, "PM-08": False}
+    assert history[0]["scenarios"] == {"DF-01": "pass"}
+    assert history[1]["scenarios"] == {"DF-01": "pass", "PM-08": "fail"}
 
 
 def test_evals_history_excludes_rows_an_older_run_recorded_as_pending(
@@ -245,7 +245,7 @@ def test_evals_history_excludes_rows_an_older_run_recorded_as_pending(
 
     history = client.get("/api/evals").json()["history"]
 
-    assert history[0]["scenarios"] == {"DF-01": True}
+    assert history[0]["scenarios"] == {"DF-01": "pass"}
 
 
 def _run_with(scenario_ids: list[str]) -> dict:
@@ -297,6 +297,22 @@ def test_evals_endpoint_drops_rows_an_older_run_recorded_as_pending(
     rows = client.get("/api/evals").json()["latest"]["results"]
 
     assert [r["scenario_id"] for r in rows] == ["DF-01"]
+
+
+def test_evals_endpoint_derives_suite_and_outcome_for_historical_rows(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
+    run = _run_with(["DF-05", "PM-08"])
+    run["results"][1]["passed"] = False
+    (tmp_path / "latest.json").write_text(json.dumps(run))
+
+    rows = client.get("/api/evals").json()["latest"]["results"]
+
+    assert [(r["suite"], r["outcome"]) for r in rows] == [
+        ("regression", "pass"),
+        ("capability", "fail"),
+    ]
 
 
 def test_evals_endpoint_keeps_an_unknown_scenario_id_rather_than_failing(
