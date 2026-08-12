@@ -129,7 +129,7 @@ class EventType(str, Enum):
     # `summary` is a bounded, USER-SAFE per-tool result digest (hit counts,
     # resolved geo_ids, row_count/columns/first_row, or a sanitized error) —
     # additive to this free-form `data` dict, not a signature change. It
-    # powers the Turn Detail / Trace Logging tabs; see
+    # powers the Evidence tab; see
     # src/agent.py:_summarize_tool_result for the safety and bounding rules.
     TOOL_END = "tool_end"      # data: {"tool": str, "ok": bool, "elapsed_ms": int, "summary": dict}
     STATUS = "status"          # data: {"message": str}  e.g. "warehouse resuming"

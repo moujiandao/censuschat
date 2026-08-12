@@ -223,6 +223,49 @@ def test_allow_verdict_reaches_tool_loop_and_terminates(monkeypatch):
     assert not any(span.name.startswith("tool:") for span in trace.spans)
 
 
+def test_blank_final_model_response_ends_with_error_and_error_trace(monkeypatch):
+    monkeypatch.setattr(agent, "classify_input", _allow_verdict)
+    final_message = SimpleNamespace(stop_reason="end_turn", content=[])
+    _install_fake_client(monkeypatch, [_FakeStream([], final_message)])
+
+    events = _collect("s-blank-final", "population of Wyoming?")
+
+    assert [event.type for event in events] == [EventType.ERROR]
+    assert events[0].data["message"]
+    messages = sessions.get_session("s-blank-final").messages
+    assert [(message.role, message.content) for message in messages] == [
+        ("user", "population of Wyoming?")
+    ]
+    trace = tracing.get_traces("s-blank-final")[0]
+    assert trace.final_answer == events[0].data["message"]
+    assert trace.terminal_status == "error"
+
+
+def test_tool_preamble_does_not_mask_a_blank_final_model_response(monkeypatch):
+    monkeypatch.setattr(agent, "classify_input", _allow_verdict)
+    monkeypatch.setattr(agent, "_run_tool", lambda name, tool_input: {"hits": []})
+    tool_message = SimpleNamespace(
+        stop_reason="tool_use",
+        content=[_search_tool_block("blank-final-tool")],
+    )
+    blank_message = SimpleNamespace(stop_reason="end_turn", content=[])
+    _install_fake_client(
+        monkeypatch,
+        [
+            _FakeStream(["I'll look that up."], tool_message),
+            _FakeStream([], blank_message),
+        ],
+    )
+
+    events = _collect("s-blank-after-tool", "population of Wyoming?")
+
+    assert events[-1].type == EventType.ERROR
+    assert all(event.type != EventType.DONE for event in events)
+    trace = tracing.get_traces("s-blank-after-tool")[0]
+    assert trace.final_answer == events[-1].data["message"]
+    assert trace.terminal_status == "error"
+
+
 def test_allow_verdict_runs_tool_round_trip_before_final_answer(monkeypatch):
     monkeypatch.setattr(
         agent,

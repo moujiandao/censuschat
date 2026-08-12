@@ -1,5 +1,5 @@
 """Tests for src/agent.py:_summarize_tool_result — the per-tool detail
-carried on TOOL_END events for the Turn Detail / Trace Logging tabs.
+carried on TOOL_END events for Evidence.
 
 Pure function, deterministic — TDD per CLAUDE.md rule 19. The security-
 relevant case is the error branch: this summary is client-facing, so it

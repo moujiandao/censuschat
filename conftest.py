@@ -21,8 +21,8 @@ def _isolate_trace_store(tmp_path, monkeypatch):
     so a test exercising `agent_turn` recorded a trace that died with the
     process and bothered nobody. The moment that dict became a SQLite file on
     the default path, the same tests began writing into `data/traces.sqlite3`
-    — the store the running app reads — and a reviewer opening the Turn Detail
-    tab would find `s-watchdog` and `s-refuse` sitting in their history.
+    — the store the running app reads — and a reviewer opening Evidence would
+    find `s-watchdog` and `s-refuse` sitting in their history.
 
     Autouse and repo-wide on purpose. Any test that reaches `agent_turn` gets
     tracing whether or not it is about tracing, so opting in per test is the

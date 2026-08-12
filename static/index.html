@@ -500,7 +500,9 @@
           .map(function (key) { return [key, typeof meta[key] === "object" ? JSON.stringify(meta[key]) : String(meta[key])]; }));
       }
     });
-    const terminalStatus = trace.terminal_status || "unknown";
+    const terminalStatus = trace.terminal_status === "done" && !trace.final_answer.trim()
+      ? "error"
+      : trace.terminal_status || "unknown";
     const finalStep = addEvidenceStep(
       steps,
       "Terminal status: " + terminalStatus,
@@ -720,14 +722,17 @@
           } else if (event.type === "done") {
             ended = true;
             clearPending(assistantBubble);
+            const completedWithAnswer = Boolean(assistantText.trim());
             if (!assistantText) assistantBubble.textContent = "(the turn finished without producing an answer)";
             const finalStep = addEvidenceStep(
               evidenceSteps,
-              toolStepsSeen ? "Final answer streamed" : "Completed without tool calls",
-              "ok"
+              completedWithAnswer
+                ? (toolStepsSeen ? "Final answer streamed" : "Completed without tool calls")
+                : "Blank completion",
+              completedWithAnswer ? "ok" : "fail"
             );
             setStepDetail(finalStep, [
-              ["terminal status", "done"],
+              ["terminal status", completedWithAnswer ? "done" : "error"],
               ["final answer", assistantText || "(no answer text produced)"],
             ]);
             const timing = document.createElement("span");

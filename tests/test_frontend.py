@@ -49,6 +49,21 @@ def test_clean_zero_tool_done_turn_is_not_rendered_as_failed():
     assert '"Completed without tool calls"' in html
 
 
+def test_legacy_blank_done_trace_is_rendered_as_an_error():
+    html = _html()
+
+    assert 'trace.terminal_status === "done" && !trace.final_answer.trim()' in html
+    assert '? "error"' in html
+
+
+def test_live_blank_done_event_is_rendered_as_failed():
+    html = _html()
+
+    assert "const completedWithAnswer = Boolean(assistantText.trim())" in html
+    assert 'completedWithAnswer ? "ok" : "fail"' in html
+    assert 'completedWithAnswer ? "done" : "error"' in html
+
+
 def test_empty_and_failed_technical_views_have_explicit_copy():
     html = _html()
     assert "No turns recorded for this session yet." in html

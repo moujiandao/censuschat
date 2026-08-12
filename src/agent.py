@@ -20,7 +20,8 @@ wall-clock watchdog checked once per round boundary (never mid-call); once
 crossed, no further model or tool calls are issued and the turn ends with a
 deterministic partial answer built only from rows this turn's queries
 actually returned. The deadline is soft: it is not checked during a call
-already in flight. The stream still always ends in DONE.
+already in flight. The stream ends in DONE for a nonblank answer or ERROR if
+the model returns no answer text.
 
 No agent framework (CLAUDE.md rule 14) — a hand-written loop over the
 Anthropic SDK's async streaming client, so tool_start/tool_end/token events
@@ -95,6 +96,8 @@ _DEGRADED_MESSAGE = (
     "I'm having trouble connecting to the census data right now, so I "
     "can't answer this. Please try again in a few minutes."
 )
+
+_EMPTY_RESPONSE_MESSAGE = "I couldn't produce a response. Please try again."
 
 # Architecture §2/PRD §4.2: the CBG decomposition and roll-up recipes are
 # closed and tiny, so they are prompt content. Variable vocabulary and exact
@@ -395,8 +398,8 @@ async def agent_turn(
     """Full pipeline for one user turn (minimal M2 scope — see module
     docstring for what is deferred to M3). The model is instructed to ground
     numeric claims in this turn's run_census_sql results; the stream always
-    terminates with DONE (src/app.py converts any raised exception here into
-    ERROR)."""
+    terminates with DONE or ERROR (src/app.py also converts any raised
+    exception here into ERROR)."""
     turn_start = time.monotonic()
     turn_started_at = datetime.now(timezone.utc)
     spans: list[TraceSpan] = []
@@ -486,6 +489,7 @@ async def agent_turn(
     collected_query_results: list[dict[str, Any]] = []
     watchdog_fired = False
     model_call_index = 0
+    terminal_response_had_text = False
 
     for _ in range(_MAX_TOOL_LOOP_ITERATIONS):
         # Watchdog (CLAUDE.md rule 11, issue #14): TURN_DEADLINE_S is a
@@ -500,6 +504,7 @@ async def agent_turn(
 
         model_call_index += 1
         model_call_start = time.monotonic()
+        response_text_parts: list[str] = []
         async with _client.messages.stream(
             model=AGENT_MODEL,
             max_tokens=_MAX_TOKENS,
@@ -508,6 +513,7 @@ async def agent_turn(
             messages=messages,
         ) as stream:
             async for text in stream.text_stream:
+                response_text_parts.append(text)
                 streamed_text_parts.append(text)
                 yield ChatEvent(type=EventType.TOKEN, data={"text": text})
             response = await stream.get_final_message()
@@ -530,6 +536,7 @@ async def agent_turn(
         )
 
         if response.stop_reason != "tool_use":
+            terminal_response_had_text = bool("".join(response_text_parts).strip())
             break
 
         messages.append({"role": "assistant", "content": response.content})
@@ -693,6 +700,7 @@ async def agent_turn(
         streamed_text_parts.append(
             "\n\n[Stopped after reaching this turn's tool-call limit.]"
         )
+        terminal_response_had_text = True
         yield ChatEvent(
             type=EventType.TOKEN,
             data={"text": streamed_text_parts[-1]},
@@ -732,10 +740,25 @@ async def agent_turn(
         return
 
     final_answer = "".join(streamed_text_parts).strip()
-    if final_answer:
-        await asyncio.to_thread(
-            append_message, session_id, ChatMessage(role="assistant", content=final_answer)
+    if not final_answer or not terminal_response_had_text:
+        _finish_trace(
+            session_id,
+            user_message,
+            _EMPTY_RESPONSE_MESSAGE,
+            "error",
+            spans,
+            turn_started_at,
+            turn_start,
         )
+        yield ChatEvent(
+            type=EventType.ERROR,
+            data={"message": _EMPTY_RESPONSE_MESSAGE},
+        )
+        return
+
+    await asyncio.to_thread(
+        append_message, session_id, ChatMessage(role="assistant", content=final_answer)
+    )
 
     _finish_trace(
         session_id,

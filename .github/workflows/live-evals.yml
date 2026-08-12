@@ -23,6 +23,11 @@ jobs:
           cache: pip
       - run: python -m pip install -r requirements.txt
 
+      - name: Initialize failure artifact
+        run: |
+          mkdir -p artifacts
+          printf '%s\n' '{"mode":"ci","suite":"regression","repeat":0,"infrastructure_errors":["workflow failed before runner output"],"runs":[]}' > artifacts/regression.json
+
       - name: Write Snowflake private key
         env:
           SNOWFLAKE_PRIVATE_KEY_B64: ${{ secrets.SNOWFLAKE_PRIVATE_KEY_B64 }}

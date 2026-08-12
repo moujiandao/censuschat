@@ -12,9 +12,9 @@
 ### Changed
 - Require semantic refusal language, reject prompt and variable-ID disclosure in the injection regression, and restrict numeric grounding evidence to captured final-turn query-row cells without inferred arithmetic or lineage.
 - Normalize direct Census values across set operations only when every contributing branch has the same unambiguous variable lineage.
-- Persist sanitized final answer text and terminal status in durable Evidence traces, including application-level stream errors, and render clean zero-tool completions as successful turns.
+- Persist sanitized final answer text and terminal status in durable Evidence traces, including application-level stream errors and blank model responses, and render only nonblank zero-tool completions as successful turns.
 - Mark pre-tri-state eval artifacts as legacy at the API and UI seams while preserving explicit current suite and inconclusive outcomes.
-- Write CI infrastructure-error artifacts for credential preflight failures before returning a failing status.
+- Seed the CI infrastructure-error artifact before external preflight and overwrite it atomically from the runner, so credential, key-decoding, and snapshot failures remain downloadable.
 - Replace the real variable ID in the system prompt with a quoted placeholder, document the CI-only encoded Snowflake key secret, and align current Evidence terminology.
 - Consolidate the reviewer interface into Chat, How It Works, Evidence, and Evals; preserve the durable trace store while removing duplicate trace renderers and the standalone flow diagram (D-027).
 - Align reviewer documentation with the shipped four-tab interface, SQLite-backed Evidence traces, result-seam normalization, soft watchdog, and suite-aware evaluation contract.
