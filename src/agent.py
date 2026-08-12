@@ -19,19 +19,17 @@ question before Snowflake is ever touched. `TURN_DEADLINE_S` is a soft
 wall-clock watchdog checked once per round boundary (never mid-call); once
 crossed, no further model or tool calls are issued and the turn ends with a
 deterministic partial answer built only from rows this turn's queries
-actually returned (rule 2's grounding guarantee still holds even when time
-runs out) — the stream still always ends in DONE.
+actually returned. The deadline is soft: it is not checked during a call
+already in flight. The stream still always ends in DONE.
 
 No agent framework (CLAUDE.md rule 14) — a hand-written loop over the
 Anthropic SDK's async streaming client, so tool_start/tool_end/token events
 can be emitted as they happen (rule 11) rather than after the fact.
 
-Every exit point records a TurnTrace (src/tracing.py) — an in-app,
-in-memory stand-in for the full Langfuse integration rule 17 calls for
-(issue #18, deferred; see docs/reflection.md). Spans cover the guardrail
-decision, every model call's token usage, and every tool call's latency,
-so the Trace Logging tab has a real record regardless of which path a
-turn took.
+Every exit point records a SQLite-backed TurnTrace (src/tracing.py). It is
+the local Evidence record, not a Langfuse integration. Spans cover the
+guardrail decision, every model call's token usage, and every tool call's
+latency, regardless of which path a turn took.
 """
 
 from __future__ import annotations
@@ -219,7 +217,7 @@ _ARGS_PREVIEW_CAP = 500
 def _preview(tool_input: dict[str, Any]) -> str:
     """Bounded rendering of a tool's arguments for TOOL_START. Capped at
     500 rather than the original 200 so a real aggregation query's SQL is
-    visible end-to-end in the Turn Detail tab (a typical one runs ~140 chars,
+    visible end-to-end in Evidence (a typical one runs ~140 chars,
     but a multi-CTE comparison exceeded the old cap and got truncated
     mid-statement, which is exactly when you most want to read it)."""
     return json.dumps(tool_input)[:_ARGS_PREVIEW_CAP]
@@ -235,7 +233,7 @@ def _summarize_tool_result(
     error_detail: str | None,
 ) -> dict[str, Any]:
     """Bounded, user-safe summary of what a tool call actually returned,
-    carried on TOOL_END so the Turn Detail / Trace Logging tabs can show
+    carried on TOOL_END so Evidence can show
     *what ran and what came back*, not just a name and a duration.
 
     Two properties this must hold:
@@ -371,10 +369,9 @@ def _finish_trace(
     started_at: datetime,
     turn_start: float,
 ) -> None:
-    """In-app trace logging (src/tracing.py) — a lightweight stand-in for
-    the full Langfuse integration (issue #18, deferred; see
-    docs/reflection.md). Called at every exit point of agent_turn so the
-    Trace Logging tab has a record regardless of which path a turn took.
+    """SQLite-backed local tracing (src/tracing.py), not Langfuse. Called at
+    every exit point of agent_turn so Evidence has a record regardless of
+    which path a turn took.
     record_turn_trace never raises, so this can never affect what the
     user sees."""
     record_turn_trace(
@@ -392,9 +389,10 @@ async def agent_turn(
     session_id: str, user_message: str
 ) -> AsyncIterator[ChatEvent]:
     """Full pipeline for one user turn (minimal M2 scope — see module
-    docstring for what's deferred to M3). Every numeric claim originates
-    from this turn's run_census_sql results; the stream always terminates
-    with DONE (src/app.py converts any raised exception here into ERROR)."""
+    docstring for what is deferred to M3). The model is instructed to ground
+    numeric claims in this turn's run_census_sql results; the stream always
+    terminates with DONE (src/app.py converts any raised exception here into
+    ERROR)."""
     turn_start = time.monotonic()
     turn_started_at = datetime.now(timezone.utc)
     spans: list[TraceSpan] = []

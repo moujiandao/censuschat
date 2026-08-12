@@ -43,9 +43,10 @@ entry, flagged inline.
     defaults (e.g., ACS vintage) → assume and state the assumption in the
     answer.
 11. Every user-facing turn streams `ChatEvent`s; every tool call emits
-    `tool_start`/`tool_end`; a 50s watchdog ends tool use with an honest
-    partial answer; every stream terminates with `done` or `error` — no
-    hangs, no blank responses, no unhandled exceptions reaching the client.
+    `tool_start`/`tool_end`; a 50s watchdog is checked between tool-loop
+    rounds and produces an honest partial answer before a later round; every
+    stream terminates with `done` or `error` — no hangs, no blank responses,
+    no unhandled exceptions reaching the client.
 
 ## Architecture
 
@@ -60,17 +61,16 @@ entry, flagged inline.
     config module: Sonnet for the agent, Haiku for the classifier.
 15. Frontend is one static HTML file (vanilla JS, CDN assets only, no build
     step) with three tabs: Chat, Evals, Flow Diagram.
-    *Shipped with five tabs — Trace Logging and Data Source added, and "Flow
-    Diagram" ships as **Turn Detail** (it shows one turn's real events, not a
-    diagram). The tab list is a minimum surface, not a cap; the
-    single-file/no-build half is the binding half and holds. **D-017**.*
+    *D-027 supersedes the historical five-tab implementation: the shipped
+    reviewer surfaces are Chat, How It Works, Evidence, and Evals. The
+    single-file/no-build half remains binding.*
 16. Session state = full history replay from SQLite keyed by `session_id`.
 17. Every turn is one Langfuse trace: `session_id` in metadata; spans for
     guardrail, each tool call, and each model call; token counts and
     latency recorded.
-    *Not satisfied. Langfuse was cut for time; the span model shipped as
-    in-process tracing (`src/tracing.py`, Trace Logging tab) with no
-    persistence, no cross-session search, no alerting. **D-021**.*
+    *Not satisfied. Langfuse is not implemented. `src/tracing.py` persists
+    local spans in SQLite, rendered solely in Evidence with cross-session
+    history, but it has no Langfuse search or alerting. **D-021**, **D-023**.*
 18. Deploy = Docker Compose (app + Caddy) on EC2 at
     `https://censuschat.brianmar.com` behind basic auth. Caddy reaches the
     app by compose service name, never `localhost`.

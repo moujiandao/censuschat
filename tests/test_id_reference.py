@@ -47,6 +47,15 @@ def test_decision_parser_accepts_current_and_legacy_heading_separators(
     }
 
 
+def test_readme_uses_current_tabs_and_grounding_claim():
+    """The reviewer tour must describe the shipped UI and trust boundary."""
+    text = (ROOT / "README.md").read_text()
+    assert "Chat, How It Works, Evidence, and Evals" in text
+    assert "SQL safety is code-enforced" in text
+    assert "Turn Detail tab" not in text
+    assert "Trace Logging tab" not in text
+
+
 def test_every_scenario_id_used_in_a_doc_resolves_to_something():
     """An id with no definition renders as "no definition found", which is an
     honest placeholder and not something to ship."""

@@ -241,9 +241,8 @@ async def evals() -> dict:
 
 @app.get("/api/traces")
 async def traces(session_id: str) -> dict:
-    """Evidence tab traces (src/tracing.py, a lightweight
-    stand-in for the full Langfuse integration in issue #18 — see
-    docs/reflection.md).
+    """Evidence traces from the local SQLite store (src/tracing.py), not a
+    Langfuse integration.
 
     Runs on a worker thread: since D-023 this reads SQLite on the mounted
     volume rather than a process dict, so it touches the filesystem and must

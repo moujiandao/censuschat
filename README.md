@@ -29,57 +29,61 @@ curl -u snowflake:census https://censuschat.brianmar.com/api/health
 `status` is `degraded` — never a crash — when the local snapshot is missing
 or Snowflake is unreachable.
 
-### Three probes, in order
+### Review the running system
 
-Paste these into the Chat tab. Each one exercises a different required
-behavior. Open the **Turn Detail** tab after each to see the tool calls that
-produced the answer.
+The reviewer path is **Question → local discovery → SQL gate → Snowflake →
+normalized result → answer → evidence**. Variable and geography discovery use
+the local SQLite snapshot. `run_census_sql` is the one request-time Snowflake
+code path, although one question can make more than one query through it.
 
-These three are also at the top of the **Evals** tab, where clicking one loads
-it into Chat. They are the same questions as examples `DF-05`, `AMB-01` and
-`UN-01` in the results table there.
+The four tabs are **Chat, How It Works, Evidence, and Evals**. Chat contains
+the four curated examples below. How It Works explains the data flow and
+protection layers. Evidence shows durable SQLite-backed traces for this and
+previous sessions, including raw trace JSON on demand. Evals separates the
+six regression scenarios from the eight capability scenarios.
 
-**1. Happy path — grounded retrieval**
+**1. Factual question**
 
 ```
-What is the total population of Wyoming?
+Population of Harris County, Texas?
 ```
 
-Expect **581,348**. This is the real figure this share returns, confirmed by
-direct query and asserted as a literal string in the eval suite (`DF-05`).
-*Watch for:* tokens streaming rather than a blank wait, and a Turn Detail view
-showing `resolve_geography` → `search_census_variables` → `run_census_sql`
-with the actual SQL and returned row.
+Then use the follow-up below. Together they demonstrate that the session
+context carries the resolved geography into the next turn.
 
-**2. Ambiguous — asks instead of guessing**
+**2. Follow-up question**
+
+```
+What about households?
+```
+
+**3. Ambiguous geography**
 
 ```
 How many people live in Washington County?
 ```
 
-Thirty states have a Washington County. *Watch for:* the agent listing
-candidates and asking which one, rather than silently picking the largest or
-the first. This is enforced twice — as a system-prompt instruction, and as a
-code-level backstop that blocks `run_census_sql` outright if the model tries
-to proceed on an unresolved ambiguity (**D-014**). The Turn Detail tab shows the
-blocked call when the backstop fires.
+Watch for the agent to ask which Washington County is meant, rather than
+silently picking one. A code-level backstop blocks `run_census_sql` if the
+model attempts a query before that ambiguity is resolved (**D-014**).
 
-**3. Unanswerable — fast, honest refusal**
+**4. Unsupported request**
 
 ```
 How many people will live in Texas in 2050?
 ```
 
-The ACS is a measurement of the past, not a projection. *Watch for:* a quick
-refusal that explains *why* the dataset cannot answer it, with **zero tool
-calls** in the Turn Detail tab — the assignment's "fast-fail" path. Note the
-mechanism: this one passes the guardrail and is declined by the agent itself,
-whereas an off-topic question ("What's the weather in San Francisco?") is
-stopped earlier by the guardrail classifier.
+The ACS is a measurement of the past, not a projection. The response should
+explain that limitation without querying Snowflake. An off-topic question is
+usually stopped earlier by the guardrail classifier.
 
-Responses are streamed over SSE, so a tool-using query shows progress
-throughout rather than blocking. A 50-second watchdog ends tool use and
-returns an honest partial answer before the assignment's 60-second bound.
+SQL safety is code-enforced. Answer grounding is model-instructed and checked
+on selected eval scenarios; this build does not independently validate every
+final answer number at runtime.
+
+Responses stream over SSE. The 50-second watchdog is a soft deadline checked
+between tool-loop rounds. It prevents later calls after the deadline, but does
+not interrupt a model or Snowflake call already in flight.
 
 ---
 
@@ -154,9 +158,9 @@ not launder the rest of a statement — the gate inspects every table node, not
 just the first. `validate_sql` carries 175 of the suite's tests for this
 reason.
 
-The second hard rule is grounding: every numeric claim must come from rows
-returned by that turn's query. Zero rows is an honest "not found," never a
-number.
+Answer grounding is a model instruction, not a serving-time numeric validator.
+The deterministic eval harness checks numeric evidence only where its bounded
+trace summary can see the relevant rows.
 
 ### Everything else
 
@@ -168,8 +172,9 @@ number.
   zero rows → re-search or rewrite, then an honest failure explaining what was
   tried), while `_MAX_TOOL_LOOP_ITERATIONS = 8` caps *total rounds* even when
   every call succeeds. The second is what a genuinely multi-step question runs
-  into — see the `PM-08` red row under [Testing and evals](#testing-and-evals).
-  A 50-second watchdog bounds wall-clock independently of both.
+  into — see the `PM-08` capability row under [Testing and evals](#testing-and-evals).
+  The 50-second watchdog is a soft, between-round deadline, not an interrupt
+  for work already in flight.
 - **Degraded mode**: Snowflake reachability is checked once at boot and
   cached (**D-015**), because rule 13 forbids the request path from probing
   Snowflake. A snapshot-missing or Snowflake-down boot still serves 200s.
@@ -177,11 +182,8 @@ number.
   snowflake-connector-python. Models pinned in one module
   (`src/model_config.py`): Sonnet for the agent, Haiku for the classifier.
 - **Interface contract** is `src/contracts.py`, treated as frozen. Decisions
-  and interpretation calls are logged in `docs/decisions.md` (D-001 … D-022).
+  and interpretation calls are logged in `docs/decisions.md`.
 
-`docs/flow-diagram.html` is a standalone, self-contained walkthrough of this
-same path — boot, guardrail, tool loop, gate — with each layer labeled by
-whether it can be talked past. Open it in a browser; it needs no server.
 `docs/01-architecture.md` and `docs/plans/02-prd.md` are the pre-code design
 documents, left as written and marked where the build superseded them.
 
@@ -192,10 +194,9 @@ The frontend is one static HTML file, vanilla JS, CDN-free, no build step.
 | Tab | Shows |
 |---|---|
 | **Chat** | The agent itself. SSE token streaming, a tool-status line, session id persisted in `localStorage`. |
-| **Evals** | Three sections. **Try it yourself** is the three probes below, click one to load it into Chat. **Test results** is `evals/results/latest.json`: 14 examples with the question asked, the checks that ran, the answer, and timing; any red row carries its triage inline. **Run history** is a scenario × commit grid over every recorded run, so a regression is visible as one cell flipping rather than as a pass rate moving for unknown reasons. |
-| **Turn Detail** | Every turn as a timeline: guardrail decision, each tool call with args and a bounded result digest, elapsed ms. The fastest way to see *why* an answer came out the way it did. History is durable (**D-023**) — it survives a reload and a redeploy, and the picker reaches sessions from earlier visits. |
-| **Trace Logging** | Per-turn spans with latency and input/output token counts per model call. An in-process stand-in for Langfuse, not a replacement — see [What's cut](#whats-cut-and-why). |
-| **Data Source** | A static description of the dataset: provenance, the CBG grain, the table allowlist, the 28-group topic taxonomy, variable naming, and the known data traps. |
+| **How It Works** | The request flow, code-enforced SQL boundary, local SQLite versus Snowflake split, result normalization, and source limits. |
+| **Evidence** | The one trace view: ordered guardrail, model, and tool spans from the durable SQLite trace store, with a cross-session picker and raw JSON disclosure (**D-023**, **D-027**). |
+| **Evals** | The latest committed benchmark, split into six regression scenarios and eight informational capability scenarios with pass, fail, and inconclusive results. |
 
 ---
 
@@ -284,7 +285,7 @@ the repo).
 | `ANTHROPIC_API_KEY` | yes | Agent and guardrail |
 | `SNAPSHOT_DB_PATH` | no | Defaults to `data/snapshot.sqlite3` |
 | `SESSION_DB_PATH` | no | Defaults to `data/sessions.sqlite3` |
-| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | no | Reserved and unread by application code; full Langfuse integration is cut (**D-021**) and the in-app Trace Logging tab stands in for it |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | no | Reserved and unread by application code; full Langfuse integration is not implemented (**D-021**) |
 
 Three further variables exist **only for `docker-compose.yml`** and are never
 read by application code, so they won't appear if you go looking for them in
@@ -307,73 +308,21 @@ colons` — an unhelpful message for a simple missing variable.
 
 ## Testing and evals
 
-**375 tests, `make test`.** TDD (failing test first) on every deterministic
-layer: the SQL trust boundary (`validate_sql`, 175 tests), guardrail routing,
-bounded-recovery counting, the ambiguity backstop, the wall-clock watchdog,
-degraded-mode detection, FTS ranking, `normalize_value`, and the eval scorer
-itself — a scorer bug silently invalidates every result, so it gets
-production-grade treatment.
+**`make test`** covers deterministic layers: the SQL trust boundary,
+guardrail routing, bounded recovery, ambiguity handling, the soft watchdog,
+degraded mode, FTS ranking, result normalization, and the eval scorer.
 
 LLM *behavior* is deliberately not asserted in mocked unit tests. That is a
 golden-eval concern, and the split is load-bearing: the single worst bug in
 this project — every live query failing on Snowflake identifier casing —
 passed the entire mocked suite and was only caught against the real database.
 
-**`make eval`** runs the golden set against the real stack (real Anthropic,
-real Snowflake, real guardrail) and writes an `EvalRun` to `evals/results/`.
-
-**14 examples**, the whole set in about 2.6 minutes of wall clock (1.3s to
-30.7s per example — the slowest is comfortably inside the 60s bound). Every
-example in the set has been run; there is no unrun backlog padding the count.
-
-**The set is not reliably green, and the number you see depends on the run.**
-Thirteen examples pass every time. `PM-08` passes roughly two runs in three,
-so a single run reads 13/14 or 14/14 depending on the coin. Both numbers are
-in `evals/results/`. This is why the Evals tab renders a per-scenario history
-grid rather than a headline percentage, and why `--repeat 3` collapses runs of
-one commit into a `2/3` cell — see [Testing and evals](#testing-and-evals)
-below.
-
-**12 of the 14** are a verbatim subset of the 30 designed in
-`docs/plans/02-prd.md` §7 — the PRD's own ids, turns, and expectations,
-authored during scaffolding *before* any agent code existed, so they were not
-reverse-engineered from a working system. That is also why the ids have gaps:
-they are the PRD's numbering, and 18 of its 30 were never implemented. The
-other two (`UN-08`, `PM-08`) were added later to pin defects found after the
-system worked; both carry that history in their `notes`.
-
-An earlier version of the set also carried 25 scenarios that were authored but
-never executed. They were removed rather than kept as a coverage claim: a
-scenario that has never run is a wish, not a test, and mixing the two made the
-set harder to read than the claim was worth. See `evals/README.md`.
-
-**Tracking improvement over time.** Every run writes its own timestamped file
-keyed by `git_sha`, so `evals/results/` is already a version history; the Evals
-tab renders it as a scenario × commit grid. Two things that grid exists to
-prevent, both of which the current data demonstrates: an aggregate pass rate
-is not comparable across runs whose denominator changed (100% → 93% here is
-three added examples, not a regression), and with a live model one run is not
-a measurement (`PM-08` passes roughly 2 runs in 3).
-`python -m evals.run_evals --repeat 3` runs the set three times; runs of the
-same commit collapse into one column showing `2/3`, rendered as its own state
-so flake cannot be read as a fix. **No Langfuse needed for this** — it is a
-different axis (per-request production tracing, D-021), and committed JSON is
-better provenance for a reviewer who clones the repo.
-
-**The one unreliable row is deliberate.** `PM-08` ("average household income in
-Texas?") is kept and triaged rather than deleted to make runs look clean — it
-exhausts the 8-round tool-loop cap while discovering a numerator/denominator
-pair, and is honestly recorded as flaky (it produces a grounded answer in
-roughly two runs of three; the most recent recorded run is one of the good
-ones). Raising the cap trades against
-the 50-second watchdog, so it was left out of scope deliberately rather than
-overlooked; the scenario's own `notes` field carries that reasoning.
-
-A green run would not mean much on its own, which is why `evals/README.md`
-also documents where the harness *under*-verifies: `PM-02`'s check asserts
-only that the answer contains "median" and doesn't error, while the behavior
-the PRD actually wants — explaining that medians can't be aggregated — is a
-`judge_groundedness` question, and that check is unimplemented.
+**`make eval`** runs the 14-scenario committed benchmark against the real
+Anthropic, Snowflake, and guardrail stack. It writes a full timestamped
+`EvalRun` and `latest.json` under `evals/results/`, including red rows. It is a
+paid live-call command, not part of the unit suite. `evals/README.md` defines
+the regression gate, informational capability evidence, tri-state semantics,
+and manual CI command.
 
 ---
 
@@ -406,20 +355,11 @@ app`, rather than crashing.
 
 ## What's cut, and why
 
-Full account in `docs/reflection.md`. Short version: a working, tested,
-deployed core loop took priority over the decennial-redistricting data source
-(**D-004**), real Langfuse tracing, and the full 30-scenario suite with an LLM
-judge — all real, all scoped and partly designed, none finished.
-
-- `judge_groundedness` is unimplemented. No executed scenario carries it, and
-  the scorer fails it loudly rather than skipping it, so it can never inflate
-  a pass rate.
-- The `conflicting` category has zero coverage — both scenarios need the
-  decennial tables that were cut, so there is nothing to run them against.
-- The Trace Logging tab renders real per-turn span data but is in-memory and
-  in-process only — a stand-in for rule 17's Langfuse requirement, not a
-  replacement for it. Rule 17 is recorded as **unmet** in `docs/decisions.md`
-  (**D-021**) rather than reinterpreted to fit what shipped.
+Full account in `docs/reflection.md`. The decennial-redistricting source is
+still cut (**D-004**), and no calibrated LLM judge exists for subjective answer
+quality. Langfuse and prompt caching are not implemented. Evidence is instead
+the durable local SQLite trace store, not a replacement for Langfuse (**D-021**,
+**D-023**).
 
 ---
 
@@ -433,18 +373,12 @@ Eval scenarios. **live** runs today, so the question shown is the one
 
 | id | status | question |
 |---|---|---|
-| `AMB-01` | live | "How many people live in Washington County?" |
-| `DF-05` | live | "What is the total population of Wyoming?" |
-| `PM-02` | live | "Median household income in California?" |
 | `PM-08` | live | "What's the average household income in Texas?" |
-| `UN-01` | live | "How many people will live in Texas in 2050?" |
-| `UN-08` | live | "What's the population of Atlantis?" |
 
 Decisions, recorded in full in [`docs/decisions.md`](docs/decisions.md).
 
 | id | decision |
 |---|---|
-| `D-001` | Dataset is SafeGraph, not Cybersyn |
 | `D-003` | `ALLOWED_TABLES` is 2020-vintage only |
 | `D-004` | Decennial redistricting tables included, phased to M3 |
 | `D-005` | City/place questions get an honest redirect |
@@ -454,7 +388,7 @@ Decisions, recorded in full in [`docs/decisions.md`](docs/decisions.md).
 | `D-015` | Snowflake reachability checked once at startup, not live per-request |
 | `D-016` | Native Caddy on the deploy host, not Compose's |
 | `D-021` | Langfuse cut; the span model shipped in-process |
-| `D-022` | The unrun backlog is deleted; the set is 14 examples that all ran |
 | `D-023` | Trace history is durable, and has no per-session cap |
+| `D-027` | The reviewer interface has four ordered surfaces |
 
 <!-- END id-reference -->

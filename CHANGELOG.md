@@ -11,6 +11,7 @@
 
 ### Changed
 - Consolidate the reviewer interface into Chat, How It Works, Evidence, and Evals; preserve the durable trace store while removing duplicate trace renderers and the standalone flow diagram (D-027).
+- Align reviewer documentation with the shipped four-tab interface, SQLite-backed Evidence traces, result-seam normalization, soft watchdog, and suite-aware evaluation contract.
 - Normalize suppressed and top-coded demographic values at the Snowflake result seam before they reach model-facing query results.
 - Partition the 14 live eval scenarios into regression and capability suites, add additive tri-state outcomes, and make inconclusive grounding non-passing without breaking historical result parsing (D-026).
 - Reject blank answers, SQL attempts before ambiguity clarification, and invalid `SUM` or `AVG` aggregation of median variable `B19013e1` in deterministic eval scoring.

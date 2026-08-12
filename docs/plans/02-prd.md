@@ -11,12 +11,14 @@ The build proceeds from this document without further discovery.
 > authored here before any agent code existed, which is why the executed
 > subset can be called evidence rather than a system describing itself; see
 > `evals/README.md`. Departures made during the build are recorded in
-> `docs/decisions.md` (D-001 … D-022), and the shipped system is described in
-> `README.md`. Chiefly: Langfuse was cut (**D-021**), the frontend shipped
-> five tabs (**D-017**), `EvalScenario` gained `status` and a `stress`
-> category (**D-018**, mostly reversed by **D-022**), and 12 of the 30 §7
-> scenarios are executed today — the shipped set is those 12 plus `UN-08`
-> and `PM-08`.
+> `docs/decisions.md`, and the shipped system is described in `README.md`.
+> **Current-status annotation, 2026-08-11:** the reviewer-clarity
+> specification is **D-027**. The UI now has Chat, How It Works, Evidence, and
+> Evals, with Evidence backed by the durable SQLite trace store. The executed
+> set has six regression scenarios and eight informational capability scenarios
+> (**D-024**). Langfuse and prompt caching are not implemented (**D-021**).
+> This annotation supersedes related shipped-status claims below without
+> rewriting the original PRD.
 
 ---
 

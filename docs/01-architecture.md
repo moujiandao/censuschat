@@ -10,22 +10,21 @@ consumes this + schema-notes and must not re-decide anything here.
 > deliberately left as written — the golden-set design in §7 predating the
 > code is load-bearing evidence, and editing it retroactively would destroy
 > that. Where the build departed from it, the departure is recorded in
-> `docs/decisions.md` (D-001 … D-022) and the shipped behavior is described
-> in `README.md`. Three sections below are superseded:
+> `docs/decisions.md` and the shipped behavior is described in `README.md`.
+> **Current-status annotation, 2026-08-11:** the reviewer-clarity specification
+> is **D-027**. The shipped UI has Chat, How It Works, Evidence, and Evals;
+> Evidence is the durable SQLite trace view. This annotation supersedes the
+> related historical statements below without rewriting the M1 decisions.
+> Three sections below are superseded:
 >
-> - **§5 Observability** — Langfuse was cut. The span model shipped
->   in-process (`src/tracing.py`, Trace Logging tab). **D-021**.
-> - **§6 Frontend** — five tabs shipped, not three; §6's "Flow Diagram" ships
->   as **Turn Detail**, and it renders the current turn's live SSE events
->   rather than a static mermaid render, so there is no
->   `docs/diagrams/flow.mmd`. **D-017**. The static
->   architecture render lives instead at `docs/flow-diagram.html` (annotated,
->   self-contained, mermaid via CDN) — open it in a browser.
+> - **§5 Observability** — Langfuse and prompt caching are not implemented.
+>   The local trace store persists in SQLite. **D-021**, **D-023**.
+> - **§6 Frontend** — D-027 supersedes this section's three-tab proposal with
+>   the four reviewer surfaces above.
 > - **§7 Eval plan** — scenarios live in `evals/scenarios.py` as typed
->   `EvalScenario` objects, not `evals/goldens/*.json`; the set is 14
->   examples that have all run (12 of the 30 designed here, plus `UN-08` and
->   `PM-08`, per **D-022**), `judge_groundedness` is unimplemented, and
->   `make eval` runs against the local stack rather than the deployed URL.
+>   `EvalScenario` objects, not `evals/goldens/*.json`; the set is six
+>   regression scenarios and eight informational capability scenarios
+>   (**D-024**), and `make eval` runs against the local stack.
 
 ## 1. What this is
 
