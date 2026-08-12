@@ -650,6 +650,31 @@ def test_ci_requires_explicit_output():
         _parse_args(["--suite", "regression", "--ci"])
 
 
+def test_repeat_must_be_at_least_one():
+    with pytest.raises(SystemExit):
+        _parse_args(["--repeat", "0"])
+
+
+def test_output_is_rejected_without_ci(tmp_path):
+    with pytest.raises(SystemExit):
+        _parse_args(["--output", str(tmp_path / "run.json")])
+
+
+def test_ci_rejects_output_inside_benchmark_results(tmp_path, monkeypatch):
+    import evals.run_evals as run_evals
+
+    results_dir = tmp_path / "evals" / "results"
+    results_dir.mkdir(parents=True)
+    monkeypatch.setattr(run_evals, "RESULTS_DIR", results_dir)
+
+    for output in (
+        results_dir / "ci.json",
+        results_dir / "nested" / ".." / "ci.json",
+    ):
+        with pytest.raises(SystemExit):
+            run_evals._parse_args(["--ci", "--output", str(output)])
+
+
 def test_ci_payload_keeps_both_trials_and_provenance():
     run_one = _run_with_outcome(EvalOutcome.PASS)
     run_two = _run_with_outcome(EvalOutcome.PASS)
@@ -679,6 +704,39 @@ def test_capability_ci_completion_is_not_a_regression_gate():
     assert _ci_exit_code("capability", [_run_with_outcome(EvalOutcome.FAIL)]) == 0
 
 
+def test_capability_ci_provider_error_is_an_infrastructure_failure(
+    tmp_path, monkeypatch
+):
+    import evals.run_evals as run_evals
+
+    output = tmp_path / "artifacts" / "capability.json"
+
+    async def provider_error(_scenario):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(run_evals, "_require_credentials", lambda: None)
+    monkeypatch.setattr(run_evals, "_run_scenario", provider_error)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_evals",
+            "--suite",
+            "capability",
+            "--only",
+            "DF-01",
+            "--ci",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert asyncio.run(run_evals.main()) == 1
+    assert json.loads(output.read_text())["infrastructure_errors"] == [
+        "DF-01: provider unavailable"
+    ]
+
+
 def test_suite_selection_precedes_only_intersection():
     from evals.scenarios import GOLDEN_SCENARIOS
 
@@ -698,7 +756,7 @@ def test_ci_write_does_not_touch_benchmark_latest(tmp_path, monkeypatch):
     before = latest.read_bytes()
     output = tmp_path / "artifacts" / "regression.json"
 
-    async def fake_run_all(_scenarios):
+    async def fake_run_all(_scenarios, **_kwargs):
         return _run_with_outcome(EvalOutcome.PASS)
 
     monkeypatch.setattr(run_evals, "RESULTS_DIR", results_dir)

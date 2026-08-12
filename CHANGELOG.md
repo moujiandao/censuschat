@@ -13,6 +13,7 @@
 - Normalize suppressed and top-coded demographic values at the Snowflake result seam before they reach model-facing query results.
 - Partition the 14 live eval scenarios into regression and capability suites, add additive tri-state outcomes, and make inconclusive grounding non-passing without breaking historical result parsing (D-026).
 - Reject blank answers, SQL attempts before ambiguity clarification, and invalid `SUM` or `AVG` aggregation of median variable `B19013e1` in deterministic eval scoring.
+- Reject CI artifacts under `evals/results` after path resolution, and distinguish infrastructure exceptions from informational capability failures in CI artifacts and exit status.
 
 ### Added
 - Add credential-free pull-request CI and a protected manual live-regression workflow, backed by an explicit CI runner mode that keeps repeated trials in one artifact without touching committed benchmark results.

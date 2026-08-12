@@ -531,7 +531,11 @@ def _select_suite(
     return [scenario for scenario in scenarios if scenario.suite == suite]
 
 
-async def _run_all(scenarios: list) -> EvalRun:
+async def _run_all(
+    scenarios: list,
+    *,
+    infrastructure_errors: list[str] | None = None,
+) -> EvalRun:
     """One complete pass over the set, scored, as a single EvalRun.
 
     Deliberately returns a whole run rather than accumulating across repeats:
@@ -547,6 +551,8 @@ async def _run_all(scenarios: list) -> EvalRun:
             obs, elapsed = await _run_scenario(scenario)
         except Exception as exc:  # noqa: BLE001 — a crashed scenario is a red row, not a crashed run
             print(f"  !! {scenario.id} raised: {exc}", flush=True)
+            if infrastructure_errors is not None:
+                infrastructure_errors.append(f"{scenario.id}: {exc}")
             results.append(
                 EvalResult(
                     scenario_id=scenario.id,
@@ -626,12 +632,17 @@ def _write(run: EvalRun) -> str:
     return stamp
 
 
-def _ci_payload(suite: str, runs: list[EvalRun]) -> dict:
+def _ci_payload(
+    suite: str,
+    runs: list[EvalRun],
+    infrastructure_errors: list[str] | None = None,
+) -> dict:
     return {
         "mode": "ci",
         "suite": suite,
         "repeat": len(runs),
         "models": {"agent": AGENT_MODEL, "classifier": CLASSIFIER_MODEL},
+        "infrastructure_errors": infrastructure_errors or [],
         "runs": [json.loads(run.model_dump_json()) for run in runs],
     }
 
@@ -643,7 +654,13 @@ def _write_ci(path: Path, payload: dict) -> None:
     temporary.replace(path)
 
 
-def _ci_exit_code(suite: str, runs: list[EvalRun]) -> int:
+def _ci_exit_code(
+    suite: str,
+    runs: list[EvalRun],
+    infrastructure_errors: list[str] | None = None,
+) -> int:
+    if infrastructure_errors:
+        return 1
     if suite == EvalSuite.CAPABILITY.value:
         return 0
     regression_outcomes = (
@@ -693,6 +710,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--ci requires --output PATH")
     if args.output and not args.ci:
         parser.error("--output is only valid with --ci")
+    if args.output:
+        output = args.output.resolve()
+        results_dir = RESULTS_DIR.resolve()
+        if output == results_dir or results_dir in output.parents:
+            parser.error("--output must be outside evals/results/")
+        args.output = output
     return args
 
 
@@ -708,10 +731,17 @@ async def main() -> int:
         scenarios = [scenario for scenario in scenarios if scenario.id in only]
 
     runs: list[EvalRun] = []
+    infrastructure_errors: list[str] = []
     for i in range(args.repeat):
         if args.repeat > 1:
             print(f"\n=== run {i + 1} of {args.repeat} ===", flush=True)
-        run = await _run_all(scenarios)
+        if args.ci:
+            run = await _run_all(
+                scenarios,
+                infrastructure_errors=infrastructure_errors,
+            )
+        else:
+            run = await _run_all(scenarios)
         runs.append(run)
 
         if args.ci:
@@ -729,9 +759,12 @@ async def main() -> int:
         print(f"wrote evals/results/{stamp}.json and latest.json")
 
     if args.ci:
-        _write_ci(args.output, _ci_payload(args.suite, runs))
+        _write_ci(
+            args.output,
+            _ci_payload(args.suite, runs, infrastructure_errors),
+        )
         print(f"wrote {args.output}")
-        return _ci_exit_code(args.suite, runs)
+        return _ci_exit_code(args.suite, runs, infrastructure_errors)
 
     return 0
 
