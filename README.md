@@ -272,6 +272,16 @@ before you start.
 `.env.example` documents every variable with no values (secrets never enter
 the repo).
 
+The private interview-preparation manual is a separate documentation artifact.
+Rebuild it without changing the application's production dependency set:
+
+```bash
+pip install -r requirements-docs.txt
+make manual
+```
+
+The generated file is `output/pdf/censuschat-interview-manual.pdf`.
+
 | Variable | Required | Notes |
 |---|---|---|
 | `SNOWFLAKE_ACCOUNT` | yes | |

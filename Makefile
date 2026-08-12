@@ -1,4 +1,4 @@
-.PHONY: test eval docs deploy deploy-status
+.PHONY: test eval docs manual deploy deploy-status
 
 test:
 	pytest -q
@@ -17,6 +17,11 @@ eval:
 # you have to remember.
 docs:
 	python -m scripts.build_id_reference
+
+# Rebuild the private interview-preparation PDF. Install requirements-docs.txt
+# in addition to the application dependencies before running this target.
+manual:
+	python scripts/generate_interview_manual.py
 
 # One-command deploy from the laptop: push main, then have the EC2 host pull
 # and rebuild. `static/` and `evals/` are COPY'd into the image, so a pull
