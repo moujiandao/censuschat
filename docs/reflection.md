@@ -73,8 +73,9 @@ SELECT on exactly those 31 objects, plus a resource monitor, would contain a
 gate bug at the database rather than at my parser.
 
 **Variables are data, not prompt content.** There are 8,164 field codes in the
-share and none of them appear in any prompt. The agent finds them through
-FTS5 search over a local SQLite snapshot built at boot.
+share, and the system prompt uses only a quoted placeholder rather than any
+real field code. The agent finds real codes through FTS5 search over a local
+SQLite snapshot built at boot.
 
 The alternative was a curated subset in the system prompt. That demos well and
 breaks the moment someone asks about something I did not anticipate, and the
@@ -370,11 +371,13 @@ reviewer would type. "What's the population of Wyoming?" failed. "What about
 Travis County, Texas?" failed. Every `run_census_sql` call in the system was
 failing with `invalid identifier`.
 
-The cause: SafeGraph stores ACS variable columns case-sensitively
-(`B01001e23`), and Snowflake folds an unquoted identifier to uppercase, so
-`SUM(B01003e1)` resolves to a column that does not exist. My own system
-prompt's aggregation example showed the unquoted form. The prompt was teaching
-the model the one pattern guaranteed to fail against this database.
+The cause: SafeGraph stores ACS variable columns case-sensitively, and
+Snowflake folds an unquoted identifier to uppercase, so an unquoted ACS column
+reference resolves to a column that does not exist. My own system prompt's
+aggregation example showed the unquoted form. The prompt was teaching the
+model the one pattern guaranteed to fail against this database. The current
+prompt teaches the corrected quoting rule with a placeholder, not a real field
+code.
 
 The mocked suite could not have caught it, for three compounding reasons. The
 gate passed the query correctly, because it is a safety boundary and whether a

@@ -198,18 +198,44 @@ def resolve_geography(name: str, level_hint: GeoLevel | None = None) -> GeoResol
 
 def _projection_variable_ids(sql: str) -> dict[str, str]:
     tree = parse_one(sql, read="snowflake")
+
+    def contributing_selects(node: exp.Expression) -> list[exp.Select]:
+        while isinstance(node, exp.Subquery):
+            node = node.this
+        if isinstance(node, exp.SetOperation):
+            return contributing_selects(node.this) + contributing_selects(
+                node.expression
+            )
+        return [node] if isinstance(node, exp.Select) else []
+
+    branches = contributing_selects(tree)
+    if not branches:
+        return {}
+
+    projections = [branch.expressions for branch in branches]
+    if not projections or any(
+        len(items) != len(projections[0]) for items in projections
+    ):
+        return {}
+
     result: dict[str, str] = {}
-    for projection in tree.selects:
-        if isinstance(projection, exp.Column):
-            column = projection
-        elif isinstance(projection, exp.Alias) and isinstance(
-            projection.this, exp.Column
-        ):
-            column = projection.this
-        else:
-            continue
-        if _VARIABLE_ID_RE.fullmatch(column.name):
-            result[projection.alias_or_name.upper()] = column.name
+    for index, first in enumerate(projections[0]):
+        columns = []
+        for items in projections:
+            projection = items[index]
+            column = (
+                projection
+                if isinstance(projection, exp.Column)
+                else projection.this
+                if isinstance(projection, exp.Alias)
+                and isinstance(projection.this, exp.Column)
+                else None
+            )
+            if column is None or not _VARIABLE_ID_RE.fullmatch(column.name):
+                break
+            columns.append(column.name)
+        if columns and len(columns) == len(projections) and len(set(columns)) == 1:
+            result[first.alias_or_name.upper()] = columns[0]
     return result
 
 

@@ -2,7 +2,7 @@
 integration (issue #18, deliberately deferred; see docs/reflection.md for
 the tradeoff). Records span-level detail per turn — guardrail latency,
 each model call's token usage, each tool call's latency, args and result
-digest — for the Trace Logging and Turn Detail tabs to render.
+digest, final answer, and terminal status for the Evidence tab to render.
 
 **Durable (D-023).** Traces are written to SQLite on the same mounted
 `data/` volume as the session store, so history survives a container
@@ -35,7 +35,7 @@ import sqlite3
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -54,12 +54,14 @@ _CREATE_TABLE_SQL = (
     "id INTEGER PRIMARY KEY AUTOINCREMENT, "
     "session_id TEXT NOT NULL, "
     "user_message TEXT NOT NULL, "
+    "final_answer TEXT NOT NULL DEFAULT '', "
+    "terminal_status TEXT NOT NULL DEFAULT 'done', "
     "started_at TEXT NOT NULL, "
     "total_ms INTEGER NOT NULL, "
     "spans TEXT NOT NULL)"
 )
 
-# Reads filter by session and order by id; without this every Trace tab load
+# Reads filter by session and order by id; without this every Evidence load
 # is a full scan once history accumulates.
 _CREATE_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_traces_session ON traces (session_id, id)"
@@ -78,6 +80,8 @@ class TraceSpan(BaseModel):
 class TurnTrace(BaseModel):
     session_id: str
     user_message: str
+    final_answer: str = ""
+    terminal_status: Literal["done", "error"] = "done"
     started_at: datetime
     total_ms: int
     spans: list[TraceSpan] = Field(default_factory=list)
@@ -87,7 +91,23 @@ def _connect() -> sqlite3.Connection:
     TRACE_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(TRACE_DB_PATH)
     conn.execute(_CREATE_TABLE_SQL)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(traces)")}
+    migrated = False
+    if "final_answer" not in columns:
+        conn.execute(
+            "ALTER TABLE traces ADD COLUMN "
+            "final_answer TEXT NOT NULL DEFAULT ''"
+        )
+        migrated = True
+    if "terminal_status" not in columns:
+        conn.execute(
+            "ALTER TABLE traces ADD COLUMN "
+            "terminal_status TEXT NOT NULL DEFAULT 'done'"
+        )
+        migrated = True
     conn.execute(_CREATE_INDEX_SQL)
+    if migrated:
+        conn.commit()
     return conn
 
 
@@ -109,11 +129,14 @@ def record_turn_trace(trace: TurnTrace) -> None:
             try:
                 conn.execute(
                     "INSERT INTO traces "
-                    "(session_id, user_message, started_at, total_ms, spans) "
-                    "VALUES (?, ?, ?, ?, ?)",
+                    "(session_id, user_message, final_answer, terminal_status, "
+                    "started_at, total_ms, spans) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
                         trace.session_id,
                         trace.user_message,
+                        trace.final_answer,
+                        trace.terminal_status,
                         trace.started_at.isoformat(),
                         trace.total_ms,
                         spans_json,
@@ -136,7 +159,8 @@ def get_traces(session_id: str) -> list[TurnTrace]:
             conn = _connect()
             try:
                 rows = conn.execute(
-                    "SELECT user_message, started_at, total_ms, spans FROM traces "
+                    "SELECT user_message, final_answer, terminal_status, "
+                    "started_at, total_ms, spans FROM traces "
                     "WHERE session_id = ? ORDER BY id ASC",
                     (session_id,),
                 ).fetchall()
@@ -147,13 +171,22 @@ def get_traces(session_id: str) -> list[TurnTrace]:
         return []
 
     traces: list[TurnTrace] = []
-    for user_message, started_at, total_ms, spans_json in rows:
+    for (
+        user_message,
+        final_answer,
+        terminal_status,
+        started_at,
+        total_ms,
+        spans_json,
+    ) in rows:
         try:
             spans = [TraceSpan(**s) for s in json.loads(spans_json)]
             traces.append(
                 TurnTrace(
                     session_id=session_id,
                     user_message=user_message,
+                    final_answer=final_answer,
+                    terminal_status=terminal_status,
                     started_at=datetime.fromisoformat(started_at),
                     total_ms=total_ms,
                     spans=spans,

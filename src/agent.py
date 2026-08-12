@@ -116,7 +116,7 @@ Roll-up recipes: state = SUBSTR(CENSUS_BLOCK_GROUP,1,2); county = SUBSTR(CENSUS_
 Every variable search hit includes physical_table, the exact SQL-ready table that contains the variable. Copy physical_table exactly into every FROM clause. Never derive or guess a table name from variable_id or TABLE_NUMBER. TABLE_ID suffix e<n> is the estimate, m<n> is its margin of error.
 
 Correctness rules, in order of how costly a violation is:
-1. Every variable_id column reference MUST be double-quoted, exactly as returned by search_census_variables (e.g. "B01001e23", not B01001e23). These columns were created case-sensitively; an unquoted reference gets folded to uppercase by Snowflake and fails with "invalid identifier" even though the column exists. This is the single most common cause of a failed query — quote every variable_id, every time, with no exceptions.
+1. Every variable_id column reference MUST be double-quoted, exactly as returned by search_census_variables (e.g. "<variable_id>", not <variable_id>). These columns were created case-sensitively; an unquoted reference gets folded to uppercase by Snowflake and fails with "invalid identifier" even though the column exists. This is the single most common cause of a failed query — quote every variable_id, every time, with no exceptions.
 2. Counts roll up by SUM. Medians never do — a variable_id's geo_levels field tells you this (median variables report only block_group as valid; count variables report all five levels). Never average or SUM a median across CBGs.
 3. A true mean IS computable where a numerator/denominator pair of aggregate variables exists: SUM(numerator)/SUM(denominator) at any level. If asked for an "average" above block-group level, use this and state the substitution explicitly.
 4. SQL NULL in a demographic column means "not reported," never 0 — never coerce it, never SUM it as zero.
@@ -365,6 +365,8 @@ def _build_ambiguous_geo_clarification(unresolved: list[dict[str, Any]]) -> str:
 def _finish_trace(
     session_id: str,
     user_message: str,
+    final_answer: str,
+    terminal_status: str,
     spans: list[TraceSpan],
     started_at: datetime,
     turn_start: float,
@@ -378,6 +380,8 @@ def _finish_trace(
         TurnTrace(
             session_id=session_id,
             user_message=user_message,
+            final_answer=final_answer,
+            terminal_status=terminal_status,
             started_at=started_at,
             total_ms=int((time.monotonic() - turn_start) * 1000),
             spans=spans,
@@ -417,7 +421,15 @@ async def agent_turn(
         await asyncio.to_thread(
             append_message, session_id, ChatMessage(role="assistant", content=_DEGRADED_MESSAGE)
         )
-        _finish_trace(session_id, user_message, spans, turn_started_at, turn_start)
+        _finish_trace(
+            session_id,
+            user_message,
+            _DEGRADED_MESSAGE,
+            "done",
+            spans,
+            turn_started_at,
+            turn_start,
+        )
         yield ChatEvent(
             type=EventType.DONE,
             data={"elapsed_ms": int((time.monotonic() - turn_start) * 1000)},
@@ -443,7 +455,15 @@ async def agent_turn(
         await asyncio.to_thread(
             append_message, session_id, ChatMessage(role="assistant", content=refusal)
         )
-        _finish_trace(session_id, user_message, spans, turn_started_at, turn_start)
+        _finish_trace(
+            session_id,
+            user_message,
+            refusal,
+            "done",
+            spans,
+            turn_started_at,
+            turn_start,
+        )
         yield ChatEvent(
             type=EventType.DONE,
             data={"elapsed_ms": int((time.monotonic() - turn_start) * 1000)},
@@ -696,7 +716,15 @@ async def agent_turn(
         await asyncio.to_thread(
             append_message, session_id, ChatMessage(role="assistant", content=failure_text)
         )
-        _finish_trace(session_id, user_message, spans, turn_started_at, turn_start)
+        _finish_trace(
+            session_id,
+            user_message,
+            failure_text,
+            "done",
+            spans,
+            turn_started_at,
+            turn_start,
+        )
         yield ChatEvent(
             type=EventType.DONE,
             data={"elapsed_ms": int((time.monotonic() - turn_start) * 1000)},
@@ -709,7 +737,15 @@ async def agent_turn(
             append_message, session_id, ChatMessage(role="assistant", content=final_answer)
         )
 
-    _finish_trace(session_id, user_message, spans, turn_started_at, turn_start)
+    _finish_trace(
+        session_id,
+        user_message,
+        final_answer,
+        "done",
+        spans,
+        turn_started_at,
+        turn_start,
+    )
     yield ChatEvent(
         type=EventType.DONE,
         data={"elapsed_ms": int((time.monotonic() - turn_start) * 1000)},

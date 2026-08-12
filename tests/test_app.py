@@ -13,6 +13,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
+import src.tracing as tracing
 from src.app import app
 from src.contracts import ChatEvent, EventType, SnapshotError
 
@@ -65,6 +66,12 @@ def test_mid_turn_exception_ends_stream_with_error_not_a_dropped_connection():
     assert events[-1]["type"] == "error"
     assert "simulated Snowflake" not in events[-1]["data"]["message"]
     assert "RuntimeError" not in events[-1]["data"]["message"]
+    traces = tracing.get_traces("s2")
+    assert len(traces) == 1
+    assert traces[0].terminal_status == "error"
+    assert traces[0].final_answer == events[-1]["data"]["message"]
+    assert "simulated Snowflake" not in traces[0].model_dump_json()
+    assert "RuntimeError" not in traces[0].model_dump_json()
 
 
 def test_tool_call_emits_matching_start_and_end():
@@ -212,8 +219,8 @@ def test_evals_history_never_double_counts_latest_json(tmp_path, monkeypatch):
 
 
 def test_evals_history_is_oldest_first_with_per_scenario_outcomes(tmp_path, monkeypatch):
-    """The matrix needs run order and a pass/fail per scenario per run. It does
-    not need the full results, which is why history is a projection."""
+    """History needs run order and an outcome per scenario per run. It does
+    not need full results, which is why the endpoint returns a projection."""
     monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
     older = _run_with(["DF-01"])
     older["git_sha"] = "old111"
@@ -234,9 +241,8 @@ def test_evals_history_is_oldest_first_with_per_scenario_outcomes(tmp_path, monk
 def test_evals_history_excludes_rows_an_older_run_recorded_as_pending(
     tmp_path, monkeypatch
 ):
-    """A scenario that never ran must not occupy a cell in the matrix — an
-    empty cell means "not in this run", and a never-run row would read as a
-    failure."""
+    """A scenario that never ran must not appear in history. An unrun row is
+    absence of evidence, not a failure."""
     monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
     run = _run_with(["DF-01", "OLD-99"])
     run["results"][1]["status"] = "pending"
@@ -307,12 +313,15 @@ def test_evals_endpoint_derives_suite_and_outcome_for_historical_rows(
     run["results"][1]["passed"] = False
     (tmp_path / "latest.json").write_text(json.dumps(run))
 
-    rows = client.get("/api/evals").json()["latest"]["results"]
+    latest = client.get("/api/evals").json()["latest"]
+    rows = latest["results"]
 
     assert [(r["suite"], r["outcome"]) for r in rows] == [
         ("regression", "pass"),
         ("capability", "fail"),
     ]
+    assert latest["legacy"] is True
+    assert all(row["legacy"] is True for row in rows)
 
 
 def test_evals_endpoint_preserves_explicit_suite_and_outcome(tmp_path, monkeypatch):
@@ -323,9 +332,29 @@ def test_evals_endpoint_preserves_explicit_suite_and_outcome(tmp_path, monkeypat
     )
     (tmp_path / "latest.json").write_text(json.dumps(run))
 
-    row = client.get("/api/evals").json()["latest"]["results"][0]
+    latest = client.get("/api/evals").json()["latest"]
+    row = latest["results"][0]
 
     assert (row["suite"], row["outcome"]) == ("capability", "inconclusive")
+    assert latest["legacy"] is False
+    assert row["legacy"] is False
+
+
+def test_evals_history_marks_pre_tri_state_artifacts_as_legacy(tmp_path, monkeypatch):
+    monkeypatch.setattr("src.app._EVALS_RESULTS_DIR", tmp_path)
+    legacy = _run_with(["DF-05"])
+    current = _run_with(["DF-05"])
+    current["results"][0].update(
+        {"suite": "regression", "outcome": "inconclusive", "passed": False}
+    )
+    (tmp_path / "20260805T000000Z.json").write_text(json.dumps(legacy))
+    (tmp_path / "20260806T000000Z.json").write_text(json.dumps(current))
+    (tmp_path / "latest.json").write_text(json.dumps(current))
+
+    history = client.get("/api/evals").json()["history"]
+
+    assert [run["legacy"] for run in history] == [True, False]
+    assert history[1]["scenarios"] == {"DF-05": "inconclusive"}
 
 
 def test_evals_endpoint_keeps_an_unknown_scenario_id_rather_than_failing(

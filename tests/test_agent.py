@@ -14,6 +14,7 @@ module.
 from __future__ import annotations
 
 import asyncio
+import re
 from collections import defaultdict
 from types import SimpleNamespace
 
@@ -88,6 +89,15 @@ def _collect(session_id: str, message: str) -> list:
         return [event async for event in agent.agent_turn(session_id, message)]
 
     return asyncio.run(_run())
+
+
+def test_system_prompt_teaches_quoted_placeholders_without_real_variable_ids():
+    assert '"<variable_id>"' in agent.SYSTEM_PROMPT
+    assert re.search(
+        r"\b[A-Z]+\d+[A-Z]\d+\b",
+        agent.SYSTEM_PROMPT,
+        re.IGNORECASE,
+    ) is None
 
 
 def test_refuse_verdict_short_circuits_before_tool_loop(monkeypatch):
@@ -169,6 +179,9 @@ def test_degraded_mode_short_circuits_before_guardrail_and_tool_loop(monkeypatch
     session = sessions.get_session("s-degraded")
     assert [m.role for m in session.messages] == ["user", "assistant"]
     assert session.messages[1].content == agent._DEGRADED_MESSAGE
+    trace = tracing.get_traces("s-degraded")[0]
+    assert trace.final_answer == agent._DEGRADED_MESSAGE
+    assert trace.terminal_status == "done"
 
 
 def test_not_degraded_reaches_guardrail_normally(monkeypatch):
@@ -204,6 +217,10 @@ def test_allow_verdict_reaches_tool_loop_and_terminates(monkeypatch):
 
     session = sessions.get_session("s-allow")
     assert session.messages[1].content == "Wyoming has"  # persisted answer is .strip()'d
+    trace = tracing.get_traces("s-allow")[0]
+    assert trace.final_answer == "Wyoming has"
+    assert trace.terminal_status == "done"
+    assert not any(span.name.startswith("tool:") for span in trace.spans)
 
 
 def test_allow_verdict_runs_tool_round_trip_before_final_answer(monkeypatch):
@@ -247,7 +264,7 @@ def test_allow_verdict_runs_tool_round_trip_before_final_answer(monkeypatch):
 
 def test_tool_end_events_carry_a_result_summary(monkeypatch):
     """Wiring test: _summarize_tool_result's output must actually reach
-    the client on TOOL_END (that's what the Turn Detail tab renders), not
+    the client on TOOL_END (that's what Evidence renders), not
     just exist as a pure function. Covers both a successful tool and a
     failing one, since they take different branches."""
     monkeypatch.setattr(agent, "classify_input", _allow_verdict)
@@ -278,7 +295,7 @@ def test_tool_end_events_carry_a_result_summary(monkeypatch):
 
 
 def test_allow_verdict_records_a_trace_with_guardrail_model_and_tool_spans(monkeypatch, tmp_path):
-    """Wiring test for src/tracing.py (Trace Logging tab): exercises the
+    """Wiring test for src/tracing.py (Evidence): exercises the
     real agent_turn body, not the tracing module in isolation, to prove
     spans actually get recorded through the real call sites — guardrail,
     each model call, each tool call — not just that record_turn_trace
@@ -313,11 +330,13 @@ def test_allow_verdict_records_a_trace_with_guardrail_model_and_tool_spans(monke
     assert span_names == ["guardrail", "model_call_1", "tool:search_census_variables", "model_call_2"]
     assert traces[0].spans[0].meta["verdict"] == "allow"
     assert traces[0].spans[2].ok is True
+    assert traces[0].final_answer == "found it."
+    assert traces[0].terminal_status == "done"
 
 
 def test_refuse_verdict_still_records_a_trace(monkeypatch, tmp_path):
     """Every exit point must record a trace, not just the normal
-    completion path — the Trace Logging tab should show a refused turn
+    completion path. Evidence should show a refused turn
     too, not silently drop it."""
     monkeypatch.setattr(tracing, "TRACE_DB_PATH", tmp_path / "traces.sqlite3")
     monkeypatch.setattr(
@@ -344,6 +363,8 @@ def test_refuse_verdict_still_records_a_trace(monkeypatch, tmp_path):
     assert [s.name for s in traces[0].spans] == ["guardrail"]
     assert traces[0].spans[0].meta["verdict"] == "refuse"
     assert traces[0].spans[0].meta["category"] == "off_topic"
+    assert traces[0].final_answer == agent._REFUSAL_MESSAGES[RefusalCategory.OFF_TOPIC]
+    assert traces[0].terminal_status == "done"
 
 
 def _allow_verdict(message, recent_turns):
@@ -421,6 +442,9 @@ def test_recovery_exhaustion_yields_honest_failure_naming_what_was_tried(monkeyp
 
     session = sessions.get_session("s-recovery-msg")
     assert session.messages[-1].content == failure_text
+    trace = tracing.get_traces("s-recovery-msg")[0]
+    assert trace.final_answer == failure_text
+    assert trace.terminal_status == "done"
 
 
 def test_zero_row_result_counts_toward_recovery_budget(monkeypatch):

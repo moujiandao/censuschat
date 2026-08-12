@@ -1,5 +1,4 @@
-"""Tests for src/tracing.py — durable trace logging (Trace Logging + Turn
-Detail tabs).
+"""Tests for src/tracing.py, the durable store behind Evidence.
 
 Deterministic storage logic — TDD per CLAUDE.md rule 19.
 
@@ -11,6 +10,7 @@ touches the real store.
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -36,6 +36,8 @@ def _trace(session_id: str, message: str = "hi", total_ms: int = 100) -> TurnTra
     return TurnTrace(
         session_id=session_id,
         user_message=message,
+        final_answer="Hello from CensusChat.",
+        terminal_status="done",
         started_at=datetime.now(timezone.utc),
         total_ms=total_ms,
         spans=[TraceSpan(name="guardrail", latency_ms=10, ok=True, meta={"verdict": "allow"})],
@@ -53,6 +55,54 @@ def test_record_and_retrieve_round_trip():
     assert result[0].user_message == "hi"
     assert result[0].spans[0].name == "guardrail"
     assert result[0].spans[0].meta == {"verdict": "allow"}
+
+
+def test_final_answer_and_terminal_status_round_trip():
+    record_turn_trace(
+        TurnTrace(
+            session_id="s-terminal",
+            user_message="cause an error",
+            final_answer="An internal error occurred while processing your request.",
+            terminal_status="error",
+            started_at=datetime.now(timezone.utc),
+            total_ms=17,
+            spans=[],
+        )
+    )
+
+    trace = get_traces("s-terminal")[0]
+
+    assert trace.final_answer == "An internal error occurred while processing your request."
+    assert trace.terminal_status == "error"
+
+
+def test_existing_trace_database_is_migrated_with_done_terminal_status():
+    conn = sqlite3.connect(tracing.TRACE_DB_PATH)
+    conn.execute(
+        "CREATE TABLE traces ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "session_id TEXT NOT NULL, user_message TEXT NOT NULL, "
+        "started_at TEXT NOT NULL, total_ms INTEGER NOT NULL, spans TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO traces "
+        "(session_id, user_message, started_at, total_ms, spans) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (
+            "s-legacy",
+            "old trace",
+            datetime.now(timezone.utc).isoformat(),
+            5,
+            "[]",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    trace = get_traces("s-legacy")[0]
+
+    assert trace.final_answer == ""
+    assert trace.terminal_status == "done"
 
 
 def test_traces_are_isolated_per_session():
@@ -93,7 +143,7 @@ def test_no_per_session_cap():
 
 
 def test_spans_round_trip_with_full_fidelity():
-    """Turn Detail renders from these spans, so args and result summaries
+    """Evidence renders from these spans, so args and result summaries
     have to survive serialization intact — not just span names."""
     trace = TurnTrace(
         session_id="s-a",

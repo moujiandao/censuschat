@@ -486,6 +486,64 @@ def test_run_census_sql_renders_aliased_income_top_code(monkeypatch):
     assert result.rows == [{"INCOME": "$250,000 or more"}]
 
 
+def test_run_census_sql_normalizes_same_variable_across_union_branches(monkeypatch):
+    sql = (
+        'SELECT "B19013e1" AS income FROM US_CENSUS.PUBLIC."2020_CBG_B19" '
+        'UNION ALL '
+        'SELECT "B19013e1" FROM US_CENSUS.PUBLIC."2020_CBG_B19"'
+    )
+    fake = FakeSqlConnection(columns=["INCOME"], rows=[(250001.0,)])
+    monkeypatch.setattr(tools, "_connect", lambda **kwargs: fake)
+
+    result = tools.run_census_sql(sql)
+
+    assert result.rows == [{"INCOME": "$250,000 or more"}]
+
+
+def test_run_census_sql_does_not_falsely_top_code_mixed_union_lineage(monkeypatch):
+    sql = (
+        'SELECT "B19013e1" AS value FROM US_CENSUS.PUBLIC."2020_CBG_B19" '
+        'UNION ALL '
+        'SELECT "B01003e1" AS value FROM US_CENSUS.PUBLIC."2020_CBG_B01"'
+    )
+    fake = FakeSqlConnection(columns=["VALUE"], rows=[(250001,)])
+    monkeypatch.setattr(tools, "_connect", lambda **kwargs: fake)
+
+    result = tools.run_census_sql(sql)
+
+    assert result.rows == [{"VALUE": 250001}]
+
+
+def test_run_census_sql_leaves_later_branch_top_code_raw_when_lineage_is_mixed(
+    monkeypatch,
+):
+    sql = (
+        'SELECT "B01003e1" AS value FROM US_CENSUS.PUBLIC."2020_CBG_B01" '
+        'UNION ALL '
+        'SELECT "B19013e1" AS value FROM US_CENSUS.PUBLIC."2020_CBG_B19"'
+    )
+    fake = FakeSqlConnection(columns=["VALUE"], rows=[(250001.0,)])
+    monkeypatch.setattr(tools, "_connect", lambda **kwargs: fake)
+
+    result = tools.run_census_sql(sql)
+
+    assert result.rows == [{"VALUE": 250001.0}]
+
+
+def test_run_census_sql_leaves_union_computed_branch_raw(monkeypatch):
+    sql = (
+        'SELECT "B19013e1" AS income FROM US_CENSUS.PUBLIC."2020_CBG_B19" '
+        'UNION ALL '
+        'SELECT "B19013e1" + 1 AS income FROM US_CENSUS.PUBLIC."2020_CBG_B19"'
+    )
+    fake = FakeSqlConnection(columns=["INCOME"], rows=[(250001.0,)])
+    monkeypatch.setattr(tools, "_connect", lambda **kwargs: fake)
+
+    result = tools.run_census_sql(sql)
+
+    assert result.rows == [{"INCOME": 250001.0}]
+
+
 def test_run_census_sql_does_not_top_code_aggregate(monkeypatch):
     sql = (
         'SELECT COUNT("B19013e1") AS income_count '

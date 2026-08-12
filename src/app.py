@@ -20,7 +20,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -31,7 +33,7 @@ from src.agent import agent_turn
 from src.contracts import ChatEvent, EventType, SnapshotError
 from src.health import check_snowflake_reachability, health_report
 from src.snapshot import build_snapshot
-from src.tracing import get_traces, list_recent_sessions
+from src.tracing import TurnTrace, get_traces, list_recent_sessions, record_turn_trace
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +77,8 @@ def _safe_for_log(value: str) -> str:
 
 
 async def _stream_turn(session_id: str, message: str):
+    turn_start = time.monotonic()
+    started_at = datetime.now(timezone.utc)
     try:
         async for event in agent_turn(session_id, message):
             yield _encode_event(event)
@@ -84,9 +88,22 @@ async def _stream_turn(session_id: str, message: str):
         logger.exception(
             "agent_turn failed for session_id=%s", _safe_for_log(session_id)
         )
-        yield _encode_event(
-            ChatEvent(type=EventType.ERROR, data={"message": _GENERIC_ERROR_MESSAGE})
+        error_event = ChatEvent(
+            type=EventType.ERROR,
+            data={"message": _GENERIC_ERROR_MESSAGE},
         )
+        await asyncio.to_thread(
+            record_turn_trace,
+            TurnTrace(
+                session_id=session_id,
+                user_message=message,
+                final_answer=_GENERIC_ERROR_MESSAGE,
+                terminal_status="error",
+                started_at=started_at,
+                total_ms=int((time.monotonic() - turn_start) * 1000),
+            ),
+        )
+        yield _encode_event(error_event)
         return
 
     # agent_turn's own contract requires it to always end in DONE or ERROR.
@@ -95,6 +112,17 @@ async def _stream_turn(session_id: str, message: str):
     logger.error(
         "agent_turn for session_id=%s ended without a terminal event",
         _safe_for_log(session_id),
+    )
+    await asyncio.to_thread(
+        record_turn_trace,
+        TurnTrace(
+            session_id=session_id,
+            user_message=message,
+            final_answer=_GENERIC_ERROR_MESSAGE,
+            terminal_status="error",
+            started_at=started_at,
+            total_ms=int((time.monotonic() - turn_start) * 1000),
+        ),
     )
     yield _encode_event(
         ChatEvent(type=EventType.ERROR, data={"message": _GENERIC_ERROR_MESSAGE})
@@ -146,6 +174,12 @@ def _scenario_index() -> dict[str, dict]:
     }
 
 
+def _legacy_eval_result(result: dict) -> bool:
+    return result.get("suite") not in {"regression", "capability"} or result.get(
+        "outcome"
+    ) not in {"pass", "fail", "inconclusive"}
+
+
 def _annotate(run: dict | None, index: dict[str, dict]) -> dict | None:
     """Attach the question and notes to each result, in place on the loaded dict.
 
@@ -166,6 +200,7 @@ def _annotate(run: dict | None, index: dict[str, dict]) -> dict | None:
         if result.get("status") == "pending":
             continue
         meta = index.get(result.get("scenario_id"))
+        result["legacy"] = _legacy_eval_result(result)
         result["turns"] = meta["turns"] if meta else []
         result["notes"] = meta["notes"] if meta else None
         result["suite"] = result.get("suite") or (
@@ -176,15 +211,16 @@ def _annotate(run: dict | None, index: dict[str, dict]) -> dict | None:
         )
         kept.append(result)
     run["results"] = kept
+    run["legacy"] = any(result["legacy"] for result in kept)
     return run
 
 
 def _history() -> list[dict]:
-    """Every recorded run, oldest first, as a compact pass/fail projection.
+    """Every recorded run, oldest first, as a compact outcome projection.
 
-    Deliberately not the full runs: the tab only needs which scenario passed
-    in which run to draw the matrix, and shipping every answer and check for
-    every historical run would grow the payload without being read.
+    Deliberately not the full runs: the tab only needs each scenario's outcome
+    and artifact provenance. Shipping every answer and check for every
+    historical run would grow the payload without being read.
 
     `latest.json` is skipped because it is a copy of the newest timestamped
     file, and counting it twice would show a phantom extra run — which, on a
@@ -199,16 +235,21 @@ def _history() -> list[dict]:
         except Exception:  # pragma: no cover - a corrupt file shouldn't kill the tab
             logger.warning("skipping unreadable eval result %s", path.name)
             continue
+        executed = [
+            result
+            for result in run.get("results", [])
+            if result.get("status") != "pending"
+        ]
         runs.append(
             {
                 "run_at": run.get("run_at"),
                 "git_sha": run.get("git_sha"),
                 "pass_rate": run.get("pass_rate"),
+                "legacy": any(_legacy_eval_result(result) for result in executed),
                 "scenarios": {
                     r["scenario_id"]: r.get("outcome")
                     or ("pass" if r.get("passed") else "fail")
-                    for r in run.get("results", [])
-                    if r.get("status") != "pending"
+                    for r in executed
                 },
             }
         )

@@ -349,7 +349,8 @@
       const checks = (row.checks || []).map(function (check) {
         const checkOutcome = outcomeFor(check);
         return '<span class="badge ' + checkOutcome + '">' +
-          escapeHtml(checkOutcome) + "</span> " + escapeHtml(check.check && check.check.type);
+          escapeHtml(row.legacy ? "legacy " + checkOutcome : checkOutcome) +
+          "</span> " + escapeHtml(check.check && check.check.type);
       }).join("<br>");
       const answer = row.answer_final
         ? '<div class="answer-preview">' + escapeHtml(row.answer_final.slice(0, 220)) + "</div>"
@@ -360,20 +361,26 @@
       return "<tr><td><span class='scenario-id'>" + escapeHtml(row.scenario_id) +
         "</span>" + escapeHtml(row.category) + "</td><td>" + questionCell(row) + answer +
         notes + "</td><td><span class='badge " + outcome + "'>" +
-        escapeHtml(outcome) + "</span></td><td>" + checks + "</td></tr>";
+        escapeHtml(row.legacy ? "legacy " + outcome : outcome) +
+        "</span></td><td>" + checks + "</td></tr>";
     }).join("");
   }
 
-  function renderSuite(name, rows) {
+  function renderSuite(name, rows, legacy) {
     const counts = {};
     outcomeOrder.forEach(function (outcome) { counts[outcome] = 0; });
     rows.forEach(function (row) { counts[outcomeFor(row)] = (counts[outcomeFor(row)] || 0) + 1; });
     const badges = outcomeOrder.map(function (outcome) {
       return '<span class="badge ' + outcome + '">' + counts[outcome] + " " + outcome + "</span>";
     }).join("");
-    return '<section class="eval-suite"><h2>' +
-      (name === "regression" ? "Regression suite" : "Capability suite") +
-      '</h2><p class="section-lead">' + rows.length + " scenarios in this suite.</p>" +
+    const heading = legacy
+      ? (name === "regression" ? "Derived regression grouping" : "Derived capability grouping")
+      : (name === "regression" ? "Regression suite" : "Capability suite");
+    const description = legacy
+      ? "Historical rows grouped using today's scenario metadata. Legacy pass/fail values predate the current tri-state graders."
+      : rows.length + " scenarios in this suite.";
+    return '<section class="eval-suite"><h2>' + heading +
+      '</h2><p class="section-lead">' + escapeHtml(description) + "</p>" +
       '<div class="eval-counts">' + badges + '</div><table class="eval-table"><thead><tr>' +
       "<th>Scenario</th><th>Question, answer, and notes</th><th>Outcome</th><th>Checks</th>" +
       "</tr></thead><tbody>" + renderEvalRows(rows) + "</tbody></table></section>";
@@ -387,11 +394,19 @@
     if (run.models && typeof run.models === "object") {
       Object.keys(run.models).forEach(function (key) { modelIds.push(key + " " + run.models[key]); });
     }
-    let html = '<p class="run-meta">Latest committed benchmark: ' + escapeHtml(when) +
+    let html = '<p class="run-meta">' +
+      (run.legacy ? "Legacy committed benchmark: " : "Latest committed benchmark: ") +
+      escapeHtml(when) +
       (run.git_sha ? " at commit " + escapeHtml(run.git_sha) : "") +
-      (modelIds.length ? ". Models: " + escapeHtml(modelIds.join(", ")) : "") + ".</p>";
+      (modelIds.length ? ". Models: " + escapeHtml(modelIds.join(", ")) : "") +
+      (run.legacy ? ". Its booleans do not prove the current regression graders ran" : "") +
+      ".</p>";
     suiteOrder.forEach(function (suite) {
-      html += renderSuite(suite, (run.results || []).filter(function (row) { return suiteFor(row) === suite; }));
+      html += renderSuite(
+        suite,
+        (run.results || []).filter(function (row) { return suiteFor(row) === suite; }),
+        run.legacy
+      );
     });
     html += '<p class="section-lead">CI logs and downloadable live-run artifacts are kept in GitHub Actions. This page shows the latest committed benchmark.</p>';
     return html;
@@ -485,6 +500,15 @@
           .map(function (key) { return [key, typeof meta[key] === "object" ? JSON.stringify(meta[key]) : String(meta[key])]; }));
       }
     });
+    const terminalStatus = trace.terminal_status || "unknown";
+    const finalStep = addEvidenceStep(
+      steps,
+      "Terminal status: " + terminalStatus,
+      terminalStatus === "done" ? "ok" : "fail"
+    );
+    setStepDetail(finalStep, [
+      ["final answer", trace.final_answer || "(no answer text recorded)"],
+    ]);
     const terminal = document.createElement("p");
     terminal.className = "terminal";
     terminal.textContent = "Terminal timing: " + trace.total_ms + "ms total";
@@ -700,8 +724,12 @@
             const finalStep = addEvidenceStep(
               evidenceSteps,
               toolStepsSeen ? "Final answer streamed" : "Completed without tool calls",
-              toolStepsSeen ? "ok" : "fail"
+              "ok"
             );
+            setStepDetail(finalStep, [
+              ["terminal status", "done"],
+              ["final answer", assistantText || "(no answer text produced)"],
+            ]);
             const timing = document.createElement("span");
             timing.className = "ms";
             timing.textContent = event.data.elapsed_ms + "ms total";

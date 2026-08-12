@@ -38,6 +38,15 @@ def test_evidence_defaults_to_curated_trace_with_optional_raw_json():
     assert 'id="evidence-content"' in html
     assert "Raw trace JSON" in html
     assert "<details" in html
+    assert "trace.final_answer" in html
+    assert "trace.terminal_status" in html
+
+
+def test_clean_zero_tool_done_turn_is_not_rendered_as_failed():
+    html = _html()
+
+    assert 'toolStepsSeen ? "ok" : "fail"' not in html
+    assert '"Completed without tool calls"' in html
 
 
 def test_empty_and_failed_technical_views_have_explicit_copy():
@@ -62,3 +71,12 @@ def test_historical_eval_values_are_whitelisted_before_class_interpolation():
     assert "suiteOrder.indexOf(row.suite)" in html
     assert "outcomeOrder.indexOf(row.outcome)" in html
     assert '"badge " + escapeHtml(' not in html
+
+
+def test_legacy_eval_artifacts_are_not_labeled_as_current_regression_proof():
+    html = _html()
+
+    assert "run.legacy" in html
+    assert "Legacy committed benchmark" in html
+    assert "Derived regression grouping" in html
+    assert '"legacy " + checkOutcome' in html
