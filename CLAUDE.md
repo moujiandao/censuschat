@@ -43,10 +43,9 @@ entry, flagged inline.
     defaults (e.g., ACS vintage) → assume and state the assumption in the
     answer.
 11. Every user-facing turn streams `ChatEvent`s; every tool call emits
-    `tool_start`/`tool_end`; a 50s watchdog is checked between tool-loop
-    rounds and produces an honest partial answer before a later round; every
-    stream terminates with `done` or `error` — no hangs, no blank responses,
-    no unhandled exceptions reaching the client.
+    `tool_start`/`tool_end`; a 50s watchdog ends tool use with an honest
+    partial answer; every stream terminates with `done` or `error` — no
+    hangs, no blank responses, no unhandled exceptions reaching the client.
 
 ## Architecture
 
@@ -68,9 +67,9 @@ entry, flagged inline.
 17. Every turn is one Langfuse trace: `session_id` in metadata; spans for
     guardrail, each tool call, and each model call; token counts and
     latency recorded.
-    *Not satisfied. Langfuse is not implemented. `src/tracing.py` persists
-    local spans in SQLite, rendered solely in Evidence with cross-session
-    history, but it has no Langfuse search or alerting. **D-021**, **D-023**.*
+    *Not satisfied. Langfuse was cut for time; the span model shipped as
+    in-process tracing (`src/tracing.py`, Trace Logging tab) with no
+    persistence, no cross-session search, no alerting. **D-021**.*
 18. Deploy = Docker Compose (app + Caddy) on EC2 at
     `https://censuschat.brianmar.com` behind basic auth. Caddy reaches the
     app by compose service name, never `localhost`.
@@ -91,3 +90,34 @@ entry, flagged inline.
     parallel work; git worktrees only for lanes touching disjoint files
     (see architecture §Parallelization).
 22. When the hour budget runs out: cut features, never the reflection.
+
+## Current shipped system
+
+These notes describe the current implementation. They do not rewrite the
+historical invariants above.
+
+- Frontend: one static file with Chat, How It Works, Evidence, and Evals
+  (**D-027**).
+- Tracing: `src/tracing.py` persists local turn spans in
+  `data/traces.sqlite3`; Evidence is the sole trace view. This is not
+  Langfuse (**D-021**, **D-023**).
+- Evals: six regression scenarios and eight capability scenarios, with pass,
+  fail, and inconclusive outcomes (**D-026**).
+
+### Repo map
+
+```text
+src/
+  app.py          FastAPI app, SSE streaming, API endpoints
+  agent.py        Anthropic tool loop, recovery, ambiguity, soft watchdog
+  contracts.py    frozen interfaces
+  guardrail.py    fail-open pre-turn classifier
+  sqlgate.py      code-enforced SQL trust boundary
+  tools.py        local discovery and the sole Snowflake query path
+  tracing.py      SQLite-backed turn traces
+  snapshot.py     local variable and geography snapshots
+  sessions.py     SQLite conversation history
+static/index.html entire four-tab frontend
+evals/            live scenarios, runner, committed benchmark results
+tests/            complete offline suite
+```

@@ -18,9 +18,9 @@ The 14 executed scenarios are deliberately split by job:
 A check and scenario can be `pass`, `fail`, or `inconclusive`. A pass means
 every deterministic check passed. A fail means at least one check failed. An
 inconclusive result means the evidence is insufficient, most commonly because
-the bounded tool summary does not expose a later query row needed to trace a
-number. It is non-passing and remains in the denominator, so uncertainty
-cannot inflate a pass rate.
+the bounded tool summary does not expose a later query row needed for a match.
+It is non-passing and remains in the denominator, so uncertainty cannot inflate
+a pass rate.
 
 For a manual regression approval, run the regression suite twice and require
 every regression scenario to pass in both trials, a pass-squared criterion:
@@ -59,7 +59,7 @@ aggregate pass rate.
 | `expect_clarifying_question` | The answer asks a question and no SQL was attempted while ambiguity remained. |
 | `no_median_aggregation` | SQL did not aggregate the protected median variable with `SUM` or `AVG`. |
 | `no_unhandled_error` | The turn ended with `done`, not an unhandled stream error. |
-| `judge_groundedness` | Despite its legacy name, this deterministic check traces visible answer figures to returned rows or allowed arithmetic. It reports `inconclusive` when bounded evidence cannot see enough rows. |
+| `judge_groundedness` | Despite its legacy name, this deterministic check compares answer figures with at least four digits, excluding vintage years, against bounded recorded tool evidence. It includes limited numeric tolerances but does not prove row lineage or arithmetic correctness. It may report `inconclusive` when later rows are hidden. |
 
 Those checks do not judge whether prose is clear, whether a caveat is well
 explained, or whether a substitute geography is communicated well. That work

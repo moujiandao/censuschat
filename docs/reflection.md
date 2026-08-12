@@ -8,8 +8,10 @@ the mistakes are in here too.
 > consolidates the former Turn Detail and Trace Logging views, and reads traces
 > persisted in SQLite. Langfuse and prompt caching are not implemented. There
 > is one request-time Snowflake code path (`run_census_sql`), which can make
-> multiple calls in a turn. `normalize_value` now runs at the result seam for
-> directly selected or simply aliased demographic values. SQL safety is
+> multiple calls in a turn. For direct or simply aliased demographic cells,
+> result-seam normalization renders SQL NULL as `not reported` and the single
+> verified `B19013e1` top-code as `$250,000 or more`. No numeric sentinel code
+> was observed or transformed. SQL safety is
 > code-enforced; answer grounding is model-instructed and checked on selected
 > eval scenarios, without a runtime validator for every final-answer number.
 > The watchdog is a soft between-round deadline, not an interrupt for in-flight
@@ -39,8 +41,8 @@ them.
 It also cost me. I reached hour 20 with a fully tested backend and no web
 page, which is a hard requirement. See section 2.
 
-Everything deterministic was built test-first. 375 tests now, 175 of them on
-the SQL gate alone.
+Everything deterministic was built test-first and remains covered by the
+complete offline suite, with especially deep coverage on the SQL gate.
 
 ### How I used Claude Code
 
@@ -152,10 +154,12 @@ honest, but they were two thirds of the table and made it materially harder to
 read. Those gaps are listed in section 3 instead, which is the right home for a
 claim with no evidence behind it.
 
-**`normalize_value` is now wired at the result seam.** Directly selected and
-simply aliased demographic values are normalized before model-facing query
-results are built. Derived and aggregate expressions remain unchanged because
-their source-variable identity is not recoverable at that seam.
+**`normalize_value` is now wired at the result seam.** For a direct or simply
+aliased demographic cell, SQL NULL becomes `not reported`, and the single
+verified top-code, `B19013e1 = 250001`, becomes `$250,000 or more`. No numeric
+sentinel code was observed or transformed. Derived and aggregate expressions
+remain unchanged because their source-variable identity is not recoverable at
+that seam.
 
 **Decennial tables cut (D-004), so the `conflicting` category has no real
 coverage.** The design answered that requirement with a genuine second source,
@@ -184,11 +188,11 @@ this, because a limitation you cannot measure is worse than one you can.
 
 ### 3a. Answers the system gets wrong, or cannot give at all
 
-- **Normalization has a defined boundary.** Top-coded and null values are
-  normalized when a direct or simply aliased demographic variable reaches the
-  result seam. Derived and aggregate expressions remain raw because their
-  source-variable identity is not available there, so those paths still need
-  explicit query and answer review.
+- **Normalization has a defined boundary.** For direct or simply aliased
+  demographic cells, SQL NULL becomes `not reported`, and the one verified
+  top-code, `B19013e1 = 250001`, becomes `$250,000 or more`. No numeric
+  sentinel code was observed or transformed. Derived and aggregate expressions
+  remain raw because their source-variable identity is not available there.
 - **`PM-08` is genuinely flaky, and now I can prove it.** "Average household
   income in Texas" assembles a numerator and denominator and sometimes runs out
   of tool rounds doing it. My first diagnosis was wrong: I blamed the model for
@@ -344,12 +348,12 @@ works" is "partly, and here is exactly which part."
 
 ### What I test, and what I deliberately don't
 
-375 tests, written test-first, on every layer where being wrong is either a
-security hole or a silently wrong number: the SQL gate (175 on its own),
+The complete offline suite was written test-first on every layer where being
+wrong is either a security hole or a silently wrong number: the SQL gate,
 guardrail routing and both fail-open paths, recovery counting, the ambiguity
 backstop, the watchdog against a faked clock rather than real sleeps, degraded
 mode, session replay ordering, `normalize_value`, and the eval scorer itself.
-The scorer got production-grade treatment because a bug there silently
+The scorer gets production-grade treatment because a bug there silently
 invalidates every result.
 
 I deliberately do not unit test whether the model phrases a good answer or

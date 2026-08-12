@@ -172,7 +172,7 @@ trace summary can see the relevant rows.
   zero rows → re-search or rewrite, then an honest failure explaining what was
   tried), while `_MAX_TOOL_LOOP_ITERATIONS = 8` caps *total rounds* even when
   every call succeeds. The second is what a genuinely multi-step question runs
-  into — see the `PM-08` capability row under [Testing and evals](#testing-and-evals).
+  into. See the `PM-08` capability row under [Testing and evals](#testing-and-evals).
   The 50-second watchdog is a soft, between-round deadline, not an interrupt
   for work already in flight.
 - **Degraded mode**: Snowflake reachability is checked once at boot and

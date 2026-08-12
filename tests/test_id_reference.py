@@ -56,6 +56,23 @@ def test_readme_uses_current_tabs_and_grounding_claim():
     assert "Trace Logging tab" not in text
 
 
+def test_claude_preserves_invariant_11_and_documents_current_system_after_rules():
+    """Historical invariants stay immutable; shipped status lives after them."""
+    text = (ROOT / "CLAUDE.md").read_text()
+    invariant = """11. Every user-facing turn streams `ChatEvent`s; every tool call emits
+    `tool_start`/`tool_end`; a 50s watchdog ends tool use with an honest
+    partial answer; every stream terminates with `done` or `error` """ + "\N{EM DASH}" + """ no
+    hangs, no blank responses, no unhandled exceptions reaching the client."""
+    assert invariant in text
+
+    current = text.split("22. When the hour budget runs out: cut features, never the reflection.", 1)[1]
+    assert "## Current shipped system" in current
+    assert "Chat, How It Works, Evidence, and Evals" in current
+    assert "`src/tracing.py`" in current
+    assert "`data/traces.sqlite3`" in current
+    assert "six regression scenarios and eight capability scenarios" in current
+
+
 def test_every_scenario_id_used_in_a_doc_resolves_to_something():
     """An id with no definition renders as "no definition found", which is an
     honest placeholder and not something to ship."""

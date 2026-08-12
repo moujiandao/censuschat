@@ -17,14 +17,14 @@ consumes this + schema-notes and must not re-decide anything here.
 > related historical statements below without rewriting the M1 decisions.
 > Three sections below are superseded:
 >
-> - **§5 Observability** — Langfuse and prompt caching are not implemented.
+> - **§5 Observability:** Langfuse and prompt caching are not implemented.
 >   The local trace store persists in SQLite. **D-021**, **D-023**.
-> - **§6 Frontend** — D-027 supersedes this section's three-tab proposal with
+> - **§6 Frontend:** D-027 supersedes this section's three-tab proposal with
 >   the four reviewer surfaces above.
 > - **§7 Eval plan** — scenarios live in `evals/scenarios.py` as typed
 >   `EvalScenario` objects, not `evals/goldens/*.json`; the set is six
 >   regression scenarios and eight informational capability scenarios
->   (**D-024**), and `make eval` runs against the local stack.
+>   (**D-026**), and `make eval` runs against the local stack.
 
 ## 1. What this is
 
