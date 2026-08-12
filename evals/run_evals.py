@@ -33,6 +33,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
+from sqlglot import exp, parse_one
+from sqlglot.errors import ParseError
 
 # MUST run before importing src.agent: that module builds its Anthropic client
 # at import time, reading the key straight from the process environment. Import
@@ -47,6 +49,7 @@ from src.contracts import (  # noqa: E402
     Check,
     CheckResult,
     CheckType,
+    EvalOutcome,
     EvalResult,
     EvalRun,
     EvalScenario,
@@ -212,7 +215,11 @@ def _score_check(check: Check, obs: Observation) -> CheckResult:
 
     if check.type == CheckType.NO_UNHANDLED_ERROR:
         passed = obs.terminal == "done" and not obs.errored
-        return CheckResult(check=check, passed=passed, observed=f"terminal={obs.terminal}")
+        return _check_result(
+            check,
+            EvalOutcome.PASS if passed else EvalOutcome.FAIL,
+            f"terminal={obs.terminal}",
+        )
 
     if check.type == CheckType.NO_TOOL_ERRORS:
         failed = [c.get("tool", "unknown") for c in obs.tool_calls if not c.get("ok")]
@@ -223,15 +230,35 @@ def _score_check(check: Check, obs: Observation) -> CheckResult:
 
     if check.type == CheckType.ANSWER_CONTAINS:
         passed = expected.lower() in obs.final_answer.lower()
-        return CheckResult(check=check, passed=passed, observed=obs.final_answer[:200])
+        return _check_result(
+            check,
+            EvalOutcome.PASS if passed else EvalOutcome.FAIL,
+            obs.final_answer[:200],
+        )
+
+    if check.type == CheckType.ANSWER_REQUIRED:
+        passed = bool(obs.final_answer.strip())
+        return _check_result(
+            check,
+            EvalOutcome.PASS if passed else EvalOutcome.FAIL,
+            obs.final_answer[:200],
+        )
 
     if check.type == CheckType.VARIABLE_RESOLVED:
         passed = expected in obs.tool_evidence
-        return CheckResult(check=check, passed=passed, observed=obs.tool_evidence[:200])
+        return _check_result(
+            check,
+            EvalOutcome.PASS if passed else EvalOutcome.FAIL,
+            obs.tool_evidence[:200],
+        )
 
     if check.type == CheckType.GEO_RESOLVED:
         passed = expected in obs.tool_evidence
-        return CheckResult(check=check, passed=passed, observed=obs.tool_evidence[:200])
+        return _check_result(
+            check,
+            EvalOutcome.PASS if passed else EvalOutcome.FAIL,
+            obs.tool_evidence[:200],
+        )
 
     if check.type == CheckType.EXPECT_REFUSAL:
         # Operationalized as: nothing ran — no tool call, so Snowflake was
@@ -253,10 +280,10 @@ def _score_check(check: Check, obs: Observation) -> CheckResult:
         mechanism = (
             "guardrail" if obs.final_answer in _CANNED_REFUSALS else "model self-refused"
         )
-        return CheckResult(
-            check=check,
-            passed=passed,
-            observed=(
+        return _check_result(
+            check,
+            EvalOutcome.PASS if passed else EvalOutcome.FAIL,
+            (
                 f"{len(obs.final_turn_tool_calls)} tool calls on final turn "
                 f"({len(obs.tool_calls)} across scenario), via {mechanism}; "
                 f"{obs.final_answer[:100]}"
@@ -265,13 +292,41 @@ def _score_check(check: Check, obs: Observation) -> CheckResult:
 
     if check.type == CheckType.EXPECT_CLARIFYING_QUESTION:
         # Operationalized as: the turn ends by asking something, and never
-        # produced a successful query — i.e. it did NOT silently pick one
-        # of the ambiguous candidates and answer with a number.
-        passed = "?" in obs.final_answer and not obs.ran_sql_successfully
-        return CheckResult(
-            check=check,
-            passed=passed,
-            observed=f"ran_sql={obs.ran_sql_successfully}; {obs.final_answer[:120]}",
+        # attempted a query — even a failed query means the agent acted on an
+        # unresolved interpretation instead of asking first.
+        attempted_sql = any(c["tool"] == "run_census_sql" for c in obs.tool_calls)
+        passed = "?" in obs.final_answer and not attempted_sql
+        return _check_result(
+            check,
+            EvalOutcome.PASS if passed else EvalOutcome.FAIL,
+            f"attempted_sql={attempted_sql}; {obs.final_answer[:120]}",
+        )
+
+    if check.type == CheckType.NO_MEDIAN_AGGREGATION:
+        for call in obs.tool_calls:
+            if call["tool"] != "run_census_sql":
+                continue
+            try:
+                args = json.loads(call.get("args", ""))
+                sql = args["sql"]
+                if not isinstance(sql, str):
+                    raise TypeError("sql is not a string")
+                if _aggregates_variable(sql, expected):
+                    return _check_result(
+                        check,
+                        EvalOutcome.FAIL,
+                        f"{expected} appears beneath SUM or AVG: {sql[:160]}",
+                    )
+            except (json.JSONDecodeError, KeyError, ParseError, TypeError, ValueError) as exc:
+                return _check_result(
+                    check,
+                    EvalOutcome.FAIL,
+                    f"could not score recorded SQL argument: {exc}",
+                )
+        return _check_result(
+            check,
+            EvalOutcome.PASS,
+            f"{expected} was not aggregated with SUM or AVG",
         )
 
     if check.type == CheckType.JUDGE_GROUNDEDNESS:
@@ -280,7 +335,43 @@ def _score_check(check: Check, obs: Observation) -> CheckResult:
         # scenario is redundant rather than wrong.
         return _grounding_check(obs)
 
-    return CheckResult(check=check, passed=False, observed=f"unknown check {check.type}")
+    return _check_result(check, EvalOutcome.FAIL, f"unknown check {check.type}")
+
+
+def _check_result(
+    check: Check,
+    outcome: EvalOutcome,
+    observed: str,
+) -> CheckResult:
+    return CheckResult(
+        check=check,
+        passed=outcome == EvalOutcome.PASS,
+        outcome=outcome,
+        observed=observed,
+    )
+
+
+def _scenario_outcome(checks: list[CheckResult]) -> EvalOutcome:
+    outcomes = {
+        c.outcome or (EvalOutcome.PASS if c.passed else EvalOutcome.FAIL)
+        for c in checks
+    }
+    if EvalOutcome.FAIL in outcomes:
+        return EvalOutcome.FAIL
+    if EvalOutcome.INCONCLUSIVE in outcomes:
+        return EvalOutcome.INCONCLUSIVE
+    return EvalOutcome.PASS
+
+
+def _aggregates_variable(sql: str, variable_id: str) -> bool:
+    tree = parse_one(sql, read="snowflake")
+    for aggregate in tree.find_all(exp.Sum, exp.Avg):
+        if any(
+            column.name.lower() == variable_id.lower()
+            for column in aggregate.find_all(exp.Column)
+        ):
+            return True
+    return False
 
 
 # --------------------------------------------------------------------------
@@ -366,8 +457,8 @@ def _grounding_check(obs: Observation) -> CheckResult:
     figures = _claimed_figures(obs.final_answer)
 
     if not figures:
-        return CheckResult(
-            check=check, passed=True, observed="no numeric claims in the answer"
+        return _check_result(
+            check, EvalOutcome.PASS, "no numeric claims in the answer"
         )
 
     returned = obs.returned_values
@@ -386,26 +477,26 @@ def _grounding_check(obs: Observation) -> CheckResult:
     ]
 
     if not unsourced:
-        return CheckResult(
-            check=check,
-            passed=True,
-            observed=f"{len(figures)} figure(s) traced to returned rows: {figures}",
+        return _check_result(
+            check,
+            EvalOutcome.PASS,
+            f"{len(figures)} figure(s) traced to returned rows: {figures}",
         )
 
     if obs.has_unseen_rows:
-        return CheckResult(
-            check=check,
-            passed=True,
-            observed=(
+        return _check_result(
+            check,
+            EvalOutcome.INCONCLUSIVE,
+            (
                 f"INCONCLUSIVE — {unsourced} not in the rows this harness can see, "
                 "but a query returned more rows than TOOL_END exposes"
             ),
         )
 
-    return CheckResult(
-        check=check,
-        passed=False,
-        observed=(
+    return _check_result(
+        check,
+        EvalOutcome.FAIL,
+        (
             f"UNSOURCED {unsourced} — not in any row this turn's run_census_sql "
             f"returned (saw {returned or 'no rows at all'})"
         ),
@@ -456,9 +547,11 @@ async def _run_all(scenarios: list) -> EvalRun:
                 EvalResult(
                     scenario_id=scenario.id,
                     category=scenario.category,
+                    suite=scenario.suite,
+                    outcome=EvalOutcome.FAIL,
                     passed=False,
                     checks=[
-                        CheckResult(check=c, passed=False, observed=f"scenario raised: {exc}")
+                        _check_result(c, EvalOutcome.FAIL, f"scenario raised: {exc}")
                         for c in scenario.checks
                     ],
                     answer_final="",
@@ -473,18 +566,20 @@ async def _run_all(scenarios: list) -> EvalRun:
         check_results = [_score_check(c, obs) for c in scenario.checks]
         if not any(c.check.type == CheckType.JUDGE_GROUNDEDNESS for c in check_results):
             check_results.append(_grounding_check(obs))
-        passed = all(c.passed for c in check_results)
+        outcome = _scenario_outcome(check_results)
         results.append(
             EvalResult(
                 scenario_id=scenario.id,
                 category=scenario.category,
-                passed=passed,
+                suite=scenario.suite,
+                outcome=outcome,
+                passed=outcome == EvalOutcome.PASS,
                 checks=check_results,
                 answer_final=obs.final_answer,
                 elapsed_s=round(elapsed, 1),
             )
         )
-        mark = "PASS" if passed else "FAIL"
+        mark = outcome.value.upper()
         print(f"  {mark} ({elapsed:.1f}s)", flush=True)
 
     # Every scenario in the set is run, so the denominator is simply the set.

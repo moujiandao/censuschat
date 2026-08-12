@@ -471,7 +471,7 @@ Keep `pass_rate = passes / all executed scenarios`; inconclusive remains in the 
 
 - [ ] **Step 8: Record the contract decision and verify**
 
-Add `D-024` to `docs/decisions.md`, explaining the additive fields, historical compatibility, and why `status` was not overloaded. Add the change to `CHANGELOG.md`.
+Add `D-026` to `docs/decisions.md`, explaining the additive fields, historical compatibility, and why `status` was not overloaded. Add the change to `CHANGELOG.md`.
 
 Run:
 
@@ -942,7 +942,7 @@ Remove the old Turn Detail, Trace Logging, and Data Source panel markup, CSS use
 
 Delete `docs/flow-diagram.html` after its useful request-flow content is represented in How It Works. Do not edit or stage `docs/solutions.html`.
 
-Add `D-025` to `docs/decisions.md`, describing the approved four tabs, deletion of duplicate trace renderers, preservation of the existing trace store, and removal of the standalone flow diagram.
+Add `D-027` to `docs/decisions.md`, describing the approved four tabs, deletion of duplicate trace renderers, preservation of the existing trace store, and removal of the standalone flow diagram.
 
 - [ ] **Step 9: Verify, review, and commit**
 
@@ -1049,9 +1049,9 @@ Update `docs/reflection.md` to state:
 - the grounding and watchdog claims use the narrow approved language;
 - deterministic regression and informational capability have different jobs.
 
-- [ ] **Step 5: Update the project map to match D-025**
+- [ ] **Step 5: Update the project map to match D-027**
 
-Confirm `D-025` accurately describes the shipped four-tab implementation. Amend only factual details discovered during implementation; do not change the approved scope.
+Confirm `D-027` accurately describes the shipped four-tab implementation. Amend only factual details discovered during implementation; do not change the approved scope.
 
 In the clean implementation worktree, target-update the tracked `CLAUDE.md` rule 15, repo map, and current tracing description. Do not stage the current primary worktree's untracked `AGENTS.md` or symlink conversion. Update only stale comments/docstrings in `src/agent.py` and `src/app.py` that name removed tabs or overstate current behavior.
 

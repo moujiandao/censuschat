@@ -20,7 +20,7 @@
 - Use red-green-refactor for every deterministic layer. Run `.venv/bin/pytest -q` before every code commit because bare `pytest` resolves to the wrong local interpreter in this workspace.
 - Preserve unrelated worktree changes and stage only the files named in each task.
 - Do not run `make eval`, a direct Snowflake oracle query, `make deploy`, or `deploy.sh` without Brian's explicit approval at that point.
-- The approved spec names the eval contract deviation D-024. Before writing it, inspect the latest committed decision ID. If D-024 has been claimed by another workstream, use the next free ID and update generated references. Never renumber an existing decision.
+- The approved spec names the eval contract deviation D-026 after collision resolution. Before writing it, inspect the latest committed decision ID. If D-026 has been claimed by another workstream, use the next free ID and update generated references. Never renumber an existing decision.
 - Tasks 1 through 8 below form the indivisible runtime correctness slice. If time expires, stop before the reviewer-surface package rather than leaving a gate wired only into evals or a ledger disconnected from serving.
 - After code changes are complete, invoke the required code-reviewer subagent with the task description and exact changed-file list. Resolve every BLOCKING finding before reporting completion.
 
@@ -63,7 +63,7 @@ scope because structural UI tests, review, and live evals own those concerns.
 | `src/sessions.py` | Full audit transcript plus a separate model-admitted history query. |
 | `src/snapshot.py`, `src/tools.py` | Synthetic nation row and exact nation aliases; existing state/county behavior remains intact. |
 | `src/health.py`, `src/app.py` | Validated snapshot state, last-known Snowflake state, liveness, readiness, health, version, and observer-safe stream backstop. |
-| `src/contracts.py` | Additive eval-only D-024 models. Runtime tool, message, and event models stay frozen. |
+| `src/contracts.py` | Additive eval-only D-026 models. Runtime tool, message, and event models stay frozen. |
 | `evals/scenarios.py` | Exactly 12 core scenarios, two regression scenarios, and visibly blocked coverage outside denominators. |
 | `evals/run_evals.py` | Per-turn observer scoring, tri-state checks, exact evidence, separated suite rates, and run provenance. |
 | `static/index.html` | Exactly four tabs in order: Chat, Evidence, Evals, Trust Rules. One Evidence state path, Guided Review, provenance, and 72 trust rules. |
@@ -648,7 +648,7 @@ Hash canonical bytes for the scenario registry, scorer source, system prompt, an
 
 - [ ] **Step 7: Record the decision**
 
-Add D-024, or the next free ID under the global collision rule, explaining why additive eval-contract changes are permitted while runtime contracts remain frozen. Name the rejected alternative: keeping a boolean pass field would continue conflating failure with absence of evidence.
+Add D-026, or the next free ID under the global collision rule, explaining why additive eval-contract changes are permitted while runtime contracts remain frozen. Name the rejected alternative: keeping a boolean pass field would continue conflating failure with absence of evidence.
 
 - [ ] **Step 8: Run focused tests and verify GREEN**
 
@@ -910,7 +910,7 @@ Expected: remaining matches are either historical quotations, superseded annotat
 
 - [ ] **Step 3: Record architecture and scope decisions**
 
-Add concise decision entries for the evidence/answer trust boundary, buffered answer tradeoff, four-tab consolidation, and last-known readiness semantics when they are not already covered by the approved D-024 entry. Name rejected alternatives and accepted costs. Update the repo map for the four new modules.
+Add concise decision entries for the evidence/answer trust boundary, buffered answer tradeoff, four-tab consolidation, and last-known readiness semantics when they are not already covered by the approved D-026 entry. Name rejected alternatives and accepted costs. Update the repo map for the four new modules.
 
 - [ ] **Step 4: Update the changelog and generated references**
 

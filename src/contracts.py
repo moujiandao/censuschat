@@ -157,12 +157,25 @@ class ScenarioCategory(str, Enum):
     STRESS = "stress"
 
 
+class EvalSuite(str, Enum):
+    REGRESSION = "regression"
+    CAPABILITY = "capability"
+
+
+class EvalOutcome(str, Enum):
+    PASS = "pass"
+    FAIL = "fail"
+    INCONCLUSIVE = "inconclusive"
+
+
 class CheckType(str, Enum):
     EXPECT_REFUSAL = "expect_refusal"                      # guardrail fired
     EXPECT_CLARIFYING_QUESTION = "expect_clarifying_question"
     VARIABLE_RESOLVED = "variable_resolved"  # expected variable_id in tool trace
     GEO_RESOLVED = "geo_resolved"            # expected geo_id in tool trace
     ANSWER_CONTAINS = "answer_contains"      # grounded number/substring in answer
+    ANSWER_REQUIRED = "answer_required"
+    NO_MEDIAN_AGGREGATION = "no_median_aggregation"
     NO_UNHANDLED_ERROR = "no_unhandled_error"
     NO_TOOL_ERRORS = "no_tool_errors"
     JUDGE_GROUNDEDNESS = "judge_groundedness"  # the ONLY LLM-judge check; binary
@@ -315,6 +328,7 @@ class EvalScenario(BaseModel):
     category: ScenarioCategory
     turns: list[str]                 # 1..n user turns, driven sequentially
     checks: list[Check]
+    suite: EvalSuite = EvalSuite.CAPABILITY
     # D-018. "pending" = authored but never executed: a specification of
     # intended behaviour, not evidence of it. run_evals skips these and
     # excludes them from the pass-rate denominator, so an unrun backlog can
@@ -327,6 +341,7 @@ class EvalScenario(BaseModel):
 class CheckResult(BaseModel):
     check: Check
     passed: bool
+    outcome: EvalOutcome | None = None
     observed: str | None = None
 
 
@@ -335,6 +350,8 @@ class EvalResult(BaseModel):
     category: ScenarioCategory
     passed: bool                     # all checks passed
     checks: list[CheckResult]
+    suite: EvalSuite | None = None
+    outcome: EvalOutcome | None = None
     answer_final: str = ""
     elapsed_s: float = 0.0
     # D-018. Mirrors EvalScenario.status so the Evals tab can render the

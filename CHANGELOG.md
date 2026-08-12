@@ -11,6 +11,8 @@
 
 ### Changed
 - Normalize suppressed and top-coded demographic values at the Snowflake result seam before they reach model-facing query results.
+- Partition the 14 live eval scenarios into regression and capability suites, add additive tri-state outcomes, and make inconclusive grounding non-passing without breaking historical result parsing (D-026).
+- Reject blank answers, SQL attempts before ambiguity clarification, and invalid `SUM` or `AVG` aggregation of median variable `B19013e1` in deterministic eval scoring.
 
 ## [2026-08-06]
 
@@ -233,5 +235,6 @@ Decisions, recorded in full in [`docs/decisions.md`](docs/decisions.md).
 | `D-023` | Trace history is durable, and has no per-session cap |
 | `D-024` | Variable search returns the exact physical table |
 | `D-025` | Golden evals distinguish clean execution from recovery |
+| `D-026` | Eval suites and tri-state outcomes are additive |
 
 <!-- END id-reference -->

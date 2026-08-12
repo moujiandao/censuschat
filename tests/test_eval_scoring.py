@@ -7,15 +7,18 @@ treatment as production deterministic logic (CLAUDE.md rule 19).
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from evals.run_evals import (
     Observation,
     _grounding_check,
     _require_credentials,
+    _scenario_outcome,
     _score_check,
 )
-from src.contracts import Check, CheckType
+from src.contracts import Check, CheckResult, CheckType, EvalOutcome
 
 
 def _obs(
@@ -91,6 +94,11 @@ def test_answer_contains_is_case_insensitive():
     assert _score_check(check, _obs(answer="…in Harris County…")).passed is False
 
 
+def test_answer_required_rejects_blank_text():
+    check = Check(type=CheckType.ANSWER_REQUIRED)
+    assert _score_check(check, _obs(answer="   ")).outcome == EvalOutcome.FAIL
+
+
 def test_variable_and_geo_resolved_search_the_tool_evidence_not_the_answer():
     """These must key off what the tools actually did, so a model that
     merely *says* a variable_id without ever resolving it fails."""
@@ -152,13 +160,16 @@ def test_expect_refusal_records_guardrail_vs_self_refusal_mechanism():
     ).observed
 
 
-def test_expect_clarifying_question_requires_a_question_and_no_successful_query():
+def test_expect_clarifying_question_requires_a_question_and_no_sql_attempt():
     check = Check(type=CheckType.EXPECT_CLARIFYING_QUESTION)
     assert _score_check(check, _obs(answer="Which state did you mean?")).passed is True
     # Asked a question but ALSO silently ran a query — the exact failure
     # the ambiguity policy forbids.
     assert _score_check(
         check, _obs(answer="Which one? Anyway it's 500.", tool_calls=[_sql_call(ok=True)])
+    ).passed is False
+    assert _score_check(
+        check, _obs(answer="Which state?", tool_calls=[_sql_call(ok=False)])
     ).passed is False
     # No question at all.
     assert _score_check(check, _obs(answer="It is 500.")).passed is False
@@ -174,6 +185,44 @@ def test_judge_groundedness_routes_to_the_real_grounding_check():
     )
     assert result.passed is False
     assert "UNSOURCED" in result.observed
+
+
+def test_regression_inconclusive_is_not_a_pass():
+    checks = [
+        CheckResult(
+            check=Check(type=CheckType.JUDGE_GROUNDEDNESS),
+            passed=False,
+            outcome=EvalOutcome.INCONCLUSIVE,
+        )
+    ]
+    assert _scenario_outcome(checks) == EvalOutcome.INCONCLUSIVE
+
+
+def test_median_aggregation_is_rejected():
+    obs = _obs(tool_calls=[{
+        "tool": "run_census_sql",
+        "args": '{"sql":"SELECT AVG(\\"B19013e1\\") FROM t"}',
+        "ok": True,
+        "summary": {},
+    }])
+    check = Check(type=CheckType.NO_MEDIAN_AGGREGATION, expected="B19013e1")
+    assert _score_check(check, obs).outcome == EvalOutcome.FAIL
+
+
+@pytest.mark.parametrize("sql", ["SELECT (", ""])
+def test_malformed_recorded_sql_fails_with_a_scorer_reason(sql):
+    obs = _obs(tool_calls=[{
+        "tool": "run_census_sql",
+        "args": json.dumps({"sql": sql}),
+        "ok": False,
+        "summary": {},
+    }])
+    check = Check(type=CheckType.NO_MEDIAN_AGGREGATION, expected="B19013e1")
+
+    result = _score_check(check, obs)
+
+    assert result.outcome == EvalOutcome.FAIL
+    assert "could not score recorded SQL argument" in result.observed
 
 
 # --------------------------------------------------------------------------
@@ -192,6 +241,42 @@ def test_every_scenario_is_runnable_and_scoreable():
         assert s.turns and all(s.turns), f"{s.id} has an empty turn"
         assert s.checks, f"{s.id} has no checks"
         assert s.notes, f"{s.id} has no note explaining what it demonstrates"
+
+
+def test_suite_partition_is_exact_and_complete():
+    from evals.scenarios import GOLDEN_SCENARIOS
+    from src.contracts import EvalSuite
+
+    regression = {s.id for s in GOLDEN_SCENARIOS if s.suite == EvalSuite.REGRESSION}
+    capability = {s.id for s in GOLDEN_SCENARIOS if s.suite == EvalSuite.CAPABILITY}
+
+    assert regression == {"DF-05", "MT-01", "AMB-01", "UN-01", "OT-01", "INJ-02"}
+    assert capability == {
+        "DF-01", "CMP-01", "AMB-02", "PM-02",
+        "PM-03", "AMB-03", "UN-08", "PM-08",
+    }
+    assert regression.isdisjoint(capability)
+    assert len(regression | capability) == 14
+
+
+def test_historical_eval_models_parse_without_new_fields():
+    from src.contracts import CheckResult, EvalResult
+
+    check = CheckResult.model_validate({
+        "check": {"type": "no_unhandled_error", "expected": None},
+        "passed": True,
+        "observed": "terminal=done",
+    })
+    result = EvalResult.model_validate({
+        "scenario_id": "DF-05",
+        "category": "direct_fact",
+        "passed": True,
+        "checks": [check.model_dump()],
+    })
+
+    assert check.outcome is None
+    assert result.suite is None
+    assert result.outcome is None
 
 
 def test_no_scenario_needs_to_declare_the_grounding_check():
@@ -337,7 +422,8 @@ def test_unverifiable_is_reported_as_inconclusive_not_as_a_failure():
 
     result = _grounding_check(obs)
 
-    assert result.passed is True
+    assert result.passed is False
+    assert result.outcome == EvalOutcome.INCONCLUSIVE
     assert "INCONCLUSIVE" in result.observed
 
 

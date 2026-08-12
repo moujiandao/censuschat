@@ -60,7 +60,7 @@ The following decisions are binding for P0:
   universe proof in P0.
 - Permit one tool-free answer-repair call when at least eight seconds remain.
 - Preserve the three public tools and the existing `ChatEvent` contract.
-- Permit one additive, eval-only contract deviation, recorded as D-024.
+- Permit one additive, eval-only contract deviation, recorded as D-026.
 - Replace the five overlapping tabs with four reviewer-facing tabs in this
   order: Chat, Evidence, Evals, Trust Rules. Add Guided Review and build/eval
   provenance without redesigning the visual system.
@@ -386,9 +386,9 @@ Per-turn observations retain:
 Scenario-wide state is used only for explicitly scenario-wide assertions.
 Current-turn grounding always uses current-turn query evidence.
 
-### 5.4 D-024 eval-only contract deviation
+### 5.4 D-026 eval-only contract deviation
 
-D-024 authorizes additive changes to eval models in `src/contracts.py` while
+D-026 authorizes additive changes to eval models in `src/contracts.py` while
 leaving runtime tool and event models unchanged.
 
 Required additions:
@@ -796,7 +796,7 @@ Implementation planning must decompose P0 into these ordered packages:
    gate, answer gate, and their unit tests.
 2. **Agent integration:** tool-result normalization, buffered output, one repair,
    rejected-history filtering, trace finalization, and agent tests.
-3. **Eval credibility:** D-024, full observer evidence, 12-core registry,
+3. **Eval credibility:** D-026, full observer evidence, 12-core registry,
    regression overlay, tri-state scoring, provenance, and scorer tests.
 4. **Deadline and readiness:** absolute budget, endpoint semantics, deployment
    verification, and deterministic tests.
