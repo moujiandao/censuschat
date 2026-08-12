@@ -17,8 +17,10 @@ than it is worth.
 Not covered, and why:
 - `conflicting` (CF-01, CF-02) — both require the decennial redistricting
   tables (D-004, issue #17), which were cut. Nothing to run them against.
-- `judge_groundedness` (the only LLM-judge check, issue #21) is not
-  implemented, so no row carries it.
+
+`judge_groundedness` keeps its legacy enum name, but the runner implements it
+as a deterministic grounding/evidence check and appends it to every row. It
+may report inconclusive when bounded tool evidence hides later rows.
 
 Expected geo_ids and variable_ids were verified against the real local
 snapshot before being written here, not assumed.
@@ -132,9 +134,9 @@ GOLDEN_SCENARIOS: list[EvalScenario] = [
             "PRD §7 partial_match — medians cannot be aggregated from block "
             "groups; the honest answer offers the true mean from "
             "B19025/B11001 and states the substitution. Whether it actually "
-            "explains that is a judge_groundedness question (issue #21, cut); "
-            "the deterministic half only checks it engages with 'median' at "
-            "all and doesn't error."
+            "explains that substitution remains unscored; the deterministic "
+            "grounding check covers numeric evidence, while the declared "
+            "checks only require engagement with 'median' and no error."
         ),
     ),
     EvalScenario(

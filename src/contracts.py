@@ -178,7 +178,9 @@ class CheckType(str, Enum):
     NO_MEDIAN_AGGREGATION = "no_median_aggregation"
     NO_UNHANDLED_ERROR = "no_unhandled_error"
     NO_TOOL_ERRORS = "no_tool_errors"
-    JUDGE_GROUNDEDNESS = "judge_groundedness"  # the ONLY LLM-judge check; binary
+    # Legacy name retained for result compatibility. The implementation is a
+    # deterministic grounding/evidence check that may return inconclusive.
+    JUDGE_GROUNDEDNESS = "judge_groundedness"
 
 
 class SqlViolation(str, Enum):

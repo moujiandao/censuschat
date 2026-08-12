@@ -13,9 +13,9 @@ is testing generative behavior that mocked unit tests can't reach
 Red rows are kept and reported, never dropped to make a run look clean
 (CLAUDE.md rule 20).
 
-Not implemented: JUDGE_GROUNDEDNESS (issue #21) — the only LLM-judge
-check. No scenario currently carries it; if one did, it would be scored
-as an explicit "not implemented" failure rather than silently skipped.
+`JUDGE_GROUNDEDNESS` retains its legacy enum name, but is implemented as a
+deterministic numeric evidence check. It is appended to every scenario and
+may return an inconclusive outcome when bounded tool evidence hides later rows.
 """
 
 from __future__ import annotations
@@ -124,12 +124,6 @@ class Observation:
         """Everything the tools were asked and returned, as one searchable
         blob — this is what VARIABLE_RESOLVED / GEO_RESOLVED look in."""
         return json.dumps(self.tool_calls)
-
-    @property
-    def ran_sql_successfully(self) -> bool:
-        return any(
-            c["tool"] == "run_census_sql" and c["ok"] for c in self.tool_calls
-        )
 
     @property
     def returned_values(self) -> list[float]:

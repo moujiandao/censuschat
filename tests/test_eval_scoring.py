@@ -15,10 +15,19 @@ from evals.run_evals import (
     Observation,
     _grounding_check,
     _require_credentials,
+    _run_all,
     _scenario_outcome,
     _score_check,
 )
-from src.contracts import Check, CheckResult, CheckType, EvalOutcome
+from src.contracts import (
+    Check,
+    CheckResult,
+    CheckType,
+    EvalOutcome,
+    EvalScenario,
+    EvalSuite,
+    ScenarioCategory,
+)
 
 
 def _obs(
@@ -198,6 +207,47 @@ def test_regression_inconclusive_is_not_a_pass():
     assert _scenario_outcome(checks) == EvalOutcome.INCONCLUSIVE
 
 
+def test_run_all_persists_inconclusive_capability_in_the_denominator(monkeypatch):
+    import asyncio
+
+    passing = _obs(answer="No numeric claims.")
+    inconclusive = _grounding_obs(
+        "The largest is 999,111.",
+        rows=[{"POP": 123456}],
+        row_count=10,
+    )
+    inconclusive.terminal = "done"
+
+    async def fake_run_scenario(scenario):
+        return (inconclusive if scenario.id == "CAP-TEST" else passing), 0.1
+
+    monkeypatch.setattr("evals.run_evals._run_scenario", fake_run_scenario)
+    scenarios = [
+        EvalScenario(
+            id="REG-TEST",
+            category=ScenarioCategory.DIRECT_FACT,
+            suite=EvalSuite.REGRESSION,
+            turns=["regression"],
+            checks=[Check(type=CheckType.NO_UNHANDLED_ERROR)],
+        ),
+        EvalScenario(
+            id="CAP-TEST",
+            category=ScenarioCategory.DIRECT_FACT,
+            suite=EvalSuite.CAPABILITY,
+            turns=["capability"],
+            checks=[Check(type=CheckType.NO_UNHANDLED_ERROR)],
+        ),
+    ]
+
+    run = asyncio.run(_run_all(scenarios))
+    result = {item.scenario_id: item for item in run.results}["CAP-TEST"]
+
+    assert result.suite == EvalSuite.CAPABILITY
+    assert result.outcome == EvalOutcome.INCONCLUSIVE
+    assert result.passed is False
+    assert run.pass_rate == 0.5
+
+
 def test_median_aggregation_is_rejected():
     obs = _obs(tool_calls=[{
         "tool": "run_census_sql",
@@ -207,6 +257,39 @@ def test_median_aggregation_is_rejected():
     }])
     check = Check(type=CheckType.NO_MEDIAN_AGGREGATION, expected="B19013e1")
     assert _score_check(check, obs).outcome == EvalOutcome.FAIL
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        'SELECT SUM("B01003e1") FROM t',
+        'SELECT AVG("B11012e1") FROM t',
+    ],
+)
+def test_aggregation_of_another_variable_passes_median_check(sql):
+    obs = _obs(tool_calls=[{
+        "tool": "run_census_sql",
+        "args": json.dumps({"sql": sql}),
+        "ok": True,
+        "summary": {},
+    }])
+    check = Check(type=CheckType.NO_MEDIAN_AGGREGATION, expected="B19013e1")
+
+    assert _score_check(check, obs).outcome == EvalOutcome.PASS
+
+
+def test_median_variable_outside_sum_or_avg_passes():
+    obs = _obs(tool_calls=[{
+        "tool": "run_census_sql",
+        "args": json.dumps({
+            "sql": 'SELECT "B19013e1", AVG("B01003e1") FROM t',
+        }),
+        "ok": True,
+        "summary": {},
+    }])
+    check = Check(type=CheckType.NO_MEDIAN_AGGREGATION, expected="B19013e1")
+
+    assert _score_check(check, obs).outcome == EvalOutcome.PASS
 
 
 @pytest.mark.parametrize("sql", ["SELECT (", ""])
