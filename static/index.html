@@ -81,7 +81,9 @@
   code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
   .examples { padding: 14px 4px 0; }
-  .examples h2 { margin: 0 0 8px; color: var(--muted); font-size: 12px; }
+  .examples-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .examples h2 { margin: 0; color: var(--muted); font-size: 12px; }
+  #new-chat { border: 1px solid var(--border); padding: 6px 10px; background: none; color: var(--primary); font-size: 12px; }
   .example-list { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .example-question {
     border: 1px solid var(--border);
@@ -172,7 +174,10 @@
 
   <section class="panel active" id="panel-chat">
     <div class="examples">
-      <h2>Example questions</h2>
+      <div class="examples-heading">
+        <h2>Example questions</h2>
+        <button type="button" id="new-chat">New Chat</button>
+      </div>
       <div class="example-list">
         <button type="button" class="example-question" data-example="0"><strong>Start with a factual question</strong><span>Population of Harris County, Texas?</span></button>
         <button type="button" class="example-question" data-example="1"><strong>Follow up after the first question</strong><span>What about households?</span></button>
@@ -255,7 +260,7 @@
 (function () {
   "use strict";
 
-  const sessionId = (function () {
+  let sessionId = (function () {
     const key = "censuschat_session_id";
     let id = localStorage.getItem(key);
     if (!id) {
@@ -270,6 +275,7 @@
   const formEl = document.getElementById("form");
   const inputEl = document.getElementById("input");
   const sendEl = document.getElementById("send");
+  const newChatEl = document.getElementById("new-chat");
   const bannerEl = document.getElementById("banner");
   const evidenceContentEl = document.getElementById("evidence-content");
   const evidenceSessionEl = document.getElementById("evidence-session");
@@ -524,10 +530,13 @@
   }
 
   async function loadEvidence() {
+    const requestedSessionId = historySessionId;
     try {
-      const response = await fetch("/api/traces?session_id=" + encodeURIComponent(historySessionId));
+      const response = await fetch("/api/traces?session_id=" + encodeURIComponent(requestedSessionId));
+      if (requestedSessionId !== historySessionId) return;
       if (!response.ok) throw new Error("trace request failed");
       const traces = (await response.json()).traces || [];
+      if (requestedSessionId !== historySessionId) return;
       evidenceContentEl.innerHTML = "";
       if (!traces.length) {
         evidenceContentEl.innerHTML = '<p class="empty-state">No turns recorded for this session yet.</p>';
@@ -539,6 +548,7 @@
       });
       turnCounter = traces.length;
     } catch (error) {
+      if (requestedSessionId !== historySessionId) return;
       evidenceContentEl.innerHTML = "<p class='empty-state'>Couldn't load evidence.</p>";
     }
   }
@@ -609,7 +619,23 @@
   function setBusy(busy) {
     inputEl.disabled = busy;
     sendEl.disabled = busy;
+    newChatEl.disabled = busy;
   }
+
+  function startNewChat() {
+    sessionId = crypto.randomUUID();
+    localStorage.setItem("censuschat_session_id", sessionId);
+    historySessionId = sessionId;
+    turnCounter = 0;
+    logEl.textContent = "";
+    inputEl.value = "";
+    statusEl.textContent = "";
+    evidenceContentEl.innerHTML = '<p class="empty-state">No turns recorded for this session yet.</p>';
+    loadSessionPicker();
+    inputEl.focus();
+  }
+
+  newChatEl.addEventListener("click", startNewChat);
 
   function setPending(bubble, text) {
     if (bubble._done) return;

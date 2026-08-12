@@ -43,6 +43,22 @@ def test_chat_has_four_example_questions():
     assert html.count('class="example-question"') == 4
 
 
+def test_new_chat_control_starts_a_fresh_persisted_session():
+    html = _html()
+    assert 'id="new-chat"' in html
+    assert "let sessionId" in html
+    assert 'localStorage.setItem("censuschat_session_id", sessionId)' in html
+    assert 'logEl.textContent = ""' in html
+    assert "newChatEl.disabled = busy" in html
+    assert 'newChatEl.addEventListener("click", startNewChat)' in html
+
+
+def test_old_evidence_response_cannot_repopulate_a_new_chat():
+    html = _html()
+    assert "const requestedSessionId = historySessionId" in html
+    assert html.count("if (requestedSessionId !== historySessionId) return;") == 3
+
+
 def test_evidence_defaults_to_curated_trace_with_optional_raw_json():
     html = _html()
     assert 'id="evidence-content"' in html
