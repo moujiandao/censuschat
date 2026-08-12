@@ -508,6 +508,15 @@ def test_a_figure_present_in_the_returned_row_passes():
     assert _grounding_check(obs).passed is True
 
 
+def test_a_figure_inside_a_returned_presentation_string_passes():
+    obs = _grounding_obs(
+        "The median is $250,000 or more.",
+        rows=[{"INCOME": "$250,000 or more"}],
+    )
+
+    assert _grounding_check(obs).passed is True
+
+
 def test_a_rounded_difference_absent_from_the_row_fails():
     """The bounded trace proves only the row cells, not which arithmetic the
     model performed. A derived claim absent from the captured row is not

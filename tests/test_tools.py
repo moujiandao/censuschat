@@ -500,6 +500,36 @@ def test_run_census_sql_normalizes_same_variable_across_union_branches(monkeypat
     assert result.rows == [{"INCOME": "$250,000 or more"}]
 
 
+def test_run_census_sql_normalizes_reordered_union_all_by_name_branches(monkeypatch):
+    sql = (
+        'SELECT "B19013e1" AS income, "B19001e1" AS households '
+        'FROM US_CENSUS.PUBLIC."2020_CBG_B19" UNION ALL BY NAME '
+        'SELECT "B19001e1" AS households, "B19013e1" AS income '
+        'FROM US_CENSUS.PUBLIC."2020_CBG_B19"'
+    )
+    fake = FakeSqlConnection(columns=["INCOME", "HOUSEHOLDS"], rows=[(250001.0, 7)])
+    monkeypatch.setattr(tools, "_connect", lambda **kwargs: fake)
+
+    result = tools.run_census_sql(sql)
+
+    assert result.rows == [{"INCOME": "$250,000 or more", "HOUSEHOLDS": 7}]
+
+
+def test_run_census_sql_leaves_mixed_union_all_by_name_lineage_raw(monkeypatch):
+    sql = (
+        'SELECT "B19013e1" AS value, "B19001e1" AS households '
+        'FROM US_CENSUS.PUBLIC."2020_CBG_B19" UNION ALL BY NAME '
+        'SELECT "B19013e1" AS households, "B19001e1" AS value '
+        'FROM US_CENSUS.PUBLIC."2020_CBG_B19"'
+    )
+    fake = FakeSqlConnection(columns=["VALUE", "HOUSEHOLDS"], rows=[(250001.0, 7)])
+    monkeypatch.setattr(tools, "_connect", lambda **kwargs: fake)
+
+    result = tools.run_census_sql(sql)
+
+    assert result.rows == [{"VALUE": 250001.0, "HOUSEHOLDS": 7}]
+
+
 def test_run_census_sql_does_not_falsely_top_code_mixed_union_lineage(monkeypatch):
     sql = (
         'SELECT "B19013e1" AS value FROM US_CENSUS.PUBLIC."2020_CBG_B19" '

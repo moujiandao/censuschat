@@ -159,7 +159,15 @@ class Observation:
                     try:
                         values.append(float(v.replace(",", "")))
                     except ValueError:
-                        pass
+                        # Result-seam normalization can turn a numeric cell
+                        # into presentation text such as "$250,000 or more".
+                        # The number is still evidence from this row, not from
+                        # SQL text or another tool, so retain numeric tokens
+                        # embedded in that returned cell.
+                        values.extend(
+                            float(token.replace(",", ""))
+                            for token in _FIGURE_RE.findall(v)
+                        )
         return values
 
     @property

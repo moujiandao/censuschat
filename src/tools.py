@@ -199,44 +199,69 @@ def resolve_geography(name: str, level_hint: GeoLevel | None = None) -> GeoResol
 def _projection_variable_ids(sql: str) -> dict[str, str]:
     tree = parse_one(sql, read="snowflake")
 
-    def contributing_selects(node: exp.Expression) -> list[exp.Select]:
+    def direct_variable_id(projection: exp.Expression) -> str | None:
+        column = (
+            projection
+            if isinstance(projection, exp.Column)
+            else projection.this
+            if isinstance(projection, exp.Alias)
+            and isinstance(projection.this, exp.Column)
+            else None
+        )
+        if column is None or not _VARIABLE_ID_RE.fullmatch(column.name):
+            return None
+        return column.name
+
+    def projected_lineage(
+        node: exp.Expression,
+    ) -> list[tuple[str, str | None]]:
         while isinstance(node, exp.Subquery):
             node = node.this
+        if isinstance(node, exp.Select):
+            return [
+                (projection.alias_or_name.upper(), direct_variable_id(projection))
+                for projection in node.expressions
+            ]
         if isinstance(node, exp.SetOperation):
-            return contributing_selects(node.this) + contributing_selects(
-                node.expression
-            )
-        return [node] if isinstance(node, exp.Select) else []
+            left = projected_lineage(node.this)
+            right = projected_lineage(node.expression)
+            if node.args.get("by_name"):
+                right_names = [name for name, _ in right]
+                right_by_name = dict(right)
+                return [
+                    (
+                        name,
+                        variable_id
+                        if variable_id is not None
+                        and right_names.count(name) == 1
+                        and right_by_name.get(name) == variable_id
+                        else None,
+                    )
+                    for name, variable_id in left
+                ]
+            if len(left) != len(right):
+                return [(name, None) for name, _ in left]
+            return [
+                (
+                    left_name,
+                    left_variable
+                    if left_variable is not None and left_variable == right_variable
+                    else None,
+                )
+                for (left_name, left_variable), (_, right_variable) in zip(left, right)
+            ]
+        return []
 
-    branches = contributing_selects(tree)
-    if not branches:
+    lineage = projected_lineage(tree)
+    if not lineage:
         return {}
 
-    projections = [branch.expressions for branch in branches]
-    if not projections or any(
-        len(items) != len(projections[0]) for items in projections
-    ):
-        return {}
-
-    result: dict[str, str] = {}
-    for index, first in enumerate(projections[0]):
-        columns = []
-        for items in projections:
-            projection = items[index]
-            column = (
-                projection
-                if isinstance(projection, exp.Column)
-                else projection.this
-                if isinstance(projection, exp.Alias)
-                and isinstance(projection.this, exp.Column)
-                else None
-            )
-            if column is None or not _VARIABLE_ID_RE.fullmatch(column.name):
-                break
-            columns.append(column.name)
-        if columns and len(columns) == len(projections) and len(set(columns)) == 1:
-            result[first.alias_or_name.upper()] = columns[0]
-    return result
+    names = [name for name, _ in lineage]
+    return {
+        name: variable_id
+        for name, variable_id in lineage
+        if variable_id is not None and names.count(name) == 1
+    }
 
 
 def _presentation_value(
