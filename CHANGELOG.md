@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Move How It Works to the end of the four-tab reviewer navigation without changing panel behavior (D-028).
 - Return the exact SQL-ready `physical_table` with every ACS variable search hit (D-024), so the agent copies `2020_CBG_B11` for `B11012e1` instead of spending a recovery attempt on the nonexistent `2020_CBG_B11012`.
 - Add an opt-in `NO_TOOL_ERRORS` golden-eval check (D-025) and apply it to MT-01, so a correct final answer no longer hides a failed table-routing attempt.
 
@@ -250,5 +251,6 @@ Decisions, recorded in full in [`docs/decisions.md`](docs/decisions.md).
 | `D-025` | Golden evals distinguish clean execution from recovery |
 | `D-026` | Eval suites and tri-state outcomes are additive |
 | `D-027` | The reviewer interface has four ordered surfaces |
+| `D-028` | How It Works moves to the end of reviewer navigation |
 
 <!-- END id-reference -->

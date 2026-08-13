@@ -60,9 +60,9 @@ entry, flagged inline.
     config module: Sonnet for the agent, Haiku for the classifier.
 15. Frontend is one static HTML file (vanilla JS, CDN assets only, no build
     step) with three tabs: Chat, Evals, Flow Diagram.
-    *D-027 supersedes the historical five-tab implementation: the shipped
-    reviewer surfaces are Chat, How It Works, Evidence, and Evals. The
-    single-file/no-build half remains binding.*
+    *D-027 supersedes the historical five-tab implementation, with ordering
+    amended by D-028: the shipped reviewer surfaces are Chat, Evidence, Evals,
+    and How It Works. The single-file/no-build half remains binding.*
 16. Session state = full history replay from SQLite keyed by `session_id`.
 17. Every turn is one Langfuse trace: `session_id` in metadata; spans for
     guardrail, each tool call, and each model call; token counts and

@@ -33,9 +33,9 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_PATH = ROOT / "output" / "pdf" / "censuschat-interview-manual.pdf"
 UI_SCREENSHOT = ROOT / "docs" / "assets" / "censuschat-reviewer-ui.png"
 
-APP_SNAPSHOT = "606e35b"
-VERIFIED_DATE = "2026-08-12"
-OFFLINE_TESTS = "449"
+APP_SNAPSHOT = "3a8e2df"
+VERIFIED_DATE = "2026-08-13"
+OFFLINE_TESTS = "455"
 DEPLOYED_URL = "https://censuschat.brianmar.com"
 
 NAVY = colors.HexColor("#0F2440")
@@ -666,7 +666,7 @@ def add_opening(story: list[Flowable]) -> None:
     story.append(Spacer(1, 5))
     screenshot = Image(str(UI_SCREENSHOT), width=CONTENT_W, height=CONTENT_W * 480 / 853)
     story.append(screenshot)
-    story.append(P("Current reviewer surface: Chat, How It Works, Evidence, Evals, plus a New Chat boundary for session isolation.", "caption"))
+    story.append(P("Current reviewer surface: Chat, Evidence, Evals, How It Works, plus a New Chat boundary for session isolation.", "caption"))
     story.append(Spacer(1, 5))
     story.append(
         callout(
