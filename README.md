@@ -14,15 +14,13 @@ architecture** (start at [Architecture](#architecture)).
 
 **URL:** https://censuschat.brianmar.com
 
-| | |
-|---|---|
-| Username | `snowflake` |
-| Password | `census` |
+The demo is protected by HTTP Basic Auth. Request access credentials from the
+project owner rather than storing them in this public repository.
 
-Health check, if you want to confirm the backend before opening the UI:
+Health check, using the supplied credentials:
 
 ```bash
-curl -u snowflake:census https://censuschat.brianmar.com/api/health
+curl -u '<username>:<password>' https://censuschat.brianmar.com/api/health
 # {"status":"ok","snapshot":"ok","snowflake":"ok"}
 ```
 
