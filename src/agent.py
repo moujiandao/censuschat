@@ -98,16 +98,14 @@ _DEGRADED_MESSAGE = (
     "can't answer this. Please try again in a few minutes."
 )
 
-# Architecture §2/PRD §4.2: the join topology (CBG decomposition, roll-up
-# recipes, table-number -> physical-table mapping) is closed and tiny, so it
-# is prompt content. The variable vocabulary is open and huge, so it is data
-# reached only via search_census_variables — this prompt names no variable
-# ID or label (CLAUDE.md rule 3). "B19xxx" below is the PRD's own worked
-# example of the *pattern*, not a field.
+# Architecture §2/PRD §4.2: the CBG decomposition and roll-up recipes are
+# closed and tiny, so they are prompt content. Variable vocabulary and exact
+# physical-table routing are data reached only via search_census_variables,
+# so this prompt names no variable ID or label (CLAUDE.md rule 3).
 SYSTEM_PROMPT = """You are censuschat, an assistant that answers questions about US demographics using 2020 ACS 5-year data (2016-2020 estimates) from Census block groups (CBGs).
 
 You have exactly three tools:
-- search_census_variables(query, limit): find variable IDs by natural-language description. Never guess or state a variable ID that didn't come from this tool.
+- search_census_variables(query, limit): find variable IDs by natural-language description. Each hit includes its exact SQL-ready physical_table. Never guess or state a variable ID that didn't come from this tool.
 - resolve_geography(name, level_hint): find geography IDs (state/county) by name. If the result is ambiguous (multiple candidates), ask the user which one they mean — never silently pick one.
 - run_census_sql(sql): the only way to query Snowflake. Every SELECT must be validated by the SQL gate before it runs.
 
@@ -117,7 +115,7 @@ Data model — every demographic table is at CBG grain; there are no separate tr
   positions 6-11  tract
   position 12     block group
 Roll-up recipes: state = SUBSTR(CENSUS_BLOCK_GROUP,1,2); county = SUBSTR(CENSUS_BLOCK_GROUP,1,5); tract = SUBSTR(CENSUS_BLOCK_GROUP,1,11).
-The physical table for a variable is selected by its TABLE_NUMBER prefix, e.g. a TABLE_NUMBER like B19xxx lives in table "2020_CBG_B19"; TABLE_ID suffix e<n> is the estimate, m<n> is its margin of error.
+Every variable search hit includes physical_table, the exact SQL-ready table that contains the variable. Copy physical_table exactly into every FROM clause. Never derive or guess a table name from variable_id or TABLE_NUMBER. TABLE_ID suffix e<n> is the estimate, m<n> is its margin of error.
 
 Correctness rules, in order of how costly a violation is:
 1. Every variable_id column reference MUST be double-quoted, exactly as returned by search_census_variables (e.g. "B01001e23", not B01001e23). These columns were created case-sensitively; an unquoted reference gets folded to uppercase by Snowflake and fails with "invalid identifier" even though the column exists. This is the single most common cause of a failed query — quote every variable_id, every time, with no exceptions.
@@ -127,8 +125,8 @@ Correctness rules, in order of how costly a violation is:
 5. Check each variable's universe (population vs. households vs. workers, etc.) before dividing one by another — they are not interchangeable denominators.
 6. Every query names its columns explicitly and either aggregates to the asked-for level or carries its own ORDER BY ... LIMIT sized to the question (1 row for a single place, a handful for a comparison). Never SELECT *.
 
-Aggregation pattern (SUM over the CBGs in the requested geography, using a variable_id you got from search_census_variables — replace <variable_id> and <table> with real values from your tool results, keeping the double quotes around <variable_id> exactly as shown):
-  SELECT SUM("<variable_id>") FROM US_CENSUS.PUBLIC."<table>" WHERE SUBSTR(CENSUS_BLOCK_GROUP,1,5) = '<county_geo_id>'
+Aggregation pattern (SUM over the CBGs in the requested geography, using variable_id and physical_table from the same search_census_variables hit, keeping the double quotes around <variable_id> exactly as shown):
+  SELECT SUM("<variable_id>") FROM <physical_table> WHERE SUBSTR(CENSUS_BLOCK_GROUP,1,5) = '<county_geo_id>'
 
 Grounding — the single most important rule: every number in your answer must come from this turn's run_census_sql results. If a query returns zero rows, that is an honest "not found" — never state a number that didn't come back from a query. If something fails, say plainly what you tried and what happened; do not fabricate a plausible-sounding answer.
 
@@ -145,8 +143,8 @@ _TOOL_DEFS: list[dict[str, Any]] = [
         "name": "search_census_variables",
         "description": (
             "FTS5 search over the local Census variable snapshot. Returns "
-            "matching variable_ids with coverage metadata (geo_levels, "
-            "years) — never touches Snowflake."
+            "matching variable_ids, their exact SQL-ready physical_table, "
+            "and coverage metadata (geo_levels, years) — never touches Snowflake."
         ),
         "input_schema": {
             "type": "object",

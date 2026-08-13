@@ -1,5 +1,11 @@
 # Changelog
 
+## [2026-08-13]
+
+### Fixed
+
+- Return the exact SQL-ready `physical_table` with every ACS variable search hit (D-024), so the agent copies `2020_CBG_B11` for `B11012e1` instead of spending a recovery attempt on the nonexistent `2020_CBG_B11012`.
+
 ## [2026-08-06]
 
 ### Added
@@ -219,5 +225,6 @@ Decisions, recorded in full in [`docs/decisions.md`](docs/decisions.md).
 | `D-021` | Langfuse cut; the span model shipped in-process |
 | `D-022` | The unrun backlog is deleted; the set is 14 examples that all ran |
 | `D-023` | Trace history is durable, and has no per-session cap |
+| `D-024` | Variable search returns the exact physical table |
 
 <!-- END id-reference -->
