@@ -720,6 +720,7 @@ def test_filtered_run_writes_nothing_to_results(tmp_path, monkeypatch):
         return _obs(answer="stub", terminal="done"), 0.1
 
     monkeypatch.setattr(run_evals, "RESULTS_DIR", tmp_path)
+    monkeypatch.setattr(run_evals, "_require_credentials", lambda: None)
     monkeypatch.setattr(run_evals, "_run_scenario", _fake_run)
     monkeypatch.setattr(sys, "argv", ["run_evals", "--only", "DF-01"])
 
@@ -739,6 +740,7 @@ def test_unfiltered_run_does_write_results(tmp_path, monkeypatch):
         return _obs(answer="stub", terminal="done"), 0.1
 
     monkeypatch.setattr(run_evals, "RESULTS_DIR", tmp_path)
+    monkeypatch.setattr(run_evals, "_require_credentials", lambda: None)
     monkeypatch.setattr(run_evals, "_run_scenario", _fake_run)
     monkeypatch.setattr(sys, "argv", ["run_evals"])
 

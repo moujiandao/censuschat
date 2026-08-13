@@ -41,6 +41,13 @@ def isolated_session_db_path(tmp_path, monkeypatch):
     monkeypatch.setattr(sessions, "SESSION_DB_PATH", tmp_path / "sessions.sqlite3")
 
 
+@pytest.fixture(autouse=True)
+def available_app(monkeypatch):
+    """Agent-loop tests fake downstream services, so local app health is not
+    part of their setup unless a test overrides this fixture explicitly."""
+    monkeypatch.setattr(agent, "is_degraded", lambda: False)
+
+
 class _FakeStream:
     def __init__(self, chunks: list[str], final_message) -> None:
         self._chunks = chunks
