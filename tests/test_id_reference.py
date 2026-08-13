@@ -26,6 +26,27 @@ from scripts.build_id_reference import (
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def test_decision_parser_accepts_current_and_legacy_heading_separators(
+    tmp_path, monkeypatch
+):
+    import scripts.build_id_reference as id_reference
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "decisions.md").write_text(
+        "## D-023 \N{EM DASH} Legacy heading (2026-08-06)\n"
+        "## D-024: Current heading (2026-08-13)\n"
+        "## D-025 - Current alternate (2026-08-13)\n"
+    )
+    monkeypatch.setattr(id_reference, "ROOT", tmp_path)
+
+    assert id_reference._decisions() == {
+        "D-023": "Legacy heading",
+        "D-024": "Current heading",
+        "D-025": "Current alternate",
+    }
+
+
 def test_every_scenario_id_used_in_a_doc_resolves_to_something():
     """An id with no definition renders as "no definition found", which is an
     honest placeholder and not something to ship."""

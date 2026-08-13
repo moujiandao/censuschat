@@ -106,8 +106,12 @@ def _truncate(text: str, limit: int = 110) -> str:
 def _decisions() -> dict[str, str]:
     text = (ROOT / "docs/decisions.md").read_text()
     out: dict[str, str] = {}
-    for match in re.finditer(r"^## (D-0\d{2}) — (.+?)\s*(?:\(\d{4}-\d{2}-\d{2}.*?\))?$",
-                             text, re.M):
+    for match in re.finditer(
+        r"^## (D-0\d{2})(?: \N{EM DASH} |: | - )(.+?)\s*"
+        r"(?:\(\d{4}-\d{2}-\d{2}.*?\))?$",
+        text,
+        re.M,
+    ):
         out[match.group(1)] = match.group(2).strip()
     return out
 

@@ -55,6 +55,36 @@ def test_no_unhandled_error_fails_on_error_terminal():
     assert result.passed is False
 
 
+def test_no_tool_errors_is_a_frozen_contract_member():
+    assert CheckType("no_tool_errors") is CheckType.NO_TOOL_ERRORS
+
+
+def test_no_tool_errors_passes_when_every_recorded_call_succeeded():
+    check = Check(type=CheckType.NO_TOOL_ERRORS)
+    calls = [
+        {"tool": "search_census_variables", "args": "{}", "ok": True, "summary": {}},
+        _sql_call(ok=True),
+    ]
+
+    result = _score_check(check, _obs(tool_calls=calls))
+
+    assert result.passed is True
+    assert result.observed == "2 tool calls, 0 failed"
+
+
+def test_no_tool_errors_fails_when_any_recorded_call_failed():
+    check = Check(type=CheckType.NO_TOOL_ERRORS)
+    calls = [
+        _sql_call(ok=False),
+        _sql_call(ok=True),
+    ]
+
+    result = _score_check(check, _obs(tool_calls=calls))
+
+    assert result.passed is False
+    assert result.observed == "2 tool calls, 1 failed: run_census_sql"
+
+
 def test_answer_contains_is_case_insensitive():
     check = Check(type=CheckType.ANSWER_CONTAINS, expected="Travis")
     assert _score_check(check, _obs(answer="…mostly in travis county…")).passed is True

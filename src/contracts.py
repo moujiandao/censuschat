@@ -164,6 +164,7 @@ class CheckType(str, Enum):
     GEO_RESOLVED = "geo_resolved"            # expected geo_id in tool trace
     ANSWER_CONTAINS = "answer_contains"      # grounded number/substring in answer
     NO_UNHANDLED_ERROR = "no_unhandled_error"
+    NO_TOOL_ERRORS = "no_tool_errors"
     JUDGE_GROUNDEDNESS = "judge_groundedness"  # the ONLY LLM-judge check; binary
 
 

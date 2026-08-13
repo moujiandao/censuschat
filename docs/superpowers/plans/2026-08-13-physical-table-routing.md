@@ -220,6 +220,16 @@ git commit -m "fix: use deterministic physical table routing"
 
 ### Task 3: Review the completed code change
 
+Before the final review, add the approved D-025 eval regression gate:
+
+- [ ] Add failing tests proving `NO_TOOL_ERRORS` is a `CheckType`, passes when
+  every recorded tool call succeeds, and fails when any recorded call has
+  `ok=False`.
+- [ ] Add `CheckType.NO_TOOL_ERRORS`, implement deterministic accumulated-call
+  scoring in `evals/run_evals.py`, and attach the check to MT-01.
+- [ ] Record D-025 in `docs/decisions.md`, regenerate docs, and rerun the full
+  offline suite before review.
+
 **Files:**
 - Review: all files changed since `main`
 

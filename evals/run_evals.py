@@ -214,6 +214,13 @@ def _score_check(check: Check, obs: Observation) -> CheckResult:
         passed = obs.terminal == "done" and not obs.errored
         return CheckResult(check=check, passed=passed, observed=f"terminal={obs.terminal}")
 
+    if check.type == CheckType.NO_TOOL_ERRORS:
+        failed = [c.get("tool", "unknown") for c in obs.tool_calls if not c.get("ok")]
+        observed = f"{len(obs.tool_calls)} tool calls, {len(failed)} failed"
+        if failed:
+            observed += ": " + ", ".join(failed)
+        return CheckResult(check=check, passed=not failed, observed=observed)
+
     if check.type == CheckType.ANSWER_CONTAINS:
         passed = expected.lower() in obs.final_answer.lower()
         return CheckResult(check=check, passed=passed, observed=obs.final_answer[:200])

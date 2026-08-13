@@ -66,6 +66,11 @@ The live MT-01 eval is useful confirmation but is not part of routine offline
 verification because it requires real Anthropic and Snowflake credentials and
 incurs cost.
 
+MT-01 also gains a deterministic `NO_TOOL_ERRORS` check. A recovered turn with
+a correct final answer is red if any tool call failed, which makes the original
+bad-table request visible in the golden artifact. This check is added to the
+frozen eval contract under approved decision D-025.
+
 ## Documentation
 
 Update `CHANGELOG.md`, record D-024 in `docs/decisions.md`, and run `make docs`

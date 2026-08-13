@@ -144,7 +144,7 @@ _TOOL_DEFS: list[dict[str, Any]] = [
         "description": (
             "FTS5 search over the local Census variable snapshot. Returns "
             "matching variable_ids, their exact SQL-ready physical_table, "
-            "and coverage metadata (geo_levels, years) — never touches Snowflake."
+            "and coverage metadata (geo_levels, years). Never touches Snowflake."
         ),
         "input_schema": {
             "type": "object",

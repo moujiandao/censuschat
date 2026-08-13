@@ -970,7 +970,7 @@ outage. One unparseable row costs that turn, not the session's history.
 
 ---
 
-## D-024 — Variable search returns the exact physical table (2026-08-13)
+## D-024: Variable search returns the exact physical table (2026-08-13)
 
 **Status:** approved by Brian on 2026-08-13. This is an approved change to the
 interface freeze in rule 12.
@@ -994,6 +994,27 @@ instead of reconstructing schema topology. Keep exact allowlist validation in
 sources to state their physical table. That small interface cost removes a
 deterministic routing decision from probabilistic model behavior and preserves
 one documented tool result shape.
+
+---
+
+## D-025: Golden evals distinguish clean execution from recovery (2026-08-13)
+
+**Status:** approved by Brian on 2026-08-13. This is an approved change to the
+interface freeze in rule 12.
+
+`CheckType` gains `NO_TOOL_ERRORS`. It passes only when every tool call recorded
+across a scenario has `ok=True`. MT-01 uses it to detect the original routing
+failure, where `run_census_sql` rejected `2020_CBG_B11012` before a retry
+produced the correct final answer.
+
+`NO_UNHANDLED_ERROR` remains unchanged. It answers whether the stream reached a
+clean terminal state, while `NO_TOOL_ERRORS` answers whether the model executed
+the tool plan without recovery. Combining those meanings would hide which
+property failed and would change existing scenarios implicitly.
+
+**Tradeoff:** some useful recovery behavior will now make a scenario carrying
+this check red. That is intentional for targeted efficiency and reliability
+regressions. The check is opt-in rather than applied to every scenario.
 
 ---
 

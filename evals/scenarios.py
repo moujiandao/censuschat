@@ -75,10 +75,12 @@ GOLDEN_SCENARIOS: list[EvalScenario] = [
         checks=[
             Check(type=CheckType.GEO_RESOLVED, expected="48201"),
             Check(type=CheckType.NO_UNHANDLED_ERROR),
+            Check(type=CheckType.NO_TOOL_ERRORS),
         ],
         notes=(
             "PRD §7 multi_turn — the second turn must reuse the geography "
-            "without restatement. Checks accumulate across both turns."
+            "without restatement. Checks accumulate across both turns; any "
+            "failed tool call catches a recovered table-routing regression."
         ),
     ),
     EvalScenario(
