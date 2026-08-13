@@ -810,36 +810,53 @@ def add_data_model(story: list[Flowable]) -> None:
         section_header(
             "05",
             "Data model and statistical correctness",
-            "Many plausible-looking Census answers are wrong because the aggregation is invalid, not because the SQL failed.",
+            "The database stores small geographic pieces. The app can combine some measures into county or state answers, but not all of them.",
         )
     )
-    rows = [
-        ["Source", "SafeGraph Open Census Data share on Snowflake Marketplace, 2020 ACS 5-year estimates covering 2016-2020."],
-        ["Physical grain", "Census block group. State and county answers roll up CBG rows using FIPS prefixes."],
-        ["Supported geography", "State and county. No city/place, ZIP, or metro boundary exists in the shipped source."],
-        ["Searchable vocabulary", "All supported estimate fields are indexed locally; margin-of-error and B99 allocation rows are excluded from retrieval to avoid plausible near-miss answers."],
-        ["Vintage", "2020 only, enforced by the SQL table allowlist rather than by a prompt preference."],
-    ]
-    story.append(data_table(["Concept", "Implementation"], rows, [1.35 * inch, 5.39 * inch]))
-    story.append(Spacer(1, 8))
-    story.append(P("The aggregation rules to explain", "h2"))
-    story.append(bullet("<b>Counts roll up by SUM.</b> State and county filters use prefixes of the 12-character CENSUS_BLOCK_GROUP code."))
-    story.append(bullet("<b>Medians never aggregate.</b> SUM or AVG of block-group medians is statistically invalid. The agent may offer a true mean only when a valid aggregate numerator and denominator exist."))
-    story.append(bullet("<b>Universes must match.</b> Population, households, workers, and occupied units are not interchangeable denominators."))
-    story.append(bullet("<b>NULL is not zero.</b> For direct or simply aliased variables with known lineage, NULL becomes 'not reported' and the verified income top-code becomes '$250,000 or more.' Derived and aggregate projections remain unchanged at that seam."))
+    story.append(P("Think about the data in three steps", "h2"))
     story.append(
         callout(
-            "Say this",
-            "The system treats statistical validity as data and code wherever possible. A query can be syntactically safe and still be analytically wrong, so retrieval metadata tells the agent which variables can roll up.",
+            "STORE",
+            "<b>1. Start with the smallest unit.</b><br/>Each source row describes one Census block group in the 2020 ACS five-year estimates. A block group has its own population count, household count, income statistics, and other measures.",
             "say",
         )
     )
+    story.append(
+        callout(
+            "ADD",
+            "<b>2. Add counts to answer larger-geography questions.</b><br/>Population is additive. <b>Harris County population = sum of its block-group population counts.</b> The same idea works for other counts when every row measures the same universe.",
+            "why",
+        )
+    )
+    story.append(
+        callout(
+            "STOP",
+            "<b>3. Do not combine medians.</b><br/>Two block groups report median household incomes of $55k and $95k. Their average is $75k, but that does not make the county median $75k. The block groups may contain different numbers and distributions of households, so the true county median cannot be reconstructed from those two medians.",
+            "warn",
+        )
+    )
+    story.append(Spacer(1, 8))
+    story.append(P("QUICK RULES", "h2"))
+    rules = [
+        ["Match the universe", "People, households, workers, and occupied housing units are different populations."],
+        ["Missing is not zero", "NULL becomes 'not reported.' A verified income top-code displays as $250,000 or more."],
+        ["Supported rollups", "The shipped source supports state and county answers, not city, ZIP, or metro boundaries."],
+        ["One vintage", "Only the 2020 ACS five-year release is queryable, and the SQL table allowlist enforces it."],
+    ]
+    story.append(data_table(["Rule", "Plain-English meaning"], rules, [1.48 * inch, 5.26 * inch], compact=True))
     story.append(Spacer(1, 7))
-    story.append(P("Why 2015-2019 was not added", "h2"))
+    story.append(P("Why not compare 2015-2019 with 2016-2020?", "h2"))
     story.append(
         P(
-            "The two available ACS five-year releases overlap in four of five years, and 2020 redrew block-group boundaries. Adding the older tables would double retrieval ambiguity without making a clean trend comparison valid. If multi-vintage access became a requirement, the next design would add vintage to retrieval results and reject cross-vintage statements in code.",
+            "Those five-year estimates share four of the same years, and the 2020 release uses changed block-group boundaries. A result might look like a trend while mostly comparing overlapping data. Supporting time comparisons would require vintage-aware retrieval and code that rejects invalid cross-vintage analysis.",
             "body_small",
+        )
+    )
+    story.append(
+        callout(
+            "Say this",
+            "The key question is not just whether SQL can aggregate rows. It is whether the statistic itself is valid to combine. Counts usually are; medians are not.",
+            "say",
         )
     )
     story.append(source_note("docs/schema-notes.md", "docs/decisions.md D-003/D-005/D-008", "src/tools.py"))

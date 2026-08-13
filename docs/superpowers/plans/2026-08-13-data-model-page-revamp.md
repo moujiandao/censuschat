@@ -35,7 +35,7 @@ Require generated text to include:
 ```python
 assert "1. Start with the smallest unit" in text
 assert "Harris County population = sum of its block-group population counts" in text
-assert "Neighborhood median incomes: $55k and $95k" in text
+assert "Two block groups report median household incomes of $55k and $95k" in text
 assert "does not make the county median $75k" in text
 assert "QUICK RULES" in text
 ```

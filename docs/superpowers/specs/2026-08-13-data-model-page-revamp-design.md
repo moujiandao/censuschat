@@ -10,7 +10,7 @@ The page follows one mental model in three steps:
 
 1. **What the data stores.** Each source row represents one Census block group from the 2020 ACS five-year estimates.
 2. **How larger answers are built.** Additive counts can be summed across the block groups belonging to a county or state. Example: county population is the sum of its block-group population counts.
-3. **What must not be combined.** Medians cannot be summed or averaged. Example: averaging neighborhood median incomes does not produce a valid county median income.
+3. **What must not be combined.** Medians cannot be summed or averaged. Example: averaging block-group median incomes does not produce a valid county median income.
 
 Three supporting rules remain:
 

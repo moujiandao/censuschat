@@ -14,6 +14,7 @@ def test_build_manual_contract(tmp_path: Path) -> None:
     reader = PdfReader(output)
     metadata = reader.metadata
     text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    normalized_text = " ".join(text.split())
 
     assert 12 <= len(reader.pages) <= 16
     assert metadata.title == "CensusChat Interview Manual"
@@ -30,6 +31,12 @@ def test_build_manual_contract(tmp_path: Path) -> None:
     assert "persist spans, answer, status" in text
     assert "Why is the 50-second watchdog soft?" in text
     assert "INTERVIEW CHEAT SHEET" in text.upper()
+    assert "1. Start with the smallest unit" in normalized_text
+    assert "Harris County population = sum of its block-group population counts" in normalized_text
+    assert "Two block groups report median household incomes of $55k and $95k" in normalized_text
+    assert "does not make the county median $75k" in normalized_text
+    assert "QUICK RULES" in text
+    assert "The aggregation rules to explain" not in text
 
 
 def test_build_manual_requires_ui_screenshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
