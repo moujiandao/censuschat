@@ -377,6 +377,118 @@ def test_allow_verdict_records_a_trace_with_guardrail_model_and_tool_spans(monke
     assert traces[0].terminal_status == "done"
 
 
+def test_model_spans_record_observable_trigger_action_and_usage(monkeypatch, tmp_path):
+    monkeypatch.setattr(tracing, "TRACE_DB_PATH", tmp_path / "traces.sqlite3")
+    monkeypatch.setattr(agent, "classify_input", _allow_verdict)
+    monkeypatch.setattr(
+        agent, "_run_tool", lambda name, tool_input: {"hits": [{"variable_id": "B01001e1"}]}
+    )
+    tool_response = SimpleNamespace(
+        stop_reason="tool_use",
+        content=[_search_tool_block("tool-1")],
+        usage=SimpleNamespace(
+            input_tokens=100,
+            output_tokens=12,
+            cache_read_input_tokens=80,
+            cache_creation_input_tokens=5,
+        ),
+    )
+    final_response = SimpleNamespace(
+        stop_reason="end_turn",
+        content=[],
+        usage=SimpleNamespace(
+            input_tokens=140,
+            output_tokens=8,
+            cache_read_input_tokens=100,
+            cache_creation_input_tokens=0,
+        ),
+    )
+    _install_fake_client(
+        monkeypatch,
+        [_FakeStream([], tool_response), _FakeStream(["found it."], final_response)],
+    )
+
+    _collect("s-model-evidence", "total population?")
+
+    model_spans = [
+        span for span in tracing.get_traces("s-model-evidence")[0].spans
+        if span.name.startswith("model_call_")
+    ]
+    assert model_spans[0].meta == {
+        "model": agent.AGENT_MODEL,
+        "trigger": "user request",
+        "action": "requested tool",
+        "tools_requested": ["search_census_variables"],
+        "response_preview": None,
+        "context_messages": 1,
+        "recovery_attempts": 0,
+        "input_tokens": 100,
+        "output_tokens": 12,
+        "cache_read_input_tokens": 80,
+        "cache_creation_input_tokens": 5,
+        "stop_reason": "tool_use",
+    }
+    assert model_spans[1].meta == {
+        "model": agent.AGENT_MODEL,
+        "trigger": "tool results",
+        "action": "responded to user",
+        "tools_requested": [],
+        "response_preview": "found it.",
+        "context_messages": 3,
+        "recovery_attempts": 0,
+        "input_tokens": 140,
+        "output_tokens": 8,
+        "cache_read_input_tokens": 100,
+        "cache_creation_input_tokens": 0,
+        "stop_reason": "end_turn",
+    }
+
+
+def test_model_span_identifies_recovery_after_a_tool_error(monkeypatch, tmp_path):
+    monkeypatch.setattr(tracing, "TRACE_DB_PATH", tmp_path / "traces.sqlite3")
+    monkeypatch.setattr(agent, "classify_input", _allow_verdict)
+    monkeypatch.setattr(agent, "_run_tool", _QueuedRunTool([_REJECTED]))
+    tool_response = SimpleNamespace(
+        stop_reason="tool_use", content=[_sql_tool_block("tool-1")]
+    )
+    final_response = SimpleNamespace(stop_reason="end_turn", content=[])
+    _install_fake_client(
+        monkeypatch,
+        [_FakeStream([], tool_response), _FakeStream(["I couldn't complete that."], final_response)],
+    )
+
+    _collect("s-model-recovery-evidence", "population?")
+
+    trace = tracing.get_traces("s-model-recovery-evidence")[0]
+    second_model_call = next(span for span in trace.spans if span.name == "model_call_2")
+    assert second_model_call.meta["trigger"] == "tool error"
+    assert second_model_call.meta["recovery_attempts"] == 1
+
+
+def test_model_span_identifies_recovery_after_a_zero_row_result(monkeypatch, tmp_path):
+    monkeypatch.setattr(tracing, "TRACE_DB_PATH", tmp_path / "traces.sqlite3")
+    monkeypatch.setattr(agent, "classify_input", _allow_verdict)
+    zero_rows = {
+        "columns": ["POP"], "rows": [], "row_count": 0, "truncated": False
+    }
+    monkeypatch.setattr(agent, "_run_tool", _QueuedRunTool([zero_rows]))
+    tool_response = SimpleNamespace(
+        stop_reason="tool_use", content=[_sql_tool_block("tool-1")]
+    )
+    final_response = SimpleNamespace(stop_reason="end_turn", content=[])
+    _install_fake_client(
+        monkeypatch,
+        [_FakeStream([], tool_response), _FakeStream(["No rows matched."], final_response)],
+    )
+
+    _collect("s-model-zero-row-evidence", "population?")
+
+    trace = tracing.get_traces("s-model-zero-row-evidence")[0]
+    second_model_call = next(span for span in trace.spans if span.name == "model_call_2")
+    assert second_model_call.meta["trigger"] == "zero-row result"
+    assert second_model_call.meta["recovery_attempts"] == 1
+
+
 def test_refuse_verdict_still_records_a_trace(monkeypatch, tmp_path):
     """Every exit point must record a trace, not just the normal
     completion path. Evidence should show a refused turn

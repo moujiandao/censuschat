@@ -68,6 +68,15 @@ def test_evidence_defaults_to_curated_trace_with_optional_raw_json():
     assert "trace.terminal_status" in html
 
 
+def test_evidence_explains_model_calls_from_observable_metadata():
+    html = _html()
+
+    assert "function describeModelCall(meta)" in html
+    assert '"Model decision " + span.name.slice("model_call_".length)' in html
+    assert 'setStepDetail(item, describeModelCall(meta))' in html
+    assert '["recovery attempts", meta.recovery_attempts]' in html
+
+
 def test_clean_zero_tool_done_turn_is_not_rendered_as_failed():
     html = _html()
 

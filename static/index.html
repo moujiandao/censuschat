@@ -481,6 +481,23 @@
       .map(function (key) { return [key, typeof summary[key] === "object" ? JSON.stringify(summary[key]) : String(summary[key])]; });
   }
 
+  function describeModelCall(meta) {
+    return [
+      ["trigger", meta.trigger],
+      ["action", meta.action],
+      ["tools requested", (meta.tools_requested || []).join(", ")],
+      ["response preview", meta.response_preview],
+      ["recovery attempts", meta.recovery_attempts],
+      ["model", meta.model],
+      ["context messages", meta.context_messages],
+      ["input tokens", meta.input_tokens],
+      ["output tokens", meta.output_tokens],
+      ["cache read tokens", meta.cache_read_input_tokens],
+      ["cache creation tokens", meta.cache_creation_input_tokens],
+      ["stop reason", meta.stop_reason],
+    ];
+  }
+
   function renderStoredTurn(trace, number) {
     const wrap = document.createElement("article");
     wrap.className = "evidence-turn";
@@ -491,16 +508,23 @@
     steps.className = "evidence-steps";
     wrap.appendChild(steps);
     (trace.spans || []).forEach(function (span) {
+      const meta = span.meta || {};
       const isTool = span.name.indexOf("tool:") === 0;
+      const isModel = span.name.indexOf("model_call_") === 0;
       const tool = isTool ? span.name.slice(5) : null;
-      const item = addEvidenceStep(steps, (tool || span.name) + (span.ok ? " - ok" : " - failed"), span.ok ? "ok" : "fail");
+      const label = isModel
+        ? "Model decision " + span.name.slice("model_call_".length) +
+          (meta.action ? ": " + meta.action : "")
+        : (tool || span.name) + (span.ok ? " - ok" : " - failed");
+      const item = addEvidenceStep(steps, label, span.ok ? "ok" : "fail");
       const timing = document.createElement("span");
       timing.className = "ms";
       timing.textContent = span.latency_ms + "ms";
       item.querySelector(".step-head").appendChild(timing);
-      const meta = span.meta || {};
       if (isTool) {
         setStepDetail(item, describeArgs(tool, meta.args_preview || "").concat(describeResult(tool, meta)));
+      } else if (isModel) {
+        setStepDetail(item, describeModelCall(meta));
       } else {
         setStepDetail(item, Object.keys(meta).filter(function (key) { return key !== "args_preview"; })
           .map(function (key) { return [key, typeof meta[key] === "object" ? JSON.stringify(meta[key]) : String(meta[key])]; }));

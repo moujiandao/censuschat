@@ -215,6 +215,7 @@ _TOOL_FUNCS = {
 
 
 _ARGS_PREVIEW_CAP = 500
+_MODEL_RESPONSE_PREVIEW_CAP = 500
 
 
 def _preview(tool_input: dict[str, Any]) -> str:
@@ -489,6 +490,7 @@ async def agent_turn(
     collected_query_results: list[dict[str, Any]] = []
     watchdog_fired = False
     model_call_index = 0
+    model_trigger = "user request"
     terminal_response_had_text = False
 
     for _ in range(_MAX_TOOL_LOOP_ITERATIONS):
@@ -504,6 +506,7 @@ async def agent_turn(
 
         model_call_index += 1
         model_call_start = time.monotonic()
+        recovery_attempts_before_call = recovery_attempts
         response_text_parts: list[str] = []
         async with _client.messages.stream(
             model=AGENT_MODEL,
@@ -522,14 +525,39 @@ async def agent_turn(
         # (SimpleNamespace) don't set `usage`, so this must degrade to
         # None rather than raise on a mocked turn.
         usage = getattr(response, "usage", None)
+        response_text = "".join(response_text_parts).strip()
+        tools_requested = [
+            block.name
+            for block in getattr(response, "content", [])
+            if getattr(block, "type", None) == "tool_use"
+        ]
         spans.append(
             TraceSpan(
                 name=f"model_call_{model_call_index}",
                 latency_ms=int((time.monotonic() - model_call_start) * 1000),
                 ok=True,
                 meta={
+                    "model": AGENT_MODEL,
+                    "trigger": model_trigger,
+                    "action": (
+                        "requested tool"
+                        if tools_requested
+                        else "responded to user"
+                        if response_text
+                        else "returned no text"
+                    ),
+                    "tools_requested": tools_requested,
+                    "response_preview": response_text[:_MODEL_RESPONSE_PREVIEW_CAP] or None,
+                    "context_messages": len(messages),
+                    "recovery_attempts": recovery_attempts_before_call,
                     "input_tokens": getattr(usage, "input_tokens", None),
                     "output_tokens": getattr(usage, "output_tokens", None),
+                    "cache_read_input_tokens": getattr(
+                        usage, "cache_read_input_tokens", None
+                    ),
+                    "cache_creation_input_tokens": getattr(
+                        usage, "cache_creation_input_tokens", None
+                    ),
                     "stop_reason": response.stop_reason,
                 },
             )
@@ -684,6 +712,13 @@ async def agent_turn(
             break
 
         messages.append({"role": "user", "content": tool_results})
+        model_trigger = (
+            "tool error"
+            if any(result["is_error"] for result in tool_results)
+            else "zero-row result"
+            if recovery_attempts > recovery_attempts_before_call
+            else "tool results"
+        )
 
         # Checked once per model response, not per tool_use block: the
         # Anthropic API requires every tool_use in a response to get a
