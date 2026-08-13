@@ -50,7 +50,7 @@ def test_decision_parser_accepts_current_and_legacy_heading_separators(
 def test_readme_uses_current_tabs_and_grounding_claim():
     """The reviewer tour must describe the shipped UI and trust boundary."""
     text = (ROOT / "README.md").read_text()
-    assert "Chat, How It Works, Evidence, and Evals" in text
+    assert "Chat, Evidence, Evals, and How It Works" in text
     assert "SQL safety is code-enforced" in text
     assert "Turn Detail tab" not in text
     assert "Trace Logging tab" not in text
@@ -67,7 +67,7 @@ def test_claude_preserves_invariant_11_and_documents_current_system_after_rules(
 
     current = text.split("22. When the hour budget runs out: cut features, never the reflection.", 1)[1]
     assert "## Current shipped system" in current
-    assert "Chat, How It Works, Evidence, and Evals" in current
+    assert "Chat, Evidence, Evals, and How It Works" in current
     assert "`src/tracing.py`" in current
     assert "`data/traces.sqlite3`" in current
     assert "six regression scenarios and eight capability scenarios" in current

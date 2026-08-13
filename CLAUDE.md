@@ -96,8 +96,8 @@ entry, flagged inline.
 These notes describe the current implementation. They do not rewrite the
 historical invariants above.
 
-- Frontend: one static file with Chat, How It Works, Evidence, and Evals
-  (**D-027**).
+- Frontend: one static file with Chat, Evidence, Evals, and How It Works
+  (**D-027**, ordering amended by **D-028**).
 - Tracing: `src/tracing.py` persists local turn spans in
   `data/traces.sqlite3`; Evidence is the sole trace view. This is not
   Langfuse (**D-021**, **D-023**).

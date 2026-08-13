@@ -8,7 +8,7 @@ def _html() -> str:
 
 def test_exact_reviewer_tab_order():
     html = _html()
-    labels = ["Chat", "How It Works", "Evidence", "Evals"]
+    labels = ["Chat", "Evidence", "Evals", "How It Works"]
     positions = [html.index(f">{label}</button>") for label in labels]
     assert positions == sorted(positions)
     assert html.count('data-tab="') == 4

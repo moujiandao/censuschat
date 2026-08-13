@@ -36,11 +36,11 @@ normalized result → answer → evidence**. Variable and geography discovery us
 the local SQLite snapshot. `run_census_sql` is the one request-time Snowflake
 code path, although one question can make more than one query through it.
 
-The four tabs are **Chat, How It Works, Evidence, and Evals**. Chat contains
-the four curated examples below. How It Works explains the data flow and
-protection layers. Evidence shows durable SQLite-backed traces for this and
-previous sessions, including raw trace JSON on demand. Evals separates the
-six regression scenarios from the eight capability scenarios.
+The four tabs are **Chat, Evidence, Evals, and How It Works**. Chat contains
+the four curated examples below. Evidence shows durable SQLite-backed traces
+for this and previous sessions, including raw trace JSON on demand. Evals
+separates the six regression scenarios from the eight capability scenarios.
+How It Works explains the data flow and protection layers.
 
 **1. Factual question**
 
