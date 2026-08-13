@@ -141,6 +141,7 @@
 
   .run-meta { margin: 0 0 16px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
   .eval-suite { margin: 0 0 26px; }
+  .legacy-history { padding-top: 18px; border-top: 1px solid var(--border); }
   .eval-counts { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 12px; }
   .badge { display: inline-block; border-radius: 999px; padding: 2px 8px; font-size: 11px; font-weight: 600; }
   .badge.pass { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
@@ -418,6 +419,42 @@
     return html;
   }
 
+  function renderLegacyHistory(history, latest) {
+    const runs = (history || []).filter(function (run) { return run.legacy; });
+    if (!runs.length) return "";
+
+    const rows = runs.slice().reverse().map(function (run) {
+      const scenarios = run.scenarios && typeof run.scenarios === "object"
+        ? run.scenarios
+        : {};
+      const entries = Object.entries(scenarios);
+      const notPassing = entries.filter(function (entry) {
+        const outcome = entry[1];
+        return outcome !== "pass";
+      });
+      const passing = entries.length > 0 && notPassing.length === 0;
+      const when = run.run_at ? new Date(run.run_at).toLocaleString() : "Unknown time";
+      const shownAbove = latest && run.run_at === latest.run_at && run.git_sha === latest.git_sha;
+      const affected = notPassing.length
+        ? '<div class="row-note">Not passing: ' + notPassing.map(function (entry) {
+            return escapeHtml(entry[0] + " (" + entry[1] + ")");
+          }).join(", ") + "</div>"
+        : "";
+      return "<tr><td>" + escapeHtml(when) +
+        (shownAbove ? '<div class="row-note">Benchmark shown above</div>' : "") +
+        "</td><td>" + escapeHtml(run.git_sha || "Unknown") +
+        "</td><td>" + (entries.length - notPassing.length) + "/" + entries.length +
+        " passed" + affected + "</td><td><span class='badge " +
+        (passing ? "pass'>Passing" : "fail'>Not passing") + "</span></td></tr>";
+    }).join("");
+
+    return '<section class="eval-suite legacy-history"><h2>Legacy historical runs</h2>' +
+      '<p class="section-lead">These committed runs predate the current tri-state graders. ' +
+      'Their historical pass/fail results are preserved for provenance, not presented as current regression proof.</p>' +
+      '<table class="eval-table"><thead><tr><th>Run</th><th>Commit</th><th>Summary</th><th>Status</th>' +
+      "</tr></thead><tbody>" + rows + "</tbody></table></section>";
+  }
+
   async function loadEvals() {
     evalsLoaded = true;
     try {
@@ -425,7 +462,7 @@
       if (!response.ok) throw new Error("eval request failed");
       const data = await response.json();
       evalsContentEl.innerHTML = data.latest
-        ? renderEvalRun(data.latest)
+        ? renderEvalRun(data.latest) + renderLegacyHistory(data.history, data.latest)
         : '<p class="empty-state">No eval runs recorded yet.</p>';
     } catch (error) {
       evalsContentEl.innerHTML = "<p class='empty-state'>Couldn't load eval results.</p>";

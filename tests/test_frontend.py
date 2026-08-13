@@ -130,3 +130,15 @@ def test_legacy_eval_artifacts_are_not_labeled_as_current_regression_proof():
     assert "Legacy committed benchmark" in html
     assert "Derived regression grouping" in html
     assert '"legacy " + checkOutcome' in html
+
+
+def test_legacy_history_summary_is_appended_after_latest_benchmark():
+    html = _html()
+
+    assert "function renderLegacyHistory(history, latest)" in html
+    assert "Legacy historical runs" in html
+    assert 'filter(function (run) { return run.legacy; })' in html
+    assert 'outcome !== "pass"' in html
+    assert 'entries.length > 0 && notPassing.length === 0' in html
+    assert "Benchmark shown above" in html
+    assert "renderEvalRun(data.latest) + renderLegacyHistory(data.history, data.latest)" in html
