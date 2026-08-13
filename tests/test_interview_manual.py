@@ -36,6 +36,7 @@ def test_build_manual_contract(tmp_path: Path) -> None:
     assert "Two block groups report median household incomes of $55k and $95k" in normalized_text
     assert "does not make the county median $75k" in normalized_text
     assert "QUICK RULES" in text
+    assert "docs/decisions.md D-021/D-023/D-027" in normalized_text
     assert "The aggregation rules to explain" not in text
 
 

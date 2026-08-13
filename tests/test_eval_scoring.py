@@ -111,6 +111,7 @@ def test_no_tool_errors_passes_when_every_recorded_call_succeeded():
     result = _score_check(check, _obs(tool_calls=calls))
 
     assert result.passed is True
+    assert result.outcome == EvalOutcome.PASS
     assert result.observed == "2 tool calls, 0 failed"
 
 
@@ -124,6 +125,7 @@ def test_no_tool_errors_fails_when_any_recorded_call_failed():
     result = _score_check(check, _obs(tool_calls=calls))
 
     assert result.passed is False
+    assert result.outcome == EvalOutcome.FAIL
     assert result.observed == "2 tool calls, 1 failed: run_census_sql"
 
 

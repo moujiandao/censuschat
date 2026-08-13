@@ -937,7 +937,7 @@ def add_state_and_evidence(story: list[Flowable]) -> None:
             "warn",
         )
     )
-    story.append(source_note("src/sessions.py", "src/tracing.py", "static/index.html", "docs/decisions.md D-021/D-023/D-025"))
+    story.append(source_note("src/sessions.py", "src/tracing.py", "static/index.html", "docs/decisions.md D-021/D-023/D-027"))
     story.append(PageBreak())
 
 

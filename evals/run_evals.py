@@ -243,7 +243,11 @@ def _score_check(check: Check, obs: Observation) -> CheckResult:
         observed = f"{len(obs.tool_calls)} tool calls, {len(failed)} failed"
         if failed:
             observed += ": " + ", ".join(failed)
-        return CheckResult(check=check, passed=not failed, observed=observed)
+        return _check_result(
+            check,
+            EvalOutcome.FAIL if failed else EvalOutcome.PASS,
+            observed,
+        )
 
     if check.type == CheckType.ANSWER_CONTAINS:
         passed = expected.lower() in obs.final_answer.lower()
