@@ -199,6 +199,7 @@ class VariableHit(BaseModel):
     """
 
     variable_id: str
+    physical_table: str
     label: str
     description: str = ""
     geo_levels: list[GeoLevel] = Field(default_factory=list)

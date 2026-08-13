@@ -15,6 +15,7 @@ import time
 from typing import Any
 
 from src.contracts import (
+    ALLOWED_TABLES,
     DEFAULT_VINTAGE,
     SQL_ROW_LIMIT,
     SQL_STATEMENT_TIMEOUT_S,
@@ -60,6 +61,14 @@ def _geo_levels_for(label: str) -> list[GeoLevel]:
     if "median" in label.lower():
         return [GeoLevel.BLOCK_GROUP]
     return list(_ALL_GEO_LEVELS)
+
+
+def _physical_table_for_acs_variable(variable_id: str) -> str:
+    unquoted = f"US_CENSUS.PUBLIC.{DEFAULT_VINTAGE}_CBG_{variable_id[:3]}"
+    if unquoted not in ALLOWED_TABLES:
+        raise ValueError(f"no allowlisted physical table for {variable_id}")
+    prefix, table = unquoted.rsplit(".", 1)
+    return f'{prefix}."{table}"'
 
 
 def _fts_match_query(text: str, operator: str = "AND") -> str:
@@ -114,6 +123,7 @@ def search_census_variables(query: str, limit: int = 10) -> VariableSearchResult
     hits = [
         VariableHit(
             variable_id=variable_id,
+            physical_table=_physical_table_for_acs_variable(variable_id),
             label=label,
             description=universe or "",
             geo_levels=_geo_levels_for(label),

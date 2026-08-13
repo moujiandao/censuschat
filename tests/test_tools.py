@@ -183,6 +183,57 @@ def test_search_no_matches_returns_empty_hits_not_truncated(monkeypatch):
     assert result.truncated is False
 
 
+@pytest.mark.parametrize(
+    ("variable_row", "query", "expected"),
+    [
+        (
+            (
+                "B11012e1",
+                "B11012",
+                "Households By Type",
+                "Households",
+                "total households text",
+            ),
+            "total households",
+            'US_CENSUS.PUBLIC."2020_CBG_B11"',
+        ),
+        (
+            (
+                "C15002e1",
+                "C15002",
+                "Tenure",
+                "Occupied housing units",
+                "tenure occupied text",
+            ),
+            "tenure occupied",
+            'US_CENSUS.PUBLIC."2020_CBG_C15"',
+        ),
+    ],
+)
+def test_search_returns_exact_allowlisted_physical_table(
+    monkeypatch, variable_row, query, expected
+):
+    _seed_snapshot(monkeypatch, variable_rows=[variable_row])
+
+    result = tools.search_census_variables(query)
+
+    assert result.hits[0].physical_table == expected
+
+
+def test_search_rejects_a_variable_without_an_allowlisted_physical_table(monkeypatch):
+    variable_row = (
+        "B06001e1",
+        "B06001",
+        "Place Of Birth",
+        "Total population",
+        "place birth text",
+    )
+    _seed_snapshot(monkeypatch, variable_rows=[variable_row])
+
+    with pytest.raises(ValueError, match="no allowlisted physical table"):
+        tools.search_census_variables("place birth")
+
+
 def _and_or_variable_rows():
     """A corpus where token-AND and token-OR give provably different answers:
     "total" appears only in the households row, "population" only in the
