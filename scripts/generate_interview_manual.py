@@ -966,7 +966,7 @@ def add_evals(story: list[Flowable]) -> None:
     story.append(
         callout(
             "Do not overclaim",
-            "The committed 14/14 artifact is from commit d44c1cc on 2026-08-06 and predates the current suite and tri-state contracts. The UI labels it legacy. It demonstrates that a real-stack run existed, not that the current branch is 14/14.",
+            "Two full live runs on 2026-09-17 each passed all 6 regression scenarios and 11 of 14 scenarios overall. The repeated capability failures stay visible: strict comparison and rounding checks account for two, while PM-02 exposes a genuine Haiku weakness by aggregating block-group medians. This approves the regression contract, not Sonnet-equivalent reasoning quality.",
             "warn",
         )
     )
