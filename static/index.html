@@ -102,9 +102,8 @@
   .row.assistant .bubble { border-bottom-left-radius: 4px; background: var(--assistant); }
   .row.assistant .bubble.error { background: var(--error); color: #fff; }
   .bubble.pending { color: var(--muted); font-style: italic; }
-  .follow-ups { margin-top: 12px; white-space: normal; }
-  .follow-ups button { display: block; margin-bottom: 5px; }
-  .follow-ups p { margin: 0; font-size: 12px; color: var(--muted); }
+  .follow-ups { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; white-space: normal; }
+  .follow-ups button { max-width: 100%; overflow-wrap: anywhere; }
   .status-line { min-height: 16px; padding: 0 4px; color: var(--muted); font-size: 12px; }
   form { display: flex; gap: 8px; padding: 12px 4px 16px; border-top: 1px solid var(--border); }
   #input { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; background: var(--bg); color: var(--fg); font-size: 14.5px; }
@@ -295,6 +294,7 @@
   let evalsLoaded = false;
   let historySessionId = sessionId;
   let turnCounter = 0;
+  let activeChatTurn = 0;
 
   const EXAMPLE_QUESTIONS = [
     { q: "Population of Harris County, Texas?", label: "Start with a factual question" },
@@ -694,27 +694,32 @@
   function showFollowUps(bubble, offers) {
     clearFollowUps();
     if (!Array.isArray(offers) || !offers.length) return;
-    const offer = offers[0];
-    if (!offer.suggestion_id || offer.action_id !== "compare_renter_share") return;
     const container = document.createElement("div");
     container.className = "follow-ups";
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = offer.label;
-    button.disabled = true; // Enabled only after the current stream finishes.
-    const explanation = document.createElement("p");
-    explanation.textContent = offer.explanation;
-    button.addEventListener("click", function () {
-      if (button.disabled) return;
-      button.disabled = true;
-      sendMessage(offer.label, offer.suggestion_id);
+    offers.slice(0, 3).forEach(function (offer) {
+      if (!offer || typeof offer.id !== "string" ||
+          typeof offer.question !== "string" || !offer.question.trim()) return;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = offer.question;
+      button.disabled = true; // Enabled only after the current stream finishes.
+      button.addEventListener("click", function () {
+        if (button.disabled) return;
+        const draft = inputEl.value.trim();
+        if (draft && draft !== offer.question &&
+            !window.confirm("Replace your current draft with this question?")) return;
+        inputEl.value = offer.question;
+        inputEl.focus();
+      });
+      container.appendChild(button);
     });
-    container.append(button, explanation);
+    if (!container.children.length) return;
     bubble.appendChild(container);
     logEl.scrollTop = logEl.scrollHeight;
   }
 
   function startNewChat() {
+    activeChatTurn += 1;
     sessionId = crypto.randomUUID();
     localStorage.setItem("censuschat_session_id", sessionId);
     historySessionId = sessionId;
@@ -746,7 +751,8 @@
     run_census_sql: "Querying Snowflake",
   };
 
-  async function sendMessage(message, suggestionId) {
+  async function sendMessage(message) {
+    const requestTurn = ++activeChatTurn;
     clearFollowUps();
     setBusy(true);
     if (historySessionId !== sessionId) {
@@ -770,9 +776,7 @@
       response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(suggestionId
-          ? { session_id: sessionId, suggestion_id: suggestionId }
-          : { session_id: sessionId, message: message }),
+        body: JSON.stringify({ session_id: sessionId, message: message }),
       });
     } catch (error) {
       clearPending(assistantBubble);
@@ -814,6 +818,7 @@
           if (!rawEvent.startsWith("data: ")) continue;
           let event;
           try { event = JSON.parse(rawEvent.slice(6)); } catch (error) { continue; }
+          if (ended) continue;
 
           if (event.type === "token") {
             if (!assistantText) clearPending(assistantBubble);
@@ -868,7 +873,9 @@
             timing.textContent = event.data.elapsed_ms + "ms total";
             finalStep.querySelector(".step-head").appendChild(timing);
             statusEl.textContent = "";
-            if (completedWithAnswer) showFollowUps(assistantBubble, event.data.follow_ups);
+            if (requestTurn === activeChatTurn && completedWithAnswer) {
+              showFollowUps(assistantBubble, event.data.follow_ups);
+            }
           }
         }
       }

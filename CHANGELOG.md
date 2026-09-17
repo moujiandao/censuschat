@@ -5,10 +5,12 @@
 ### Added
 
 - Offer one checked Compare renter share action after supported two-county occupied-housing queries; execute a fresh gated query on click and preserve history and Evidence (D-029).
+- Show up to three deterministic contextual questions after supported two-county comparisons, with editable input-first interaction (D-030).
 
 ### Changed
 
 - Include existing field breadcrumbs in runtime variable-search descriptions so follow-up eligibility can verify exact component meanings without changing contracts.
+- Replace the checked-action follow-up path with normal chat submission, remove its speculative Snowflake preflight, and derive question eligibility from completed-turn evidence (D-030).
 
 ## [2026-08-13]
 
@@ -263,5 +265,6 @@ Decisions, recorded in full in [`docs/decisions.md`](docs/decisions.md).
 | `D-027` | The reviewer interface has four ordered surfaces |
 | `D-028` | How It Works moves to the end of reviewer navigation |
 | `D-029` | One checked renter-share follow-up |
+| `D-030` | Editable contextual next questions replace direct actions |
 
 <!-- END id-reference -->

@@ -403,7 +403,6 @@ async def agent_turn(
     terminates with DONE or ERROR (src/app.py also converts any raised
     exception here into ERROR)."""
     turn_start = time.monotonic()
-    offer_generation = follow_ups.begin_turn(session_id)
     follow_up_context = follow_ups.TurnContext()
     finished_normally = False
     turn_started_at = datetime.now(timezone.utc)
@@ -807,14 +806,12 @@ async def agent_turn(
         append_message, session_id, ChatMessage(role="assistant", content=final_answer)
     )
 
+    offers = []
     if finished_normally and not unresolved_ambiguous_geo:
         try:
-            async for event in follow_ups.prepare_offer(
-                session_id, offer_generation, follow_up_context, turn_start, spans
-            ):
-                yield event
+            offers = follow_ups.questions(follow_up_context)
         except Exception:
-            logger.warning("Optional follow-up preparation failed", exc_info=True)
+            logger.warning("Optional follow-up selection failed", exc_info=True)
             spans.append(TraceSpan(name="follow_up", latency_ms=0, ok=False))
 
     _finish_trace(
@@ -830,6 +827,6 @@ async def agent_turn(
         type=EventType.DONE,
         data={
             "elapsed_ms": int((time.monotonic() - turn_start) * 1000),
-            **({"follow_ups": offers} if (offers := follow_ups.public_offers(session_id, offer_generation)) else {}),
+            **({"follow_ups": offers} if offers else {}),
         },
     )

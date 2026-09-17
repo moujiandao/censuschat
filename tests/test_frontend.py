@@ -53,6 +53,38 @@ def test_new_chat_control_starts_a_fresh_persisted_session():
     assert 'newChatEl.addEventListener("click", startNewChat)' in html
 
 
+def test_contextual_questions_fill_input_without_submitting_and_protect_drafts():
+    html = _html()
+
+    assert "offers.slice(0, 3).forEach" in html
+    assert "button.textContent = offer.question" in html
+    assert "inputEl.value = offer.question" in html
+    assert "inputEl.focus()" in html
+    assert "window.confirm" in html
+    assert "sendMessage(offer" not in html
+    assert "suggestion_id" not in html
+
+
+def test_contextual_questions_clear_and_reject_stale_terminal_events():
+    html = _html()
+
+    assert "const requestTurn = ++activeChatTurn" in html
+    assert "if (requestTurn === activeChatTurn && completedWithAnswer)" in html
+    assert "activeChatTurn += 1" in html
+    assert "if (ended) continue" in html
+    assert "clearFollowUps()" in html
+
+
+def test_contextual_question_buttons_wrap_and_render_plain_text():
+    html = _html()
+
+    follow_up_rule = re.search(r"\.follow-ups\s*\{([^}]*)\}", html)
+    assert follow_up_rule is not None
+    assert "display: flex" in follow_up_rule.group(1)
+    assert "flex-wrap: wrap" in follow_up_rule.group(1)
+    assert "button.innerHTML" not in html
+
+
 def test_old_evidence_response_cannot_repopulate_a_new_chat():
     html = _html()
     assert "const requestedSessionId = historySessionId" in html

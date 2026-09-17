@@ -25,12 +25,11 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from src.agent import agent_turn
-from src import follow_ups
 from src.contracts import ChatEvent, EventType, SnapshotError
 from src.health import check_snowflake_reachability, health_report
 from src.snapshot import build_snapshot
@@ -61,15 +60,14 @@ _GENERIC_ERROR_MESSAGE = "An internal error occurred while processing your reque
 
 
 class ChatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     session_id: str
-    message: str | None = None
-    suggestion_id: str | None = None
+    message: str
 
     @model_validator(mode="after")
-    def exactly_one_input(self):
-        if (self.message is None) == (self.suggestion_id is None):
-            raise ValueError("Provide either a message or a suggestion ID")
-        if self.message is not None and not self.message.strip():
+    def nonblank_message(self):
+        if not self.message.strip():
             raise ValueError("Message cannot be empty")
         return self
 
@@ -86,12 +84,11 @@ def _safe_for_log(value: str) -> str:
     return value.replace("\r", "\\r").replace("\n", "\\n")
 
 
-async def _stream_turn(session_id: str, message: str, offer=None):
+async def _stream_turn(session_id: str, message: str):
     turn_start = time.monotonic()
     started_at = datetime.now(timezone.utc)
     try:
-        events = follow_ups.action_turn(session_id, offer) if offer is not None else agent_turn(session_id, message)
-        async for event in events:
+        async for event in agent_turn(session_id, message):
             yield _encode_event(event)
             if event.type in _TERMINAL_EVENTS:
                 return
@@ -319,13 +316,8 @@ async def trace_sessions() -> dict:
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest) -> StreamingResponse:
-    offer = None
-    if req.suggestion_id is not None:
-        offer = follow_ups.consume(req.session_id, req.suggestion_id)
-        if offer is None:
-            raise HTTPException(status_code=409, detail="This suggestion is no longer available. Ask the housing question again to get a new one.")
     return StreamingResponse(
-        _stream_turn(req.session_id, offer.request if offer is not None else req.message, offer),
+        _stream_turn(req.session_id, req.message),
         media_type="text/event-stream",
         headers={
             # Defeats buffering on Caddy and, per PRD §12, on Cloudflare —

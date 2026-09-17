@@ -118,16 +118,20 @@ Two tools never leave the box: `search_census_variables` and
 request time, **Snowflake is touched by exactly one code path**,
 `run_census_sql`.
 
-### Suggested follow-up slice
+### Contextual next questions
 
-On the feature branch, ask: "How many occupied homes are in Travis County, Texas,
-and Harris County, Texas?" A supported completion can offer **Compare renter
-share**. `src/follow_ups.py` verifies runtime field meanings and complete data,
-then stores a short-lived action for those counties. Clicking runs a fresh query
-through the same SQL gate and streams a fixed comparison into chat and Evidence.
-Unknown query shapes, incomplete data, or insufficient time produce no button.
-The slice uses one worker and no additional model calls. See **D-029** and
-`docs/suggested-follow-up-questions-plan.md` for limits and verification.
+After a supported two-county comparison, the latest answer can show up to three
+questions: renter share when the occupied-total and renter components were both
+discovered, another-county exploration, and age distributions when multiple
+same-table age fields were discovered. `src/follow_ups.py` also proves the
+completed SQL filtered, grouped, and returned exactly the two resolved counties.
+Ambiguous, failed, unsupported, or unproven contexts show fewer questions or none.
+
+Selecting a question fills and focuses the chat input without submitting it.
+The visitor can edit it, then use the same guarded agent path as any other
+question. This adds no model call, hidden Snowflake preflight, durable offer
+state, or fourth tool. See **D-030** and
+`docs/contextual-next-questions-plan.md` for the design and limits.
 
 ### The trust boundary
 
@@ -410,6 +414,6 @@ Decisions, recorded in full in [`docs/decisions.md`](docs/decisions.md).
 | `D-023` | Trace history is durable, and has no per-session cap |
 | `D-027` | The reviewer interface has four ordered surfaces |
 | `D-028` | How It Works moves to the end of reviewer navigation |
-| `D-029` | One checked renter-share follow-up |
+| `D-030` | Editable contextual next questions replace direct actions |
 
 <!-- END id-reference -->

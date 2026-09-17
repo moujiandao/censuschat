@@ -98,19 +98,45 @@ def _collect(session_id: str, message: str) -> list:
     return asyncio.run(_run())
 
 
-@pytest.mark.parametrize("ending,preflight_failure", [("end_turn", False), ("max_tokens", False), ("end_turn", True)])
-def test_follow_up_requires_normal_completion_and_preserves_answer_on_check_failure(monkeypatch, ending, preflight_failure):
-    from src import follow_ups as f
-    from src.contracts import GeoCandidate, GeoLevel, VariableSearchResult
-    from test_follow_ups import hit, result, context
+@pytest.mark.parametrize("ending", ["end_turn", "max_tokens"])
+def test_follow_ups_require_normal_completion_without_extra_tool_calls(monkeypatch, ending):
+    from src.contracts import GeoCandidate, GeoLevel
+    from test_follow_ups import (
+        AGE_5_TO_9,
+        AGE_UNDER_5,
+        HOUSING,
+        POPULATION,
+        RENTER,
+        context,
+    )
 
     counties = (GeoCandidate(geo_id="48453", name="Travis County, Texas", level=GeoLevel.COUNTY),
                 GeoCandidate(geo_id="48201", name="Harris County, Texas", level=GeoLevel.COUNTY))
     ctx = context(counties)
     responses = [
-        ("search_census_variables", {"query": "tenure"}, {"hits": [hit().model_dump(mode="json")]}),
+        (
+            "search_census_variables",
+            {"query": "population and housing"},
+            {
+                "hits": [
+                    HOUSING.model_dump(mode="json"),
+                    RENTER.model_dump(mode="json"),
+                    POPULATION.model_dump(mode="json"),
+                    AGE_UNDER_5.model_dump(mode="json"),
+                    AGE_5_TO_9.model_dump(mode="json"),
+                ]
+            },
+        ),
         *[("resolve_geography", {"text": c.name}, {"ambiguous": False, "candidates": [c.model_dump(mode="json")]}) for c in counties],
-        ("run_census_sql", {"sql": ctx.query[0]}, ctx.query[1]),
+        (
+            "run_census_sql",
+            {"sql": ctx.successful_queries[0].sql},
+            {
+                "row_count": 2,
+                "rows": [{"COUNTY_ID": county.geo_id} for county in counties],
+                "truncated": False,
+            },
+        ),
     ]
     pending = iter(responses)
     monkeypatch.setattr(agent, "_run_tool", lambda name, args: next(pending)[2])
@@ -120,19 +146,13 @@ def test_follow_up_requires_normal_completion_and_preserves_answer_on_check_fail
         _FakeStream([], SimpleNamespace(stop_reason="tool_use", content=blocks)),
         _FakeStream(["The occupied-home totals are available."], SimpleNamespace(stop_reason=ending, content=[])),
     ])
-    monkeypatch.setattr(f.tools, "search_census_variables", lambda **kwargs: VariableSearchResult(query="tenure", hits=[hit(), hit("B25003e3", "Total Renter occupied")]))
-    calls = []
-    def query(sql):
-        calls.append(sql)
-        if preflight_failure:
-            raise RuntimeError("temporary database failure")
-        return result(counties)
-    monkeypatch.setattr(f.tools, "run_census_sql", query)
     events = _collect("follow-up", "Compare occupied homes in Travis and Harris counties, Texas")
     assert events[-1].type == EventType.DONE
     assert "The occupied-home totals are available." in sessions.get_session("follow-up").messages[-1].content
-    assert bool(events[-1].data.get("follow_ups")) == (ending == "end_turn" and not preflight_failure)
-    assert len(calls) == (1 if ending == "end_turn" else 0)
+    assert len(events[-1].data.get("follow_ups", [])) == (
+        3 if ending == "end_turn" else 0
+    )
+    assert list(pending) == []
 
 
 def test_system_prompt_teaches_quoted_placeholders_without_real_variable_ids():
