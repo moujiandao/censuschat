@@ -96,7 +96,7 @@ flowchart TD
     C --> D["agent_turn<br/>src/agent.py"]
     D --> E{"Degraded?"}
     E -->|yes| Z["Honest message<br/>DONE"]
-    E -->|no| F{"Guardrail<br/>Haiku"}
+    E -->|no| F{"Guardrail<br/>GPT-5 nano"}
     F -->|REFUSE| Z
     F -->|"ALLOW — or fails OPEN"| G
 
@@ -140,7 +140,7 @@ The agent has three tools and one gate. The distinction that matters:
 | Layer | Kind | What happens when it fails |
 |---|---|---|
 | System-prompt instructions | Soft | Model may ignore them |
-| Guardrail classifier (Haiku) | Soft | **Fails OPEN** — allows the turn |
+| Guardrail classifier (GPT-5 nano) | Soft | **Fails OPEN**, allows the turn |
 | `validate_sql` (`src/sqlgate.py`) | **Hard** | Query never reaches Snowflake |
 
 The guardrail deliberately fails open. A classifier outage must not take the
@@ -191,9 +191,10 @@ trace summary can see the relevant rows.
 - **Degraded mode**: Snowflake reachability is checked once at boot and
   cached (**D-015**), because rule 13 forbids the request path from probing
   Snowflake. A snapshot-missing or Snowflake-down boot still serves 200s.
-- **No agent frameworks.** Anthropic SDK + FastAPI + sqlglot +
+- **No agent frameworks.** Anthropic and OpenAI SDKs + FastAPI + sqlglot +
   snowflake-connector-python. Models pinned in one module
-  (`src/model_config.py`): Sonnet for the agent, Haiku for the classifier.
+  (`src/model_config.py`): Sonnet for the agent, GPT-5 nano for the classifier
+  (**D-031**).
 - **Interface contract** is `src/contracts.py`, treated as frozen. Decisions
   and interpretation calls are logged in `docs/decisions.md`.
 
@@ -305,7 +306,8 @@ The generated file is `output/pdf/censuschat-interview-manual.pdf`.
 | `SNOWFLAKE_PRIVATE_KEY_PASSPHRASE` | no | Only if the key is encrypted |
 | `SNOWFLAKE_DATABASE` | no | |
 | `SNOWFLAKE_SCHEMA` | no | |
-| `ANTHROPIC_API_KEY` | yes | Agent and guardrail |
+| `ANTHROPIC_API_KEY` | yes | Sonnet agent |
+| `OPENAI_API_KEY` | yes | GPT-5 nano guardrail classifier |
 | `SNAPSHOT_DB_PATH` | no | Defaults to `data/snapshot.sqlite3` |
 | `SESSION_DB_PATH` | no | Defaults to `data/sessions.sqlite3` |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | no | Reserved and unread by application code; full Langfuse integration is not implemented (**D-021**) |
@@ -341,7 +343,7 @@ this project — every live query failing on Snowflake identifier casing —
 passed the entire mocked suite and was only caught against the real database.
 
 **`make eval`** runs the 14-scenario committed benchmark against the real
-Anthropic, Snowflake, and guardrail stack. It writes a full timestamped
+Anthropic, OpenAI, Snowflake, and guardrail stack. It writes a full timestamped
 `EvalRun` and `latest.json` under `evals/results/`, including red rows. It is a
 paid live-call command, not part of the unit suite. `evals/README.md` defines
 the regression gate, informational capability evidence, tri-state semantics,
@@ -415,5 +417,6 @@ Decisions, recorded in full in [`docs/decisions.md`](docs/decisions.md).
 | `D-027` | The reviewer interface has four ordered surfaces |
 | `D-028` | How It Works moves to the end of reviewer navigation |
 | `D-030` | Editable contextual next questions replace direct actions |
+| `D-031` | GPT-5 nano replaces Haiku for guardrail classification |
 
 <!-- END id-reference -->

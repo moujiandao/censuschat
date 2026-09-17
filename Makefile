@@ -3,7 +3,7 @@
 test:
 	pytest -q
 
-# Live-call harness: real Anthropic + real Snowflake. Needs .env.
+# Live-call harness: real Anthropic + OpenAI + Snowflake. Needs .env.
 # --repeat N runs the set N times: with a live model one run is a sample, not
 # a measurement, and the Evals tab shows the ratio per commit.
 eval:

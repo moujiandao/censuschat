@@ -17,6 +17,7 @@ import pytest
 
 from evals.run_evals import (
     Observation,
+    _REQUIRED_ENV,
     _ci_exit_code,
     _ci_payload,
     _grounding_check,
@@ -663,6 +664,7 @@ def test_missing_credentials_stop_the_run_before_anything_is_written(monkeypatch
 def test_credentials_present_lets_the_run_proceed(monkeypatch):
     for var in (
         "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
         "SNOWFLAKE_ACCOUNT",
         "SNOWFLAKE_USER",
         "SNOWFLAKE_PRIVATE_KEY_PATH",
@@ -672,6 +674,17 @@ def test_credentials_present_lets_the_run_proceed(monkeypatch):
         monkeypatch.setenv(var, "set")
 
     _require_credentials()  # must not raise
+
+
+def test_missing_openai_key_stops_live_eval(monkeypatch):
+    for var in _REQUIRED_ENV:
+        monkeypatch.setenv(var, "set")
+    monkeypatch.delenv("OPENAI_API_KEY")
+
+    with pytest.raises(SystemExit) as exc:
+        _require_credentials()
+
+    assert "OPENAI_API_KEY" in str(exc.value)
 
 
 def test_scenario_ids_are_unique():

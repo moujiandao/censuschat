@@ -1,8 +1,8 @@
 # Golden-set evals
 
-`python -m evals.run_evals` drives the real `agent_turn` against Anthropic,
+`python -m evals.run_evals` drives the real `agent_turn` against Anthropic, OpenAI,
 Snowflake, and the guardrail. It is a live, paid-call harness, not a mocked
-unit test. It requires the Anthropic and Snowflake credentials documented in
+unit test. It requires the Anthropic, OpenAI, and Snowflake credentials documented in
 `.env.example` and writes nothing when credentials are missing.
 
 ## Suites and outcomes

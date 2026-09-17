@@ -1,7 +1,7 @@
 """Golden-set eval harness (issue #19, partial).
 
 Drives every scenario in evals/scenarios.py against the REAL agent_turn —
-real Anthropic, real Snowflake, real guardrail — collects the ChatEvent
+real Anthropic, real OpenAI, real Snowflake, and real guardrail. It collects the ChatEvent
 stream, scores the deterministic checks, and writes an EvalRun
 (src/contracts.py) to evals/results/<timestamp>.json + latest.json.
 
@@ -67,6 +67,7 @@ RESULTS_DIR = Path(__file__).parent / "results"
 # 0% column is worse than a crash.
 _REQUIRED_ENV = (
     "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
     "SNOWFLAKE_ACCOUNT",
     "SNOWFLAKE_USER",
     "SNOWFLAKE_PRIVATE_KEY_PATH",

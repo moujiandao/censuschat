@@ -65,8 +65,24 @@ def check_anthropic() -> bool:
         models = anthropic.Anthropic().models.list(limit=1)
         n = len(list(models.data))
         return ok("ANTHROPIC_API_KEY", f"authenticated, {n} model(s) visible")
-    except Exception as exc:  # noqa: BLE001 — report, never leak the key
+    except Exception as exc:  # noqa: BLE001, report without leaking the key
         return fail("ANTHROPIC_API_KEY", f"{type(exc).__name__}: {exc}")
+
+
+def check_openai() -> bool:
+    """Model metadata lookup authenticates the key and consumes zero tokens."""
+    print("\nOpenAI:")
+    if not os.environ.get("OPENAI_API_KEY"):
+        return fail("OPENAI_API_KEY", "missing")
+    try:
+        from openai import OpenAI
+
+        from src.model_config import CLASSIFIER_MODEL
+
+        model = OpenAI().models.retrieve(CLASSIFIER_MODEL)
+        return ok("OPENAI_API_KEY", f"authenticated, {model.id} visible")
+    except Exception as exc:  # noqa: BLE001 — report, never leak the key
+        return fail("OPENAI_API_KEY", f"{type(exc).__name__}: {exc}")
 
 
 def check_langfuse() -> bool:
@@ -100,7 +116,7 @@ def main() -> None:
     load_dotenv()
     print("Verifying credentials from .env (values are never printed)")
 
-    results = [check_presence(), check_anthropic(), check_langfuse()]
+    results = [check_presence(), check_anthropic(), check_openai(), check_langfuse()]
 
     print()
     if all(results):

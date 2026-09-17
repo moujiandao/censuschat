@@ -9,6 +9,7 @@
 
 ### Changed
 
+- Replace the Haiku guardrail classifier with GPT-5 nano through the OpenAI Responses API while retaining Sonnet for the agent, strict structured output, the 1.5-second timeout, and fail-open routing (D-031).
 - Load retired eval-scenario labels from a committed manifest so the offline CI gate remains deterministic in shallow GitHub Actions checkouts.
 - Include existing field breadcrumbs in runtime variable-search descriptions so follow-up eligibility can verify exact component meanings without changing contracts.
 - Replace the checked-action follow-up path with normal chat submission, remove its speculative Snowflake preflight, and derive question eligibility from completed-turn evidence (D-030).
@@ -267,5 +268,6 @@ Decisions, recorded in full in [`docs/decisions.md`](docs/decisions.md).
 | `D-028` | How It Works moves to the end of reviewer navigation |
 | `D-029` | One checked renter-share follow-up |
 | `D-030` | Editable contextual next questions replace direct actions |
+| `D-031` | GPT-5 nano replaces Haiku for guardrail classification |
 
 <!-- END id-reference -->

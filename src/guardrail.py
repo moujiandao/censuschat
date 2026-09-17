@@ -1,29 +1,29 @@
 """Guardrail classifier — src/contracts.py:classify_input (issue #11).
 
 First of two soft guardrail layers (CLAUDE.md rule 5) — the SQL gate is the
-hard boundary. Runs on Haiku, receives recent conversation turns so bare
+hard boundary. Runs on GPT-5 nano, receives recent conversation turns so bare
 follow-ups ("what about women?") classify correctly in context, and fails
 OPEN on its own errors or timeouts (rule 6): a classifier outage must never
 block a legitimate question.
 
 The model call is isolated behind `_call_classifier_model` so routing logic
 (this module's real TDD target, per issue #11) can be tested without a live
-Haiku call. Classification accuracy itself is a golden-eval target (rule 19
+provider call. Classification accuracy itself is a golden-eval target (rule 19
 exemption for LLM behavior), not asserted here.
 """
 
 from __future__ import annotations
 
-import json
 import time
-from typing import Any
+from typing import Any, Literal
 
-import anthropic
+from openai import OpenAI
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.contracts import ChatMessage, GuardrailAction, GuardrailVerdict, RefusalCategory
 from src.model_config import CLASSIFIER_MODEL
 
-_client = anthropic.Anthropic()
+_client: OpenAI | None = None
 
 _TIMEOUT_S = 1.5
 
@@ -53,25 +53,34 @@ Categories:
 
 When uncertain between on_topic and a refusal category, choose borderline. Refuse only when clearly warranted."""
 
-_OUTPUT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "verdict": {
-            "type": "string",
-            "enum": [
-                "on_topic",
-                "unknown_subject",
-                "off_topic",
-                "adversarial",
-                "inappropriate",
-                "borderline",
-            ],
-        },
-        "reason": {"type": "string", "description": "One short sentence."},
-    },
-    "required": ["verdict", "reason"],
-    "additionalProperties": False,
-}
+class _ClassifierOutput(BaseModel):
+    """Strict response shape shared by the API call and routing drift test."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    verdict: Literal[
+        "on_topic",
+        "unknown_subject",
+        "off_topic",
+        "adversarial",
+        "inappropriate",
+        "borderline",
+    ]
+    reason: str = Field(description="One short sentence.")
+
+
+_OUTPUT_SCHEMA = _ClassifierOutput.model_json_schema()
+
+
+def _get_client() -> OpenAI:
+    """Construct lazily so importing the offline test suite needs no API key."""
+    global _client
+    if _client is None:
+        # This layer fails open, so SDK retries only multiply latency before
+        # reaching the same safe fallback. Recovery belongs in the agent loop,
+        # not in this advisory classifier.
+        _client = OpenAI(max_retries=0)
+    return _client
 
 
 def _render_turns(recent_turns: list[ChatMessage]) -> str:
@@ -85,25 +94,30 @@ def _call_classifier_model(
     message: str, recent_turns: list[ChatMessage]
 ) -> dict[str, Any]:
     """The only I/O in this module — isolated so tests can stub it without
-    a live Haiku call (issue #11's own test spec)."""
+    a live provider call (issue #11's own test spec)."""
     prompt = f"{_render_turns(recent_turns)}Message to classify: {message}"
-    response = _client.with_options(timeout=_TIMEOUT_S).messages.create(
+    response = _get_client().responses.parse(
         model=CLASSIFIER_MODEL,
-        max_tokens=200,
-        system=_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": prompt}],
-        output_config={"format": {"type": "json_schema", "schema": _OUTPUT_SCHEMA}},
+        instructions=_SYSTEM_PROMPT,
+        input=prompt,
+        text_format=_ClassifierOutput,
+        reasoning={"effort": "minimal"},
+        text={"verbosity": "low"},
+        max_output_tokens=200,
+        store=False,
+        timeout=_TIMEOUT_S,
     )
-    text = next(block.text for block in response.content if block.type == "text")
-    return json.loads(text)
+    if response.output_parsed is None:
+        raise ValueError("classifier returned no structured output")
+    return response.output_parsed.model_dump()
 
 
 def classify_input(
     message: str, recent_turns: list[ChatMessage]
 ) -> GuardrailVerdict:
-    """Haiku fast-fail pre-classifier. Fails open (ALLOW,
+    """GPT-5 nano fast-fail pre-classifier. Fails open (ALLOW,
     reason='classifier_unavailable') on any error or timeout — never blocks
-    a legitimate question because Haiku is down."""
+    a legitimate question because the classifier is down."""
     start = time.monotonic()
     try:
         raw = _call_classifier_model(message, recent_turns)

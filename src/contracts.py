@@ -482,7 +482,7 @@ def validate_sql(
 def classify_input(
     message: str, recent_turns: list[ChatMessage]
 ) -> GuardrailVerdict:
-    """Haiku fast-fail pre-classifier. MUST receive recent_turns: bare
+    """Fast-fail pre-classifier. MUST receive recent_turns: bare
     follow-ups ('what about women?') are on-topic in context. Refuse only
     clearly off-topic / adversarial / inappropriate input; borderline →
     ALLOW (the agent's grounding rules are layer two; the SQL gate is the

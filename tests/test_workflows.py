@@ -37,6 +37,7 @@ def test_offline_ci_is_credential_free_and_pr_safe():
     assert "schedule:" not in text
     assert "pull_request_target" not in text
     assert "ANTHROPIC_API_KEY" not in text
+    assert "OPENAI_API_KEY" not in text
     assert "SNOWFLAKE_" not in text
 
 
@@ -51,6 +52,7 @@ def test_live_evals_are_manual_protected_and_upload_on_failure():
     assert "path: artifacts/regression.json" in text
     assert "build_snapshot" in text
     assert "SNOWFLAKE_PRIVATE_KEY_B64" in text
+    assert "OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}" in text
     assert "if: always()" in text
     assert "schedule:" not in text
     assert "capability" not in text

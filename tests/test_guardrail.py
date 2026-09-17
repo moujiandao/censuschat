@@ -1,5 +1,5 @@
 """Tests for the guardrail classifier — src/contracts.py:classify_input
-(issue #11). Routing logic only; the Haiku model call is isolated behind
+(issue #11). Routing logic only; the provider call is isolated behind
 `_call_classifier_model` so it can be stubbed (issue's own test spec).
 Actual classification accuracy is a golden-eval target (rule 19 exemption
 for LLM behavior), not asserted here.
@@ -7,10 +7,70 @@ for LLM behavior), not asserted here.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import httpx
+import openai
 import pytest
 
 from src.contracts import ChatMessage, GuardrailAction, RefusalCategory
 import src.guardrail as guardrail
+from src.model_config import AGENT_MODEL, CLASSIFIER_MODEL
+
+
+def test_only_guardrail_model_moves_to_gpt5_nano():
+    """The provider migration is intentionally classifier-only."""
+    assert AGENT_MODEL == "claude-sonnet-5"
+    assert CLASSIFIER_MODEL == "gpt-5-nano"
+
+
+def test_classifier_call_uses_openai_structured_output(monkeypatch):
+    """Pin the provider request, not just the model-name constant."""
+    captured = {}
+
+    class _Responses:
+        def parse(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                output_parsed=guardrail._ClassifierOutput(
+                    verdict="on_topic", reason="Census question"
+                )
+            )
+
+    monkeypatch.setattr(
+        guardrail, "_client", SimpleNamespace(responses=_Responses())
+    )
+    recent = [ChatMessage(role="user", content="Population of Texas?")]
+
+    result = guardrail._call_classifier_model("What about California?", recent)
+
+    assert result == {"verdict": "on_topic", "reason": "Census question"}
+    assert captured["model"] == "gpt-5-nano"
+    assert captured["instructions"] == guardrail._SYSTEM_PROMPT
+    assert "Population of Texas?" in captured["input"]
+    assert "What about California?" in captured["input"]
+    assert captured["text_format"] is guardrail._ClassifierOutput
+    assert captured["reasoning"] == {"effort": "minimal"}
+    assert captured["text"] == {"verbosity": "low"}
+    assert captured["store"] is False
+    assert captured["timeout"] == guardrail._TIMEOUT_S
+
+
+def test_classifier_client_disables_sdk_retries(monkeypatch):
+    """A fail-open classifier should not multiply its latency budget."""
+    created = []
+    sentinel = object()
+
+    def _fake_openai(**kwargs):
+        created.append(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(guardrail, "_client", None)
+    monkeypatch.setattr(guardrail, "OpenAI", _fake_openai)
+
+    assert guardrail._get_client() is sentinel
+    assert guardrail._get_client() is sentinel
+    assert created == [{"max_retries": 0}]
 
 
 def _stub(verdict: str, reason: str = "stub reason"):
@@ -57,7 +117,7 @@ def test_on_topic_verdict_allows(monkeypatch):
 
 def test_classifier_exception_fails_open(monkeypatch):
     def _raise(message, recent_turns):
-        raise RuntimeError("Haiku unavailable")
+        raise RuntimeError("classifier unavailable")
 
     monkeypatch.setattr(guardrail, "_call_classifier_model", _raise)
     result = guardrail.classify_input("anything", [])
@@ -81,10 +141,8 @@ def test_classifier_non_dict_response_fails_open(monkeypatch):
 
 
 def test_classifier_timeout_fails_open(monkeypatch):
-    import anthropic
-
     def _timeout(message, recent_turns):
-        raise anthropic.APITimeoutError(request=None)
+        raise openai.APITimeoutError(request=httpx.Request("POST", "https://api.openai.com"))
 
     monkeypatch.setattr(guardrail, "_call_classifier_model", _timeout)
     result = guardrail.classify_input("anything", [])

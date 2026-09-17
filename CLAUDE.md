@@ -6,7 +6,7 @@ Requirement truth: `docs/assignment.pdf`. Decision truth:
 `docs/01-architecture.md` (the original brief said `docs/plans/`; see
 **D-006**). Interface truth: `src/contracts.py`.
 
-Rules 15, 17, and 18 were knowingly deviated from during the build. The rule
+Rules 14, 15, 17, and 18 were knowingly deviated from during the build. The rule
 text below is left unchanged on purpose — what was committed to and where it
 was departed from are both evidence. Each deviation carries a `docs/decisions.md`
 entry, flagged inline.
@@ -58,6 +58,9 @@ entry, flagged inline.
 14. No agent frameworks (LangChain, LangGraph, etc.). Anthropic SDK +
     FastAPI + sqlglot + snowflake-connector-python. Models pinned in one
     config module: Sonnet for the agent, Haiku for the classifier.
+    *The guardrail now uses GPT-5 nano through the OpenAI SDK; Sonnet and the
+    handwritten tool loop remain on Anthropic. The single model-config module
+    and no-framework constraints still hold. **D-031**.*
 15. Frontend is one static HTML file (vanilla JS, CDN assets only, no build
     step) with three tabs: Chat, Evals, Flow Diagram.
     *D-027 supersedes the historical five-tab implementation, with ordering

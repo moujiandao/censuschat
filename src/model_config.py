@@ -1,11 +1,11 @@
 """Single source of truth for pinned model IDs (CLAUDE.md rule 14).
 
-Sonnet for the agent tool loop (src/agent.py). Haiku for the guardrail
-classifier (src/guardrail.py, issue #11 — not yet implemented; pinned here
-ahead of that module landing so there is only ever one place to change it).
+Sonnet remains the agent tool loop model (src/agent.py). GPT-5 nano handles
+the guardrail classifier (src/guardrail.py; D-031). Model IDs still have one
+home even though the two workloads now use different providers.
 """
 
 from __future__ import annotations
 
 AGENT_MODEL = "claude-sonnet-5"
-CLASSIFIER_MODEL = "claude-haiku-4-5"
+CLASSIFIER_MODEL = "gpt-5-nano"

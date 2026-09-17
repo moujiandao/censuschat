@@ -419,7 +419,7 @@ async def agent_turn(
     )
 
     # Issue #15 / PRD §4.1: checked before the guardrail so a degraded turn
-    # doesn't also spend a Haiku call it has no use for. is_degraded()
+    # doesn't also spend a classifier call it has no use for. is_degraded()
     # short-circuits its own live Snowflake probe whenever a snapshot
     # exists, so this costs nothing extra on a healthy turn.
     if await asyncio.to_thread(is_degraded):
