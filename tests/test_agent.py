@@ -98,6 +98,43 @@ def _collect(session_id: str, message: str) -> list:
     return asyncio.run(_run())
 
 
+@pytest.mark.parametrize("ending,preflight_failure", [("end_turn", False), ("max_tokens", False), ("end_turn", True)])
+def test_follow_up_requires_normal_completion_and_preserves_answer_on_check_failure(monkeypatch, ending, preflight_failure):
+    from src import follow_ups as f
+    from src.contracts import GeoCandidate, GeoLevel, VariableSearchResult
+    from test_follow_ups import hit, result, context
+
+    counties = (GeoCandidate(geo_id="48453", name="Travis County, Texas", level=GeoLevel.COUNTY),
+                GeoCandidate(geo_id="48201", name="Harris County, Texas", level=GeoLevel.COUNTY))
+    ctx = context(counties)
+    responses = [
+        ("search_census_variables", {"query": "tenure"}, {"hits": [hit().model_dump(mode="json")]}),
+        *[("resolve_geography", {"text": c.name}, {"ambiguous": False, "candidates": [c.model_dump(mode="json")]}) for c in counties],
+        ("run_census_sql", {"sql": ctx.query[0]}, ctx.query[1]),
+    ]
+    pending = iter(responses)
+    monkeypatch.setattr(agent, "_run_tool", lambda name, args: next(pending)[2])
+    monkeypatch.setattr(agent, "classify_input", _allow_verdict)
+    blocks = [SimpleNamespace(type="tool_use", name=n, input=a, id=str(i)) for i, (n, a, _) in enumerate(responses)]
+    _install_fake_client(monkeypatch, [
+        _FakeStream([], SimpleNamespace(stop_reason="tool_use", content=blocks)),
+        _FakeStream(["The occupied-home totals are available."], SimpleNamespace(stop_reason=ending, content=[])),
+    ])
+    monkeypatch.setattr(f.tools, "search_census_variables", lambda **kwargs: VariableSearchResult(query="tenure", hits=[hit(), hit("B25003e3", "Total Renter occupied")]))
+    calls = []
+    def query(sql):
+        calls.append(sql)
+        if preflight_failure:
+            raise RuntimeError("temporary database failure")
+        return result(counties)
+    monkeypatch.setattr(f.tools, "run_census_sql", query)
+    events = _collect("follow-up", "Compare occupied homes in Travis and Harris counties, Texas")
+    assert events[-1].type == EventType.DONE
+    assert "The occupied-home totals are available." in sessions.get_session("follow-up").messages[-1].content
+    assert bool(events[-1].data.get("follow_ups")) == (ending == "end_turn" and not preflight_failure)
+    assert len(calls) == (1 if ending == "end_turn" else 0)
+
+
 def test_system_prompt_teaches_quoted_placeholders_without_real_variable_ids():
     assert '"<variable_id>"' in agent.SYSTEM_PROMPT
     assert re.search(

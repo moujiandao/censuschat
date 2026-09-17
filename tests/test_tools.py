@@ -136,6 +136,7 @@ def test_search_returns_all_five_geo_levels_for_count_variable(monkeypatch):
     _seed_snapshot(monkeypatch)
     result = tools.search_census_variables("total population")
     hit = next(h for h in result.hits if h.variable_id == "B01003e1")
+    assert hit.description == "Universe: Total population. Field: total population text"
     assert set(hit.geo_levels) == {
         GeoLevel.NATION,
         GeoLevel.STATE,
