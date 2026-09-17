@@ -102,6 +102,9 @@
   .row.assistant .bubble { border-bottom-left-radius: 4px; background: var(--assistant); }
   .row.assistant .bubble.error { background: var(--error); color: #fff; }
   .bubble.pending { color: var(--muted); font-style: italic; }
+  .follow-ups { margin-top: 12px; white-space: normal; }
+  .follow-ups button { display: block; margin-bottom: 5px; }
+  .follow-ups p { margin: 0; font-size: 12px; color: var(--muted); }
   .status-line { min-height: 16px; padding: 0 4px; color: var(--muted); font-size: 12px; }
   form { display: flex; gap: 8px; padding: 12px 4px 16px; border-top: 1px solid var(--border); }
   #input { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; background: var(--bg); color: var(--fg); font-size: 14.5px; }
@@ -681,6 +684,34 @@
     inputEl.disabled = busy;
     sendEl.disabled = busy;
     newChatEl.disabled = busy;
+    logEl.querySelectorAll(".follow-ups button").forEach(function (button) { button.disabled = busy; });
+  }
+
+  function clearFollowUps() {
+    logEl.querySelectorAll(".follow-ups").forEach(function (element) { element.remove(); });
+  }
+
+  function showFollowUps(bubble, offers) {
+    clearFollowUps();
+    if (!Array.isArray(offers) || !offers.length) return;
+    const offer = offers[0];
+    if (!offer.suggestion_id || offer.action_id !== "compare_renter_share") return;
+    const container = document.createElement("div");
+    container.className = "follow-ups";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = offer.label;
+    button.disabled = true; // Enabled only after the current stream finishes.
+    const explanation = document.createElement("p");
+    explanation.textContent = offer.explanation;
+    button.addEventListener("click", function () {
+      if (button.disabled) return;
+      button.disabled = true;
+      sendMessage(offer.label, offer.suggestion_id);
+    });
+    container.append(button, explanation);
+    bubble.appendChild(container);
+    logEl.scrollTop = logEl.scrollHeight;
   }
 
   function startNewChat() {
@@ -715,7 +746,9 @@
     run_census_sql: "Querying Snowflake",
   };
 
-  async function sendMessage(message) {
+  async function sendMessage(message, suggestionId) {
+    clearFollowUps();
+    setBusy(true);
     if (historySessionId !== sessionId) {
       historySessionId = sessionId;
       evidenceSessionEl.value = sessionId;
@@ -737,7 +770,9 @@
       response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sessionId, message: message }),
+        body: JSON.stringify(suggestionId
+          ? { session_id: sessionId, suggestion_id: suggestionId }
+          : { session_id: sessionId, message: message }),
       });
     } catch (error) {
       clearPending(assistantBubble);
@@ -752,7 +787,12 @@
     if (!response.ok || !response.body) {
       clearPending(assistantBubble);
       assistantBubble.classList.add("error");
-      assistantBubble.textContent = "Something went wrong talking to the server.";
+      let detail = "Something went wrong talking to the server.";
+      try {
+        const failure = await response.json();
+        if (typeof failure.detail === "string") detail = failure.detail;
+      } catch (_) { /* Keep the generic message for a non-JSON response. */ }
+      assistantBubble.textContent = detail;
       addEvidenceStep(evidenceSteps, "Server error (" + response.status + ")", "fail");
       setBusy(false);
       statusEl.textContent = "";
@@ -800,6 +840,7 @@
             }
             statusEl.textContent = event.data.ok ? "" : "a tool call failed, recovering...";
           } else if (event.type === "error") {
+            clearFollowUps();
             ended = true;
             clearPending(assistantBubble);
             assistantBubble.classList.add("error");
@@ -827,6 +868,7 @@
             timing.textContent = event.data.elapsed_ms + "ms total";
             finalStep.querySelector(".step-head").appendChild(timing);
             statusEl.textContent = "";
+            if (completedWithAnswer) showFollowUps(assistantBubble, event.data.follow_ups);
           }
         }
       }

@@ -1,5 +1,15 @@
 # Changelog
 
+## [2026-09-16]
+
+### Added
+
+- Offer one checked Compare renter share action after supported two-county occupied-housing queries; execute a fresh gated query on click and preserve history and Evidence (D-029).
+
+### Changed
+
+- Include existing field breadcrumbs in runtime variable-search descriptions so follow-up eligibility can verify exact component meanings without changing contracts.
+
 ## [2026-08-13]
 
 ### Changed
@@ -252,5 +262,6 @@ Decisions, recorded in full in [`docs/decisions.md`](docs/decisions.md).
 | `D-026` | Eval suites and tri-state outcomes are additive |
 | `D-027` | The reviewer interface has four ordered surfaces |
 | `D-028` | How It Works moves to the end of reviewer navigation |
+| `D-029` | One checked renter-share follow-up |
 
 <!-- END id-reference -->

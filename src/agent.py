@@ -46,6 +46,7 @@ from typing import Any
 import anthropic
 
 from src import tools as census_tools
+from src import follow_ups
 from src.contracts import (
     MAX_RECOVERY_RETRIES,
     TURN_DEADLINE_S,
@@ -402,6 +403,9 @@ async def agent_turn(
     terminates with DONE or ERROR (src/app.py also converts any raised
     exception here into ERROR)."""
     turn_start = time.monotonic()
+    offer_generation = follow_ups.begin_turn(session_id)
+    follow_up_context = follow_ups.TurnContext()
+    finished_normally = False
     turn_started_at = datetime.now(timezone.utc)
     spans: list[TraceSpan] = []
 
@@ -565,6 +569,7 @@ async def agent_turn(
 
         if response.stop_reason != "tool_use":
             terminal_response_had_text = bool("".join(response_text_parts).strip())
+            finished_normally = response.stop_reason == "end_turn"
             break
 
         messages.append({"role": "assistant", "content": response.content})
@@ -654,6 +659,13 @@ async def agent_turn(
                 recovery_detail = f"{block.name} raised an internal error"
                 logger.warning("Tool %s raised an unexpected exception", block.name, exc_info=exc)
             elapsed_ms = int((time.monotonic() - tool_start) * 1000)
+
+            try:
+                follow_up_context.observe(block.name, block.input, result_payload, is_error)
+            except Exception:
+                # Optional eligibility must never break the original answer.
+                follow_up_context.failed = True
+                logger.warning("Could not capture follow-up context", exc_info=True)
 
             result_summary = _summarize_tool_result(
                 block.name, result_payload, is_error, recovery_detail
@@ -795,6 +807,16 @@ async def agent_turn(
         append_message, session_id, ChatMessage(role="assistant", content=final_answer)
     )
 
+    if finished_normally and not unresolved_ambiguous_geo:
+        try:
+            async for event in follow_ups.prepare_offer(
+                session_id, offer_generation, follow_up_context, turn_start, spans
+            ):
+                yield event
+        except Exception:
+            logger.warning("Optional follow-up preparation failed", exc_info=True)
+            spans.append(TraceSpan(name="follow_up", latency_ms=0, ok=False))
+
     _finish_trace(
         session_id,
         user_message,
@@ -806,5 +828,8 @@ async def agent_turn(
     )
     yield ChatEvent(
         type=EventType.DONE,
-        data={"elapsed_ms": int((time.monotonic() - turn_start) * 1000)},
+        data={
+            "elapsed_ms": int((time.monotonic() - turn_start) * 1000),
+            **({"follow_ups": offers} if (offers := follow_ups.public_offers(session_id, offer_generation)) else {}),
+        },
     )

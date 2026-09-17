@@ -118,6 +118,17 @@ Two tools never leave the box: `search_census_variables` and
 request time, **Snowflake is touched by exactly one code path**,
 `run_census_sql`.
 
+### Suggested follow-up slice
+
+On the feature branch, ask: "How many occupied homes are in Travis County, Texas,
+and Harris County, Texas?" A supported completion can offer **Compare renter
+share**. `src/follow_ups.py` verifies runtime field meanings and complete data,
+then stores a short-lived action for those counties. Clicking runs a fresh query
+through the same SQL gate and streams a fixed comparison into chat and Evidence.
+Unknown query shapes, incomplete data, or insufficient time produce no button.
+The slice uses one worker and no additional model calls. See **D-029** and
+`docs/suggested-follow-up-questions-plan.md` for limits and verification.
+
 ### The trust boundary
 
 The agent has three tools and one gate. The distinction that matters:
@@ -399,5 +410,6 @@ Decisions, recorded in full in [`docs/decisions.md`](docs/decisions.md).
 | `D-023` | Trace history is durable, and has no per-session cap |
 | `D-027` | The reviewer interface has four ordered surfaces |
 | `D-028` | How It Works moves to the end of reviewer navigation |
+| `D-029` | One checked renter-share follow-up |
 
 <!-- END id-reference -->

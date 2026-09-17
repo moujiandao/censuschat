@@ -99,7 +99,7 @@ def search_census_variables(query: str, limit: int = 10) -> VariableSearchResult
         return VariableSearchResult(query=query, hits=[], truncated=False)
 
     sql = (
-        "SELECT variable_id, label, universe, bm25(variables_fts) AS rank "
+        "SELECT variable_id, label, universe, searchable_text, bm25(variables_fts) AS rank "
         "FROM variables_fts WHERE variables_fts MATCH ? "
         "ORDER BY rank LIMIT ?"
     )
@@ -130,13 +130,13 @@ def search_census_variables(query: str, limit: int = 10) -> VariableSearchResult
             variable_id=variable_id,
             physical_table=_physical_table_for_acs_variable(variable_id),
             label=label,
-            description=universe or "",
+            description=f"Universe: {universe or ''}. Field: {searchable_text or ''}",
             geo_levels=_geo_levels_for(label),
             years=[DEFAULT_VINTAGE],
             score=-rank,
             source="acs",
         )
-        for variable_id, label, universe, rank in rows
+        for variable_id, label, universe, searchable_text, rank in rows
     ]
     return VariableSearchResult(query=query, hits=hits, truncated=truncated)
 

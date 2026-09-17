@@ -1,0 +1,967 @@
+{
+  "kind": "scoped_follow_up_feature_validation",
+  "date": "2026-09-17",
+  "branch": "feat/follow-up-questions",
+  "baseline_commit": "ddd82aa",
+  "tested_state": "uncommitted feature implementation; persisted with the implementing commit",
+  "scope": "Two live starter-to-action flows, two live negative cases. This is not a full golden eval run.",
+  "live_cases": [
+    {
+      "question": "How many occupied homes are in Travis County, Texas, and Harris County, Texas?",
+      "offer_count": 1,
+      "activation": "mouse",
+      "result": "pass",
+      "action_ms": 3686
+    },
+    {
+      "question": "How many occupied homes are in Alameda County, California, and Contra Costa County, California?",
+      "offer_count": 1,
+      "activation": "keyboard Enter",
+      "result": "pass",
+      "action_ms": 3355
+    },
+    {
+      "question": "What is the population of Alameda County, California?",
+      "offer_count": 0,
+      "result": "pass"
+    },
+    {
+      "question": "How many occupied homes are in Washington County and Franklin County?",
+      "offer_count": 0,
+      "result": "pass",
+      "sql_calls": 0
+    }
+  ],
+  "browser_fixture_checks": {
+    "kind": "offline intercepted SSE, not real data",
+    "offer_displayed": true,
+    "new_chat_removes_offer": true,
+    "new_question_removes_offer": true,
+    "input_and_new_chat_disabled_while_busy": true
+  },
+  "human_usefulness_assessment": "pending Brian",
+  "recipe_probes": [
+    {
+      "counties": [
+        "Travis County, Texas",
+        "Harris County, Texas"
+      ],
+      "variable_ids": [
+        "B25003e1",
+        "B25003e3"
+      ],
+      "sql": "SELECT LEFT(g.CENSUS_BLOCK_GROUP,5) AS COUNTY_ID,\n COUNT(*) AS REFERENCE_ROWS, COUNT(DISTINCT g.CENSUS_BLOCK_GROUP) AS UNIQUE_BLOCKS,\n COUNT(h.CENSUS_BLOCK_GROUP) AS MATCHED_ROWS,\n COUNT(h.\"B25003e1\") AS TOTAL_VALUES,\n COUNT(h.\"B25003e3\") AS RENTER_VALUES,\n SUM(CASE WHEN h.\"B25003e3\" < 0 OR h.\"B25003e1\" < 0 OR h.\"B25003e3\" > h.\"B25003e1\" THEN 1 ELSE 0 END) AS INVALID_VALUES,\n SUM(h.\"B25003e1\") AS OCCUPIED,\n SUM(h.\"B25003e3\") AS RENTED,\n 100.0 * SUM(h.\"B25003e3\") / NULLIF(SUM(h.\"B25003e1\"),0) AS RENTER_SHARE\n FROM US_CENSUS.PUBLIC.\"2020_METADATA_CBG_GEOGRAPHIC_DATA\" g\n LEFT JOIN US_CENSUS.PUBLIC.\"2020_CBG_B25\" h ON g.CENSUS_BLOCK_GROUP=h.CENSUS_BLOCK_GROUP\n WHERE LEFT(g.CENSUS_BLOCK_GROUP,5) IN ('48453','48201') GROUP BY LEFT(g.CENSUS_BLOCK_GROUP,5)",
+      "wall_seconds": 6.298,
+      "result": {
+        "columns": [
+          "COUNTY_ID",
+          "REFERENCE_ROWS",
+          "UNIQUE_BLOCKS",
+          "MATCHED_ROWS",
+          "TOTAL_VALUES",
+          "RENTER_VALUES",
+          "INVALID_VALUES",
+          "OCCUPIED",
+          "RENTED",
+          "RENTER_SHARE"
+        ],
+        "rows": [
+          {
+            "COUNTY_ID": "48201",
+            "REFERENCE_ROWS": 2830,
+            "UNIQUE_BLOCKS": 2830,
+            "MATCHED_ROWS": 2830,
+            "TOTAL_VALUES": 2830,
+            "RENTER_VALUES": 2830,
+            "INVALID_VALUES": 0,
+            "OCCUPIED": 1635749.0,
+            "RENTED": 737836.0,
+            "RENTER_SHARE": 45.1069204382824
+          },
+          {
+            "COUNTY_ID": "48453",
+            "REFERENCE_ROWS": 766,
+            "UNIQUE_BLOCKS": 766,
+            "MATCHED_ROWS": 766,
+            "TOTAL_VALUES": 766,
+            "RENTER_VALUES": 766,
+            "INVALID_VALUES": 0,
+            "OCCUPIED": 491531.0,
+            "RENTED": 231076.0,
+            "RENTER_SHARE": 47.0114804559631
+          }
+        ],
+        "row_count": 2,
+        "truncated": false,
+        "elapsed_ms": 6260
+      },
+      "independent_arithmetic_check": true
+    },
+    {
+      "counties": [
+        "Alameda County, California",
+        "Contra Costa County, California"
+      ],
+      "variable_ids": [
+        "B25003e1",
+        "B25003e3"
+      ],
+      "sql": "SELECT LEFT(g.CENSUS_BLOCK_GROUP,5) AS COUNTY_ID,\n COUNT(*) AS REFERENCE_ROWS, COUNT(DISTINCT g.CENSUS_BLOCK_GROUP) AS UNIQUE_BLOCKS,\n COUNT(h.CENSUS_BLOCK_GROUP) AS MATCHED_ROWS,\n COUNT(h.\"B25003e1\") AS TOTAL_VALUES,\n COUNT(h.\"B25003e3\") AS RENTER_VALUES,\n SUM(CASE WHEN h.\"B25003e3\" < 0 OR h.\"B25003e1\" < 0 OR h.\"B25003e3\" > h.\"B25003e1\" THEN 1 ELSE 0 END) AS INVALID_VALUES,\n SUM(h.\"B25003e1\") AS OCCUPIED,\n SUM(h.\"B25003e3\") AS RENTED,\n 100.0 * SUM(h.\"B25003e3\") / NULLIF(SUM(h.\"B25003e1\"),0) AS RENTER_SHARE\n FROM US_CENSUS.PUBLIC.\"2020_METADATA_CBG_GEOGRAPHIC_DATA\" g\n LEFT JOIN US_CENSUS.PUBLIC.\"2020_CBG_B25\" h ON g.CENSUS_BLOCK_GROUP=h.CENSUS_BLOCK_GROUP\n WHERE LEFT(g.CENSUS_BLOCK_GROUP,5) IN ('06001','06013') GROUP BY LEFT(g.CENSUS_BLOCK_GROUP,5)",
+      "wall_seconds": 5.566,
+      "result": {
+        "columns": [
+          "COUNTY_ID",
+          "REFERENCE_ROWS",
+          "UNIQUE_BLOCKS",
+          "MATCHED_ROWS",
+          "TOTAL_VALUES",
+          "RENTER_VALUES",
+          "INVALID_VALUES",
+          "OCCUPIED",
+          "RENTED",
+          "RENTER_SHARE"
+        ],
+        "rows": [
+          {
+            "COUNTY_ID": "06013",
+            "REFERENCE_ROWS": 708,
+            "UNIQUE_BLOCKS": 708,
+            "MATCHED_ROWS": 708,
+            "TOTAL_VALUES": 708,
+            "RENTER_VALUES": 708,
+            "INVALID_VALUES": 0,
+            "OCCUPIED": 398299.0,
+            "RENTED": 132061.0,
+            "RENTER_SHARE": 33.15624694011283
+          },
+          {
+            "COUNTY_ID": "06001",
+            "REFERENCE_ROWS": 1134,
+            "UNIQUE_BLOCKS": 1134,
+            "MATCHED_ROWS": 1134,
+            "TOTAL_VALUES": 1134,
+            "RENTER_VALUES": 1134,
+            "INVALID_VALUES": 0,
+            "OCCUPIED": 573174.0,
+            "RENTED": 265893.0,
+            "RENTER_SHARE": 46.38957803389547
+          }
+        ],
+        "row_count": 2,
+        "truncated": false,
+        "elapsed_ms": 5558
+      },
+      "independent_arithmetic_check": true
+    }
+  ],
+  "live_turns": [
+    {
+      "user_message": "How many occupied homes are in Travis County, Texas, and Harris County, Texas?",
+      "final_answer": "Found it: **B25003e1** = total occupied housing units, at `US_CENSUS.PUBLIC.\"2020_CBG_B25\"`.Using 2020 ACS 5-year estimates (2016\u20132020), the estimated number of occupied housing units is:\n\n- **Travis County, Texas**: ~491,531 occupied homes\n- **Harris County, Texas**: ~1,635,749 occupied homes\n\nThese are 5-year rolling estimates, not exact point-in-time counts.",
+      "terminal_status": "done",
+      "started_at": "2026-09-17T03:00:33.948448+00:00",
+      "total_ms": 21815,
+      "spans": [
+        {
+          "name": "guardrail",
+          "latency_ms": 6057,
+          "ok": true,
+          "meta": {
+            "verdict": "allow",
+            "category": null
+          }
+        },
+        {
+          "name": "model_call_1",
+          "latency_ms": 2331,
+          "ok": true,
+          "meta": {
+            "model": "claude-sonnet-5",
+            "trigger": "user request",
+            "action": "requested tool",
+            "tools_requested": [
+              "resolve_geography",
+              "resolve_geography",
+              "search_census_variables"
+            ],
+            "response_preview": null,
+            "context_messages": 1,
+            "recovery_attempts": 0,
+            "input_tokens": 2595,
+            "output_tokens": 235,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "stop_reason": "tool_use"
+          }
+        },
+        {
+          "name": "tool:resolve_geography",
+          "latency_ms": 3,
+          "ok": true,
+          "meta": {
+            "args_preview": "{\"name\": \"Travis County, Texas\", \"level_hint\": \"county\"}",
+            "candidates": 1,
+            "ambiguous": false,
+            "resolved": [
+              "Travis County, Texas (48453)"
+            ]
+          }
+        },
+        {
+          "name": "tool:resolve_geography",
+          "latency_ms": 1,
+          "ok": true,
+          "meta": {
+            "args_preview": "{\"name\": \"Harris County, Texas\", \"level_hint\": \"county\"}",
+            "candidates": 1,
+            "ambiguous": false,
+            "resolved": [
+              "Harris County, Texas (48201)"
+            ]
+          }
+        },
+        {
+          "name": "tool:search_census_variables",
+          "latency_ms": 3,
+          "ok": true,
+          "meta": {
+            "args_preview": "{\"query\": \"occupied housing units\"}",
+            "hits": 10,
+            "top": [
+              "B25010e2",
+              "B25010e3",
+              "B25010e1",
+              "B25008e2",
+              "B25008e3"
+            ],
+            "labels": [
+              "Average Household Size Of Occupied Housing Units By Tenure",
+              "Average Household Size Of Occupied Housing Units By Tenure",
+              "Average Household Size Of Occupied Housing Units By Tenure"
+            ],
+            "truncated": true
+          }
+        },
+        {
+          "name": "model_call_2",
+          "latency_ms": 1671,
+          "ok": true,
+          "meta": {
+            "model": "claude-sonnet-5",
+            "trigger": "tool results",
+            "action": "requested tool",
+            "tools_requested": [
+              "search_census_variables"
+            ],
+            "response_preview": null,
+            "context_messages": 3,
+            "recovery_attempts": 0,
+            "input_tokens": 5473,
+            "output_tokens": 121,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "stop_reason": "tool_use"
+          }
+        },
+        {
+          "name": "tool:search_census_variables",
+          "latency_ms": 11,
+          "ok": true,
+          "meta": {
+            "args_preview": "{\"query\": \"tenure total occupied housing units count\"}",
+            "hits": 10,
+            "top": [
+              "B25003e2",
+              "B25003e3",
+              "B25003e1",
+              "B25032e13",
+              "B25032e2"
+            ],
+            "labels": [
+              "Tenure",
+              "Tenure",
+              "Tenure"
+            ],
+            "truncated": true
+          }
+        },
+        {
+          "name": "model_call_3",
+          "latency_ms": 2440,
+          "ok": true,
+          "meta": {
+            "model": "claude-sonnet-5",
+            "trigger": "tool results",
+            "action": "requested tool",
+            "tools_requested": [
+              "run_census_sql"
+            ],
+            "response_preview": "Found it: **B25003e1** = total occupied housing units, at `US_CENSUS.PUBLIC.\"2020_CBG_B25\"`.",
+            "context_messages": 5,
+            "recovery_attempts": 0,
+            "input_tokens": 7515,
+            "output_tokens": 268,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "stop_reason": "tool_use"
+          }
+        },
+        {
+          "name": "tool:run_census_sql",
+          "latency_ms": 3645,
+          "ok": true,
+          "meta": {
+            "args_preview": "{\"sql\": \"SELECT SUBSTR(CENSUS_BLOCK_GROUP,1,5) AS county_geo_id, SUM(\\\"B25003e1\\\") AS occupied_housing_units\\nFROM US_CENSUS.PUBLIC.\\\"2020_CBG_B25\\\"\\nWHERE SUBSTR(CENSUS_BLOCK_GROUP,1,5) IN ('48453','48201')\\nGROUP BY SUBSTR(CENSUS_BLOCK_GROUP,1,5)\"}",
+            "row_count": 2,
+            "columns": [
+              "COUNTY_GEO_ID",
+              "OCCUPIED_HOUSING_UNITS"
+            ],
+            "first_row": {
+              "COUNTY_GEO_ID": "48201",
+              "OCCUPIED_HOUSING_UNITS": 1635749.0
+            },
+            "truncated": false
+          }
+        },
+        {
+          "name": "model_call_4",
+          "latency_ms": 1466,
+          "ok": true,
+          "meta": {
+            "model": "claude-sonnet-5",
+            "trigger": "tool results",
+            "action": "responded to user",
+            "tools_requested": [],
+            "response_preview": "Using 2020 ACS 5-year estimates (2016\u20132020), the estimated number of occupied housing units is:\n\n- **Travis County, Texas**: ~491,531 occupied homes\n- **Harris County, Texas**: ~1,635,749 occupied homes\n\nThese are 5-year rolling estimates, not exact point-in-time counts.",
+            "context_messages": 7,
+            "recovery_attempts": 0,
+            "input_tokens": 7955,
+            "output_tokens": 114,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "stop_reason": "end_turn"
+          }
+        },
+        {
+          "name": "tool:search_census_variables",
+          "latency_ms": 1,
+          "ok": true,
+          "meta": {
+            "args_preview": "{'query': 'tenure', 'limit': 10}",
+            "hits": 10,
+            "top": [
+              "B25003e1",
+              "B25003e2",
+              "B25003e3",
+              "B25020e1",
+              "B25042e1"
+            ],
+            "labels": [
+              "Tenure",
+              "Tenure",
+              "Tenure"
+            ],
+            "truncated": true
+          }
+        },
+        {
+          "name": "tool:run_census_sql",
+          "latency_ms": 4170,
+          "ok": true,
+          "meta": {
+            "args_preview": "{'sql': 'SELECT LEFT(g.CENSUS_BLOCK_GROUP,5) AS COUNTY_ID,\\nCOUNT(*) AS REFERENCE_ROWS, COUNT(DISTINCT g.CENSUS_BLOCK_GROUP) AS UNIQUE_BLOCKS,\\nCOUNT(h.CENSUS_BLOCK_GROUP) AS MATCHED_ROWS,\\nCOUNT(h.\"B25003e1\") AS TOTAL_VALUES, COUNT(h.\"B25003e3\") AS RENTER_VALUES,\\nSUM(CASE WHEN ",
+            "row_count": 2,
+            "columns": [
+              "COUNTY_ID",
+              "REFERENCE_ROWS",
+              "UNIQUE_BLOCKS",
+              "MATCHED_ROWS",
+              "TOTAL_VALUES",
+              "RENTER_VALUES",
+              "INVALID_VALUES",
+              "OCCUPIED",
+              "RENTED",
+              "RENTER_SHARE"
+            ],
+            "first_row": {
+              "COUNTY_ID": "48201",
+              "REFERENCE_ROWS": 2830,
+              "UNIQUE_BLOCKS": 2830,
+              "MATCHED_ROWS": 2830,
+              "TOTAL_VALUES": 2830,
+              "RENTER_VALUES": 2830,
+              "INVALID_VALUES": 0,
+              "OCCUPIED": 1635749.0,
+              "RENTED": 737836.0,
+              "RENTER_SHARE": 45.1069204382824
+            },
+            "truncated": false
+          }
+        }
+      ]
+    },
+    {
+      "user_message": "Compare renter share in Travis County, Texas and Harris County, Texas.",
+      "final_answer": "Renter share of occupied homes, ACS 2016-2020 five-year estimates:\n\nTravis County, Texas: 47.0% (231,076 rented out of 491,531 occupied homes).\n\nHarris County, Texas: 45.1% (737,836 rented out of 1,635,749 occupied homes).\n\nComputed by summing block-group counts within each county, then dividing rented homes by occupied homes. This is a descriptive comparison, not a test of statistical significance.",
+      "terminal_status": "done",
+      "started_at": "2026-09-17T03:02:11.203086+00:00",
+      "total_ms": 3686,
+      "spans": [
+        {
+          "name": "tool:run_census_sql",
+          "latency_ms": 3681,
+          "ok": true,
+          "meta": {
+            "args_preview": "{'sql': 'SELECT LEFT(g.CENSUS_BLOCK_GROUP,5) AS COUNTY_ID,\\nCOUNT(*) AS REFERENCE_ROWS, COUNT(DISTINCT g.CENSUS_BLOCK_GROUP) AS UNIQUE_BLOCKS,\\nCOUNT(h.CENSUS_BLOCK_GROUP) AS MATCHED_ROWS,\\nCOUNT(h.\"B25003e1\") AS TOTAL_VALUES, COUNT(h.\"B25003e3\") AS RENTER_VALUES,\\nSUM(CASE WHEN ",
+            "row_count": 2,
+            "columns": [
+              "COUNTY_ID",
+              "REFERENCE_ROWS",
+              "UNIQUE_BLOCKS",
+              "MATCHED_ROWS",
+              "TOTAL_VALUES",
+              "RENTER_VALUES",
+              "INVALID_VALUES",
+              "OCCUPIED",
+              "RENTED",
+              "RENTER_SHARE"
+            ],
+            "first_row": {
+              "COUNTY_ID": "48201",
+              "REFERENCE_ROWS": 2830,
+              "UNIQUE_BLOCKS": 2830,
+              "MATCHED_ROWS": 2830,
+              "TOTAL_VALUES": 2830,
+              "RENTER_VALUES": 2830,
+              "INVALID_VALUES": 0,
+              "OCCUPIED": 1635749.0,
+              "RENTED": 737836.0,
+              "RENTER_SHARE": 45.1069204382824
+            },
+            "truncated": false
+          }
+        }
+      ]
+    },
+    {
+      "user_message": "How many occupied homes are in Alameda County, California, and Contra Costa County, California?",
+      "final_answer": "B25003e1 is the total occupied housing units variable. Now querying both counties.Using 2020 ACS 5-year estimates (2016\u20132020), the estimated number of occupied housing units is:\n\n- **Alameda County, California**: an estimated 573,174 occupied housing units\n- **Contra Costa County, California**: an estimated 398,299 occupied housing units\n\nTogether, that's an estimated 971,473 occupied homes across the two counties.",
+      "terminal_status": "done",
+      "started_at": "2026-09-17T03:02:25.795012+00:00",
+      "total_ms": 17887,
+      "spans": [
+        {
+          "name": "guardrail",
+          "latency_ms": 1012,
+          "ok": true,
+          "meta": {
+            "verdict": "allow",
+            "category": null
+          }
+        },
+        {
+          "name": "model_call_1",
+          "latency_ms": 2122,
+          "ok": true,
+          "meta": {
+            "model": "claude-sonnet-5",
+            "trigger": "user request",
+            "action": "requested tool",
+            "tools_requested": [
+              "search_census_variables",
+              "resolve_geography",
+              "resolve_geography"
+            ],
+            "response_preview": null,
+            "context_messages": 1,
+            "recovery_attempts": 0,
+            "input_tokens": 2595,
+            "output_tokens": 235,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "stop_reason": "tool_use"
+          }
+        },
+        {
+          "name": "tool:search_census_variables",
+          "latency_ms": 5,
+          "ok": true,
+          "meta": {
+            "args_preview": "{\"query\": \"occupied housing units\"}",
+            "hits": 10,
+            "top": [
+              "B25010e2",
+              "B25010e3",
+              "B25010e1",
+              "B25008e2",
+              "B25008e3"
+            ],
+            "labels": [
+              "Average Household Size Of Occupied Housing Units By Tenure",
+              "Average Household Size Of Occupied Housing Units By Tenure",
+              "Average Household Size Of Occupied Housing Units By Tenure"
+            ],
+            "truncated": true
+          }
+        },
+        {
+          "name": "tool:resolve_geography",
+          "latency_ms": 1,
+          "ok": true,
+          "meta": {
+            "args_preview": "{\"name\": \"Alameda County, California\", \"level_hint\": \"county\"}",
+            "candidates": 1,
+            "ambiguous": false,
+            "resolved": [
+              "Alameda County, California (06001)"
+            ]
+          }
+        },
+        {
+          "name": "tool:resolve_geography",
+          "latency_ms": 0,
+          "ok": true,
+          "meta": {
+            "args_preview": "{\"name\": \"Contra Costa County, California\", \"level_hint\": \"county\"}",
+            "candidates": 1,
+            "ambiguous": false,
+            "resolved": [
+              "Contra Costa County, California (06013)"
+            ]
+          }
+        },
+        {
+          "name": "model_call_2",
+          "latency_ms": 2119,
+          "ok": true,
+          "meta": {
+            "model": "claude-sonnet-5",
+            "trigger": "tool results",
+            "action": "requested tool",
+            "tools_requested": [
+              "search_census_variables"
+            ],
+            "response_preview": null,
+            "context_messages": 3,
+            "recovery_attempts": 0,
+            "input_tokens": 5473,
+            "output_tokens": 148,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "stop_reason": "tool_use"
+          }
+        },
+        {
+          "name": "tool:search_census_variables",
+          "latency_ms": 12,
+          "ok": true,
+          "meta": {
+            "args_preview": "{\"query\": \"tenure total occupied housing units count\"}",
+            "hits": 10,
+            "top": [
+              "B25003e2",
+              "B25003e3",
+              "B25003e1",
+              "B25032e13",
+              "B25032e2"
+            ],
+            "labels": [
+              "Tenure",
+              "Tenure",
+              "Tenure"
+            ],
+            "truncated": true
+          }
+        },
+        {
+          "name": "model_call_3",
+          "latency_ms": 2444,
+          "ok": true,
+          "meta": {
+            "model": "claude-sonnet-5",
+            "trigger": "tool results",
+            "action": "requested tool",
+            "tools_requested": [
+              "run_census_sql"
+            ],
+            "response_preview": "B25003e1 is the total occupied housing units variable. Now querying both counties.",
+            "context_messages": 5,
+            "recovery_attempts": 0,
+            "input_tokens": 7542,
+            "output_tokens": 242,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "stop_reason": "tool_use"
+          }
+        },
+        {
+          "name": "tool:run_census_sql",
+          "latency_ms": 7065,
+          "ok": true,
+          "meta": {
+            "args_preview": "{\"sql\": \"SELECT SUBSTR(CENSUS_BLOCK_GROUP,1,5) AS county_geo_id, SUM(\\\"B25003e1\\\") AS occupied_housing_units FROM US_CENSUS.PUBLIC.\\\"2020_CBG_B25\\\" WHERE SUBSTR(CENSUS_BLOCK_GROUP,1,5) IN ('06001','06013') GROUP BY SUBSTR(CENSUS_BLOCK_GROUP,1,5)\"}",
+            "row_count": 2,
+            "columns": [
+              "COUNTY_GEO_ID",
+              "OCCUPIED_HOUSING_UNITS"
+            ],
+            "first_row": {
+              "COUNTY_GEO_ID": "06001",
+              "OCCUPIED_HOUSING_UNITS": 573174.0
+            },
+            "truncated": false
+          }
+        },
+        {
+          "name": "model_call_4",
+          "latency_ms": 1608,
+          "ok": true,
+          "meta": {
+            "model": "claude-sonnet-5",
+            "trigger": "tool results",
+            "action": "responded to user",
+            "tools_requested": [],
+            "response_preview": "Using 2020 ACS 5-year estimates (2016\u20132020), the estimated number of occupied housing units is:\n\n- **Alameda County, California**: an estimated 573,174 occupied housing units\n- **Contra Costa County, California**: an estimated 398,299 occupied housing units\n\nTogether, that's an estimated 971,473 occupied homes across the two counties.",
+            "context_messages": 7,
+            "recovery_attempts": 0,
+            "input_tokens": 7955,
+            "output_tokens": 121,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "stop_reason": "end_turn"
+          }
+        },
+        {
+          "name": "tool:search_census_variables",
+          "latency_ms": 2,
+          "ok": true,
+          "meta": {
+            "args_preview": "{'query': 'tenure', 'limit': 10}",
+            "hits": 10,
+            "top": [
+              "B25003e1",
+              "B25003e2",
+              "B25003e3",
+              "B25020e1",
+              "B25042e1"
+            ],
+            "labels": [
+              "Tenure",
+              "Tenure",
+              "Tenure"
+            ],
+            "truncated": true
+          }
+        },
+        {
+          "name": "tool:run_census_sql",
+          "latency_ms": 1479,
+          "ok": true,
+          "meta": {
+            "args_preview": "{'sql': 'SELECT LEFT(g.CENSUS_BLOCK_GROUP,5) AS COUNTY_ID,\\nCOUNT(*) AS REFERENCE_ROWS, COUNT(DISTINCT g.CENSUS_BLOCK_GROUP) AS UNIQUE_BLOCKS,\\nCOUNT(h.CENSUS_BLOCK_GROUP) AS MATCHED_ROWS,\\nCOUNT(h.\"B25003e1\") AS TOTAL_VALUES, COUNT(h.\"B25003e3\") AS RENTER_VALUES,\\nSUM(CASE WHEN ",
+            "row_count": 2,
+            "columns": [
+              "COUNTY_ID",
+              "REFERENCE_ROWS",
+              "UNIQUE_BLOCKS",
+              "MATCHED_ROWS",
+              "TOTAL_VALUES",
+              "RENTER_VALUES",
+              "INVALID_VALUES",
+              "OCCUPIED",
+              "RENTED",
+              "RENTER_SHARE"
+            ],
+            "first_row": {
+              "COUNTY_ID": "06013",
+              "REFERENCE_ROWS": 708,
+              "UNIQUE_BLOCKS": 708,
+              "MATCHED_ROWS": 708,
+              "TOTAL_VALUES": 708,
+              "RENTER_VALUES": 708,
+              "INVALID_VALUES": 0,
+              "OCCUPIED": 398299.0,
+              "RENTED": 132061.0,
+              "RENTER_SHARE": 33.15624694011283
+            },
+            "truncated": false
+          }
+        }
+      ]
+    },
+    {
+      "user_message": "Compare renter share in Alameda County, California and Contra Costa County, California.",
+      "final_answer": "Renter share of occupied homes, ACS 2016-2020 five-year estimates:\n\nAlameda County, California: 46.4% (265,893 rented out of 573,174 occupied homes).\n\nContra Costa County, California: 33.2% (132,061 rented out of 398,299 occupied homes).\n\nComputed by summing block-group counts within each county, then dividing rented homes by occupied homes. This is a descriptive comparison, not a test of statistical significance.",
+      "terminal_status": "done",
+      "started_at": "2026-09-17T03:03:04.734466+00:00",
+      "total_ms": 3355,
+      "spans": [
+        {
+          "name": "tool:run_census_sql",
+          "latency_ms": 3350,
+          "ok": true,
+          "meta": {
+            "args_preview": "{'sql': 'SELECT LEFT(g.CENSUS_BLOCK_GROUP,5) AS COUNTY_ID,\\nCOUNT(*) AS REFERENCE_ROWS, COUNT(DISTINCT g.CENSUS_BLOCK_GROUP) AS UNIQUE_BLOCKS,\\nCOUNT(h.CENSUS_BLOCK_GROUP) AS MATCHED_ROWS,\\nCOUNT(h.\"B25003e1\") AS TOTAL_VALUES, COUNT(h.\"B25003e3\") AS RENTER_VALUES,\\nSUM(CASE WHEN ",
+            "row_count": 2,
+            "columns": [
+              "COUNTY_ID",
+              "REFERENCE_ROWS",
+              "UNIQUE_BLOCKS",
+              "MATCHED_ROWS",
+              "TOTAL_VALUES",
+              "RENTER_VALUES",
+              "INVALID_VALUES",
+              "OCCUPIED",
+              "RENTED",
+              "RENTER_SHARE"
+            ],
+            "first_row": {
+              "COUNTY_ID": "06013",
+              "REFERENCE_ROWS": 708,
+              "UNIQUE_BLOCKS": 708,
+              "MATCHED_ROWS": 708,
+              "TOTAL_VALUES": 708,
+              "RENTER_VALUES": 708,
+              "INVALID_VALUES": 0,
+              "OCCUPIED": 398299.0,
+              "RENTED": 132061.0,
+              "RENTER_SHARE": 33.15624694011283
+            },
+            "truncated": false
+          }
+        }
+      ]
+    },
+    {
+      "user_message": "What is the population of Alameda County, California?",
+      "final_answer": "Using 2020 ACS 5-year estimates (2016\u20132020), Alameda County, California had an estimated population of **1,661,584**.",
+      "terminal_status": "done",
+      "started_at": "2026-09-17T03:03:24.566860+00:00",
+      "total_ms": 7713,
+      "spans": [
+        {
+          "name": "guardrail",
+          "latency_ms": 1040,
+          "ok": true,
+          "meta": {
+            "verdict": "allow",
+            "category": null
+          }
+        },
+        {
+          "name": "model_call_1",
+          "latency_ms": 1695,
+          "ok": true,
+          "meta": {
+            "model": "claude-sonnet-5",
+            "trigger": "user request",
+            "action": "requested tool",
+            "tools_requested": [
+              "resolve_geography",
+              "search_census_variables"
+            ],
+            "response_preview": null,
+            "context_messages": 1,
+            "recovery_attempts": 0,
+            "input_tokens": 2580,
+            "output_tokens": 147,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "stop_reason": "tool_use"
+          }
+        },
+        {
+          "name": "tool:resolve_geography",
+          "latency_ms": 5,
+          "ok": true,
+          "meta": {
+            "args_preview": "{\"name\": \"Alameda County, California\", \"level_hint\": \"county\"}",
+            "candidates": 1,
+            "ambiguous": false,
+            "resolved": [
+              "Alameda County, California (06001)"
+            ]
+          }
+        },
+        {
+          "name": "tool:search_census_variables",
+          "latency_ms": 8,
+          "ok": true,
+          "meta": {
+            "args_preview": "{\"query\": \"total population\"}",
+            "hits": 10,
+            "top": [
+              "B01003e1",
+              "C02003e12",
+              "C02003e18",
+              "C02003e15",
+              "C02003e19"
+            ],
+            "labels": [
+              "Total Population",
+              "Detailed Race",
+              "Detailed Race"
+            ],
+            "truncated": true
+          }
+        },
+        {
+          "name": "model_call_2",
+          "latency_ms": 1449,
+          "ok": true,
+          "meta": {
+            "model": "claude-sonnet-5",
+            "trigger": "tool results",
+            "action": "requested tool",
+            "tools_requested": [
+              "run_census_sql"
+            ],
+            "response_preview": null,
+            "context_messages": 3,
+            "recovery_attempts": 0,
+            "input_tokens": 4594,
+            "output_tokens": 134,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "stop_reason": "tool_use"
+          }
+        },
+        {
+          "name": "tool:run_census_sql",
+          "latency_ms": 2608,
+          "ok": true,
+          "meta": {
+            "args_preview": "{\"sql\": \"SELECT SUM(\\\"B01003e1\\\") AS total_population FROM US_CENSUS.PUBLIC.\\\"2020_CBG_B01\\\" WHERE SUBSTR(CENSUS_BLOCK_GROUP,1,5) = '06001'\"}",
+            "row_count": 1,
+            "columns": [
+              "TOTAL_POPULATION"
+            ],
+            "first_row": {
+              "TOTAL_POPULATION": 1661584.0
+            },
+            "truncated": false
+          }
+        },
+        {
+          "name": "model_call_3",
+          "latency_ms": 895,
+          "ok": true,
+          "meta": {
+            "model": "claude-sonnet-5",
+            "trigger": "tool results",
+            "action": "responded to user",
+            "tools_requested": [],
+            "response_preview": "Using 2020 ACS 5-year estimates (2016\u20132020), Alameda County, California had an estimated population of **1,661,584**.",
+            "context_messages": 5,
+            "recovery_attempts": 0,
+            "input_tokens": 4808,
+            "output_tokens": 47,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "stop_reason": "end_turn"
+          }
+        }
+      ]
+    },
+    {
+      "user_message": "How many occupied homes are in Washington County and Franklin County?",
+      "final_answer": "Both county names are ambiguous \u2014 there are counties with these names in many states. Could you tell me which states you mean?\n\n- **Washington County**: AL, AR, CO, FL, GA, IA, ID, IL, IN, KS, KY, MD, ME, MN, MO, MS, NC, NE, NY, OH, OK, OR, PA, RI, TN, TX, UT, VA, VT, or WI\n- **Franklin County**: AL, AR, FL, GA, IA, ID, IL, IN, KS, KY, MA, ME, MO, MS, NC, NE, NY, OH, PA, TN, TX, VA, VT, or WA\n\nOnce you confirm the states, I'll pull the occupied-housing-unit counts (2020 ACS 5-year estimates) for each.",
+      "terminal_status": "done",
+      "started_at": "2026-09-17T03:03:43.948962+00:00",
+      "total_ms": 5453,
+      "spans": [
+        {
+          "name": "guardrail",
+          "latency_ms": 909,
+          "ok": true,
+          "meta": {
+            "verdict": "allow",
+            "category": null
+          }
+        },
+        {
+          "name": "model_call_1",
+          "latency_ms": 2011,
+          "ok": true,
+          "meta": {
+            "model": "claude-sonnet-5",
+            "trigger": "user request",
+            "action": "requested tool",
+            "tools_requested": [
+              "resolve_geography",
+              "resolve_geography"
+            ],
+            "response_preview": null,
+            "context_messages": 1,
+            "recovery_attempts": 0,
+            "input_tokens": 2587,
+            "output_tokens": 224,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "stop_reason": "tool_use"
+          }
+        },
+        {
+          "name": "tool:resolve_geography",
+          "latency_ms": 2,
+          "ok": true,
+          "meta": {
+            "args_preview": "{\"name\": \"Washington County\", \"level_hint\": \"county\"}",
+            "candidates": 30,
+            "ambiguous": true,
+            "resolved": [
+              "Washington County, Alabama (01129)",
+              "Washington County, Arkansas (05143)",
+              "Washington County, Colorado (08121)",
+              "Washington County, Florida (12133)",
+              "Washington County, Georgia (13303)"
+            ]
+          }
+        },
+        {
+          "name": "tool:resolve_geography",
+          "latency_ms": 1,
+          "ok": true,
+          "meta": {
+            "args_preview": "{\"name\": \"Franklin County\", \"level_hint\": \"county\"}",
+            "candidates": 24,
+            "ambiguous": true,
+            "resolved": [
+              "Franklin County, Alabama (01059)",
+              "Franklin County, Arkansas (05047)",
+              "Franklin County, Florida (12037)",
+              "Franklin County, Georgia (13119)",
+              "Franklin County, Iowa (19069)"
+            ]
+          }
+        },
+        {
+          "name": "model_call_2",
+          "latency_ms": 2523,
+          "ok": true,
+          "meta": {
+            "model": "claude-sonnet-5",
+            "trigger": "tool results",
+            "action": "responded to user",
+            "tools_requested": [],
+            "response_preview": "Both county names are ambiguous \u2014 there are counties with these names in many states. Could you tell me which states you mean?\n\n- **Washington County**: AL, AR, CO, FL, GA, IA, ID, IL, IN, KS, KY, MD, ME, MN, MO, MS, NC, NE, NY, OH, OK, OR, PA, RI, TN, TX, UT, VA, VT, or WI\n- **Franklin County**: AL, AR, FL, GA, IA, ID, IL, IN, KS, KY, MA, ME, MO, MS, NC, NE, NY, OH, PA, TN, TX, VA, VT, or WA\n\nOnce you confirm the states, I'll pull the occupied-housing-unit counts (2020 ACS 5-year estimates) for",
+            "context_messages": 3,
+            "recovery_attempts": 0,
+            "input_tokens": 5122,
+            "output_tokens": 262,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "stop_reason": "end_turn"
+          }
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "Small live sample does not establish broad trigger recall or availability.",
+    "Exact metadata breadcrumbs and one query shape only.",
+    "Offers are process-local, five minute lifetime.",
+    "The browser harness lost an in-memory result variable after the second starter; the successful turn was recovered from persistent Evidence and observed button state."
+  ]
+}
