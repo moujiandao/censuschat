@@ -17,6 +17,10 @@ __pycache__/
 # Playwright MCP browser-test scratch output — not part of the repo
 .playwright-mcp/
 
+# Pre-rewrite snapshots of rulebook docs (workspace destructive-change
+# protocol). Local safety net only, never a second copy in the repo.
+*.backup
+
 # NOTE: docs/solutions.html and docs/solutions.pdf are deliberately NOT ignored.
 # The PDF is a submission deliverable, and the HTML is its source — a reviewer
 # cloning the repo should get both without needing to render anything.

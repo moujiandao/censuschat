@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>censuschat - request flow</title>
+<title>censuschat - evaluation flow</title>
 <style>
   :root {
     --bg: #f7f8fa;
@@ -90,90 +90,100 @@
 <main>
   <header>
     <div>
-      <h1>censuschat request flow</h1>
-      <p class="sub">How a question becomes a Census answer, where deterministic protections apply, and what the Evidence tab records.</p>
+      <h1>censuschat evaluation flow</h1>
+      <p class="sub">How 14 live scenarios become deterministic outcomes, CI decisions, and reviewer-facing evidence.</p>
     </div>
     <nav aria-label="Diagram navigation">
+      <a href="flow-diagram.html">Request flow</a>
       <a href="../static/index.html">App</a>
-      <a href="eval-flow-diagram.html">Eval flow</a>
     </nav>
   </header>
 
   <div id="status">rendering...</div>
-  <div class="diagram"><div id="out-request"></div></div>
+  <div class="diagram"><div id="out-eval"></div></div>
 
   <div class="legend" aria-label="Diagram legend">
-    <span><i class="swatch" style="background:#2563eb"></i>Transport and storage</span>
-    <span><i class="swatch" style="background:#b45309"></i>Model or soft policy</span>
-    <span><i class="swatch" style="background:#047857"></i>Local deterministic work</span>
-    <span><i class="swatch" style="background:#b3261e"></i>Code-enforced boundary</span>
-    <span><i class="swatch" style="background:#6d28d9"></i>Answer-facing data</span>
+    <span><i class="swatch" style="background:#2563eb"></i>Scenario and artifact</span>
+    <span><i class="swatch" style="background:#b45309"></i>Live paid execution</span>
+    <span><i class="swatch" style="background:#b3261e"></i>Deterministic decision</span>
+    <span><i class="swatch" style="background:#047857"></i>Passing path</span>
+    <span><i class="swatch" style="background:#6d28d9"></i>Informational path</span>
   </div>
 
-  <section class="cards" aria-label="Request flow notes">
+  <section class="cards" aria-label="Evaluation flow notes">
     <article>
-      <h2>The hard boundary</h2>
-      <p><code>validate_sql</code> parses one SELECT, checks every table against the allowlist, rejects unsafe constructs and star projection, injects a LIMIT, and sets a statement timeout. User text is never interpolated into SQL.</p>
+      <h2>What blocks</h2>
+      <p>Regression CI runs 6 stable scenarios twice. Every trial must pass. A fail, inconclusive result, or infrastructure error exits nonzero.</p>
     </article>
     <article>
-      <h2>Local discovery</h2>
-      <p><code>search_census_variables</code> and <code>resolve_geography</code> read a local SQLite snapshot. Only <code>run_census_sql</code> can reach Snowflake at request time.</p>
+      <h2>What reports</h2>
+      <p>The 8 capability scenarios cover broader or less stable behavior. Behavioral fail and inconclusive outcomes remain visible without blocking, while infrastructure errors still fail the run.</p>
     </article>
     <article>
-      <h2>Soft layers stay soft</h2>
-      <p>The Haiku guardrail fails open on classifier errors. The model is instructed to ground its answer, but the serving path does not independently validate every final-answer number.</p>
+      <h2>Why inconclusive exists</h2>
+      <p>It means the captured evidence cannot prove or disprove the claim. It remains non-passing and in the denominator, so uncertainty cannot inflate the score.</p>
     </article>
     <article>
-      <h2>Returned values are normalized</h2>
-      <p>For directly selected Census variables, SQL NULL becomes “not reported” and known top codes become bounded text. Derived and aggregate projections remain unchanged.</p>
+      <h2>Grounding check boundary</h2>
+      <p>The deterministic checker compares answer figures of at least four digits, excluding vintage years, only with captured query-row cells from the final turn. It does not infer arithmetic or lineage.</p>
     </article>
     <article>
-      <h2>Evidence survives restarts</h2>
-      <p>Guardrail, model, and tool spans are stored with the final answer and terminal status in SQLite. The Evidence tab provides a curated timeline and optional raw JSON.</p>
+      <h2>Artifacts stay separate</h2>
+      <p>CI writes a GitHub artifact outside <code>evals/results/</code>. Plain <code>make eval</code> writes the timestamped and latest committed benchmark shown in the Evals tab.</p>
     </article>
     <article>
-      <h2>Bounds and scope</h2>
-      <p>The loop has 8 rounds and 2 SQL recovery retries. The 50-second watchdog is checked between rounds, not during an in-flight call. Answers use the 2020 ACS 5-year data exposed by the allowed tables.</p>
+      <h2>No uncalibrated prose judge</h2>
+      <p>Deterministic checks cover observable correctness. Clarity, caveat quality, and explanation quality remain human-reviewed until an LLM judge is calibrated against labeled examples.</p>
     </article>
   </section>
 
-  <footer>Current implementation sources: <code>src/agent.py</code>, <code>src/tools.py</code>, <code>src/sqlgate.py</code>, <code>src/tracing.py</code>, and <code>static/index.html</code>.</footer>
+  <footer>Current implementation sources: <code>evals/scenarios.py</code>, <code>evals/run_evals.py</code>, <code>evals/README.md</code>, and <code>.github/workflows/live-evals.yml</code>.</footer>
 </main>
 
 <script type="module">
 import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
 
 const source = `flowchart TB
-    subgraph ROW1["Main answer path"]
+    subgraph ROW1["Scenario execution"]
       direction LR
-      Q["Question + session history"] --> G["Guardrail<br/><small>soft, fails open</small>"]
-      G --> DISC["Local discovery<br/><small>variables + geography</small>"]
-      DISC --> GATE["SQL gate<br/><small>hard trust boundary</small>"]
+      C[("14 golden scenarios")] --> SPLIT{"Suite"}
+      SPLIT --> R["Regression<br/><small>6 stable</small>"]
+      SPLIT --> P["Capability<br/><small>8 broader</small>"]
+      R --> LIVE["Real agent + Anthropic + Snowflake"]
+      P --> LIVE
+      LIVE --> CAP["Capture answer, events,<br/>tools, rows, and latency"]
     end
 
-    subgraph ROW2["Answer-facing data path"]
+    subgraph ROW2["Scoring"]
       direction LR
-      SF[("Snowflake<br/><small>2020 ACS tables</small>")] --> N["Normalize returned cells"]
-      N --> ANSWER["Stream answer<br/><small>grounding is instructed</small>"]
-      ANSWER --> E[("Durable Evidence<br/><small>spans + answer + status</small>")]
+      SCORE["Deterministic checks"] --> OUT{"pass, fail,<br/>or inconclusive"}
+      OUT --> MODE{"Run mode"}
     end
 
-    GATE -->|sanitized SELECT| SF
+    subgraph ROW3["Evidence and decisions"]
+      direction LR
+      CI["CI artifact<br/><small>all trials + models + git SHA</small>"] --> GATE["Regression pass² blocks<br/>Capability reports<br/>Infrastructure always blocks"]
+      BENCH[("Committed benchmark<br/><small>timestamped + latest JSON</small>")] --> UI["Evals tab<br/><small>suites + tri-state results</small>"]
+    end
 
-    classDef transport fill:#e8effd,stroke:#2563eb,stroke-width:2px,color:#12244d
-    classDef soft fill:#fef3e2,stroke:#b45309,stroke-width:2px,color:#5c3005
-    classDef local fill:#e6f6f0,stroke:#047857,stroke-width:2px,color:#053d2c
-    classDef hard fill:#b3261e,stroke:#7f1d1a,stroke-width:3px,color:#ffffff
-    classDef answer fill:#ede9fe,stroke:#6d28d9,stroke-width:2px,color:#2e1065
-    classDef stop fill:#f2f3f5,stroke:#6b7280,stroke-width:2px,color:#25292e
+    CAP --> SCORE
+    MODE -->|CI| CI
+    MODE -->|plain make eval| BENCH
 
-    class Q,E transport
-    class G soft
-    class DISC,SF local
-    class GATE hard
-    class N,ANSWER answer
+    classDef artifact fill:#e8effd,stroke:#2563eb,stroke-width:2px,color:#12244d
+    classDef live fill:#fef3e2,stroke:#b45309,stroke-width:2px,color:#5c3005
+    classDef decision fill:#b3261e,stroke:#7f1d1a,stroke-width:3px,color:#ffffff
+    classDef pass fill:#e6f6f0,stroke:#047857,stroke-width:2px,color:#053d2c
+    classDef report fill:#ede9fe,stroke:#6d28d9,stroke-width:2px,color:#2e1065
+    classDef neutral fill:#f2f3f5,stroke:#6b7280,stroke-width:2px,color:#25292e
+
+    class C,R,P,CAP,CI,BENCH,UI artifact
+    class LIVE live
+    class SCORE,OUT,GATE decision
+    class MODE neutral
     style ROW1 fill:transparent,stroke:#dfe3e8,stroke-width:1px
     style ROW2 fill:transparent,stroke:#dfe3e8,stroke-width:1px
+    style ROW3 fill:transparent,stroke:#dfe3e8,stroke-width:1px
 `;
 
 const status = document.getElementById("status");
@@ -187,8 +197,8 @@ mermaid.initialize({
 
 try {
   await mermaid.parse(source);
-  const { svg } = await mermaid.render("requestFlow", source);
-  document.getElementById("out-request").innerHTML = svg;
+  const { svg } = await mermaid.render("evalFlow", source);
+  document.getElementById("out-eval").innerHTML = svg;
   status.textContent = "PARSE_OK  RENDER_OK";
 } catch (error) {
   status.className = "fail";
