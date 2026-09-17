@@ -8,6 +8,7 @@ match what the generator would produce today.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,19 @@ from scripts.build_id_reference import (
 )
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_retired_scenarios_do_not_depend_on_git_history(monkeypatch):
+    def unavailable(*args, **kwargs):
+        raise FileNotFoundError("git history is unavailable in a shallow clone")
+
+    monkeypatch.setattr(subprocess, "check_output", unavailable)
+
+    retired = _retired_scenarios()
+
+    assert len(retired) == 25
+    assert retired["OT-04"].startswith('"What\'s the population of Travis County')
+    assert retired["CMP-05"].endswith("…\"")
 
 
 def test_decision_parser_accepts_current_and_legacy_heading_separators(

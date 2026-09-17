@@ -16,16 +16,15 @@ glossary is worse than none.
 Four provenances, and the distinction is the useful part:
   live     — in evals/scenarios.py now, so the question shown is what runs
   designed — in PRD §7 but never implemented
-  retired  — existed once, deleted; recoverable from git
+  retired  — existed once, deleted; recorded in evals/retired_scenarios.json
   decision — a docs/decisions.md entry
 """
 
 from __future__ import annotations
 
 import argparse
-import ast
+import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -37,9 +36,7 @@ END = "<!-- END id-reference -->"
 SCENARIO_RE = re.compile(r"\b(?:DF|CMP|MT|AMB|PM|UN|OT|INJ|CF|STR)-\d{2}\b")
 DECISION_RE = re.compile(r"\bD-0\d{2}\b")
 
-# The commit that still held the 25 authored-but-never-run scenarios, deleted
-# in D-022. Used to explain ids that appear in older CHANGELOG entries.
-RETIRED_SCENARIOS_REF = "f79b556:evals/scenarios.py"
+RETIRED_SCENARIOS_PATH = ROOT / "evals/retired_scenarios.json"
 
 TARGETS = [
     ("docs/reflection.md", True, True),
@@ -72,35 +69,14 @@ def _prd_scenarios() -> dict[str, str]:
 
 
 def _retired_scenarios() -> dict[str, str]:
-    try:
-        blob = subprocess.check_output(
-            ["git", "show", RETIRED_SCENARIOS_REF], cwd=ROOT, text=True
-        )
-    except Exception:
-        return {}
-    out: dict[str, str] = {}
-    # id="XX-00" ... turns=["...", ...]. Parsed rather than imported: that file
-    # is a deleted revision. literal_eval matters because the source wraps long
-    # turns across adjacent string literals, which Python joins and a plain
-    # regex would render as several separate turns.
-    for match in re.finditer(r'id="([A-Z]+-\d{2})".*?turns=\[(.*?)\](?:,\s*\n)', blob, re.S):
-        body = match.group(2)
-        try:
-            turns = ast.literal_eval("[" + body + "]")
-        except Exception:
-            # e.g. `_LONG_PREFIX + "..."`, not a literal. Fall back to the
-            # fragments, joined, which is still readable.
-            turns = ["".join(re.findall(r'"((?:[^"\\]|\\.)*)"', body))]
-        turns = [t for t in turns if isinstance(t, str)]
-        if turns:
-            shown = " → ".join(f'"{_truncate(t)}"' for t in turns)
-            out.setdefault(match.group(1), shown)
-    return out
-
-
-def _truncate(text: str, limit: int = 110) -> str:
-    text = " ".join(text.split())
-    return text if len(text) <= limit else text[:limit].rstrip() + "…"
+    """Load deleted scenario labels without requiring repository history."""
+    data = json.loads(RETIRED_SCENARIOS_PATH.read_text())
+    if not isinstance(data, dict) or not all(
+        SCENARIO_RE.fullmatch(key) and isinstance(value, str)
+        for key, value in data.items()
+    ):
+        raise ValueError(f"invalid retired scenario manifest: {RETIRED_SCENARIOS_PATH}")
+    return data
 
 
 def _decisions() -> dict[str, str]:

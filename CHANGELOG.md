@@ -9,6 +9,7 @@
 
 ### Changed
 
+- Load retired eval-scenario labels from a committed manifest so the offline CI gate remains deterministic in shallow GitHub Actions checkouts.
 - Include existing field breadcrumbs in runtime variable-search descriptions so follow-up eligibility can verify exact component meanings without changing contracts.
 - Replace the checked-action follow-up path with normal chat submission, remove its speculative Snowflake preflight, and derive question eligibility from completed-turn evidence (D-030).
 
