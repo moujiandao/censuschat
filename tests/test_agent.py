@@ -165,12 +165,12 @@ def test_system_prompt_teaches_quoted_placeholders_without_real_variable_ids():
 
 
 def test_refuse_verdict_short_circuits_before_tool_loop(monkeypatch):
-    """CLAUDE.md invariant: Sonnet and Snowflake are never touched for a
+    """CLAUDE.md invariant: the agent model and Snowflake are never touched for a
     refused turn. Fails loudly (AssertionError) if the tool loop is entered
     at all, rather than merely asserting on the output."""
 
     def _stream_should_not_be_called(**kwargs):
-        raise AssertionError("Sonnet must never be called on a REFUSE verdict")
+        raise AssertionError("agent model must never be called on a REFUSE verdict")
 
     monkeypatch.setattr(
         agent, "_client", SimpleNamespace(messages=SimpleNamespace(stream=_stream_should_not_be_called))
@@ -206,7 +206,7 @@ def test_refuse_verdict_with_unmapped_category_uses_default_message(monkeypatch)
     )
 
     def _stream_should_not_be_called(**kwargs):
-        raise AssertionError("Sonnet must never be called on a REFUSE verdict")
+        raise AssertionError("agent model must never be called on a REFUSE verdict")
 
     monkeypatch.setattr(
         agent, "_client", SimpleNamespace(messages=SimpleNamespace(stream=_stream_should_not_be_called))
@@ -229,7 +229,7 @@ def test_degraded_mode_short_circuits_before_guardrail_and_tool_loop(monkeypatch
     monkeypatch.setattr(agent, "classify_input", _classify_should_not_be_called)
 
     def _stream_should_not_be_called(**kwargs):
-        raise AssertionError("Sonnet must never be called on a degraded turn")
+        raise AssertionError("agent model must never be called on a degraded turn")
 
     monkeypatch.setattr(
         agent, "_client", SimpleNamespace(messages=SimpleNamespace(stream=_stream_should_not_be_called))
@@ -569,7 +569,7 @@ def test_refuse_verdict_still_records_a_trace(monkeypatch, tmp_path):
         ),
     )
     def _stream_should_not_be_called(**kwargs):
-        raise AssertionError("Sonnet must never be called on a REFUSE verdict")
+        raise AssertionError("agent model must never be called on a REFUSE verdict")
 
     monkeypatch.setattr(
         agent, "_client", SimpleNamespace(messages=SimpleNamespace(stream=_stream_should_not_be_called))

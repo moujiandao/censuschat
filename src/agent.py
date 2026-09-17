@@ -1,11 +1,11 @@
 """Agent loop — src/contracts.py:agent_turn (issues #7, #11, #12, #13, #14, #15).
 
-Pipeline: degraded-mode check -> guardrail -> session replay -> Sonnet tool
+Pipeline: degraded-mode check -> guardrail -> session replay -> Haiku tool
 loop with exactly the three tools (CLAUDE.md rule 4) -> grounded, streamed
 answer. If the snapshot is missing and Snowflake is unreachable (PRD §4.1),
 the turn short-circuits with an honest message before even the guardrail
-runs — Sonnet and Snowflake are never touched. A REFUSE verdict
-short-circuits before the tool loop similarly — Sonnet and Snowflake are
+runs, so Haiku and Snowflake are never touched. A REFUSE verdict
+short-circuits before the tool loop similarly, so Haiku and Snowflake are
 never touched for a refused turn. Any `run_census_sql` failure (gate
 rejection or a genuine execution error) or a zero-row result counts against
 a per-turn recovery budget (MAX_RECOVERY_RETRIES, CLAUDE.md rule 9); once

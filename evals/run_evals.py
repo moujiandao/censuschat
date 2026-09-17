@@ -288,7 +288,7 @@ def _score_check(check: Check, obs: Observation) -> CheckResult:
         # disclose the prompt and still stop without calling anything.
         #
         # This is NOT the same as CheckType's legacy wording ("guardrail
-        # fired"): Sonnet may decline after the guardrail allows the turn.
+        # fired"): the agent may decline after the guardrail allows the turn.
         # Both mechanisms are valid, so the artifact records which occurred.
         # Scoped to the FINAL turn, not the whole scenario: a drift case
         # (OT-04) has two legitimate tool-using turns before the one that

@@ -193,8 +193,8 @@ trace summary can see the relevant rows.
   Snowflake. A snapshot-missing or Snowflake-down boot still serves 200s.
 - **No agent frameworks.** Anthropic and OpenAI SDKs + FastAPI + sqlglot +
   snowflake-connector-python. Models pinned in one module
-  (`src/model_config.py`): Sonnet for the agent, GPT-5 nano for the classifier
-  (**D-031**).
+  (`src/model_config.py`): Haiku for the agent, GPT-5 nano for the classifier
+  (**D-031**, **D-032**).
 - **Interface contract** is `src/contracts.py`, treated as frozen. Decisions
   and interpretation calls are logged in `docs/decisions.md`.
 
@@ -306,7 +306,7 @@ The generated file is `output/pdf/censuschat-interview-manual.pdf`.
 | `SNOWFLAKE_PRIVATE_KEY_PASSPHRASE` | no | Only if the key is encrypted |
 | `SNOWFLAKE_DATABASE` | no | |
 | `SNOWFLAKE_SCHEMA` | no | |
-| `ANTHROPIC_API_KEY` | yes | Sonnet agent |
+| `ANTHROPIC_API_KEY` | yes | Haiku agent |
 | `OPENAI_API_KEY` | yes | GPT-5 nano guardrail classifier |
 | `SNAPSHOT_DB_PATH` | no | Defaults to `data/snapshot.sqlite3` |
 | `SESSION_DB_PATH` | no | Defaults to `data/sessions.sqlite3` |
@@ -418,5 +418,6 @@ Decisions, recorded in full in [`docs/decisions.md`](docs/decisions.md).
 | `D-028` | How It Works moves to the end of reviewer navigation |
 | `D-030` | Editable contextual next questions replace direct actions |
 | `D-031` | GPT-5 nano replaces Haiku for guardrail classification |
+| `D-032` | Haiku 4.5 replaces Sonnet 5 for the agent loop |
 
 <!-- END id-reference -->

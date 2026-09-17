@@ -18,9 +18,9 @@ import src.guardrail as guardrail
 from src.model_config import AGENT_MODEL, CLASSIFIER_MODEL
 
 
-def test_only_guardrail_model_moves_to_gpt5_nano():
-    """The provider migration is intentionally classifier-only."""
-    assert AGENT_MODEL == "claude-sonnet-5"
+def test_model_roles_are_pinned_to_low_cost_models():
+    """The agent and classifier use their approved low-cost models."""
+    assert AGENT_MODEL == "claude-haiku-4-5"
     assert CLASSIFIER_MODEL == "gpt-5-nano"
 
 

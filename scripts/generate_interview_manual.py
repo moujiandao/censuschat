@@ -488,7 +488,7 @@ class ArchitectureDiagram(Flowable):
         w = self.width
         self._box(0, 208, 70, 46, "BROWSER", "one HTML file\nSSE client", PALE_BLUE, BLUE)
         self._box(88, 208, 72, 46, "FASTAPI", "/api/chat\nstream transport")
-        self._box(184, 198, 96, 66, "AGENT LOOP", "Sonnet\n8 rounds / 2 retries\n50s soft watchdog", PALE_CYAN, SNOW)
+        self._box(184, 198, 96, 66, "AGENT LOOP", "Haiku 4.5\n8 rounds / 2 retries\n50s soft watchdog", PALE_CYAN, SNOW)
         self._box(306, 208, 82, 46, "ANSWER", "normalized rows\nstreamed tokens", PALE_GREEN, GREEN)
         self._box(w - 106, 199, 106, 64, "EVIDENCE", "SQLite trace\nspans + final answer\nterminal status", SOFT, BORDER)
 
@@ -497,7 +497,7 @@ class ArchitectureDiagram(Flowable):
         self._arrow(280, 231, 306, 231)
         self._arrow(388, 231, w - 106, 231, GREEN)
 
-        self._box(66, 145, 92, 42, "HAIKU GUARDRAIL", "scope classifier\nfails open", PALE_AMBER, AMBER)
+        self._box(66, 145, 92, 42, "GPT-5 NANO GUARDRAIL", "scope classifier\nfails open", PALE_AMBER, AMBER)
         self._arrow(184, 210, 158, 175, AMBER)
 
         tool_y = 55
@@ -661,7 +661,7 @@ def add_opening(story: list[Flowable]) -> None:
     story.append(Spacer(1, 8))
     story.append(P("The story in three moves", "h2"))
     story.append(bullet("<b>Coverage without prompt bloat.</b> The schema topology is small and stable; the variable vocabulary is large and discovered at runtime through local FTS."))
-    story.append(bullet("<b>Autonomy inside deterministic boundaries.</b> Sonnet selects among exactly three tools, while code enforces SQL safety, unresolved geography ambiguity, retry limits, and terminal stream behavior."))
+    story.append(bullet("<b>Autonomy inside deterministic boundaries.</b> Haiku 4.5 selects among exactly three tools, while code enforces SQL safety, unresolved geography ambiguity, retry limits, and terminal stream behavior."))
     story.append(bullet("<b>Evidence with named limits.</b> Offline tests prove deterministic layers. Live evals exercise the real model and Snowflake stack. Semantic prose quality remains human-reviewed."))
     story.append(Spacer(1, 5))
     screenshot = Image(str(UI_SCREENSHOT), width=CONTENT_W, height=CONTENT_W * 480 / 853)
@@ -689,7 +689,7 @@ def add_rubric(story: list[Flowable]) -> None:
     rows = [
         [
             "LLM / AI Engineering",
-            "Runtime variable and geography discovery; three-tool Sonnet loop; schema rules in context; deterministic ambiguity backstop; AST SQL gate.",
+            "Runtime variable and geography discovery; three-tool Haiku 4.5 loop; schema rules in context; deterministic ambiguity backstop; AST SQL gate.",
             "Final-answer numbers are not all runtime-validated. Prose quality has no calibrated model judge.",
             "Lead with the split between model reasoning and code enforcement.",
         ],
@@ -784,7 +784,7 @@ def add_request_lifecycle(story: list[Flowable]) -> None:
     story.append(P("What happens at each boundary", "h2"))
     story.append(bullet("The browser sends a client-generated <b>session_id</b> and message to FastAPI, which returns an SSE stream."))
     story.append(bullet("The agent replays the full user/assistant history from SQLite, then gives the classifier only the two most recent stored messages for context-aware routing."))
-    story.append(bullet("Sonnet discovers variables and geography locally, proposes SQL, receives normalized query rows, and streams answer tokens."))
+    story.append(bullet("Haiku 4.5 discovers variables and geography locally, proposes SQL, receives normalized query rows, and streams answer tokens."))
     story.append(bullet("Each tool call emits start/end events. Every turn terminates with <b>done</b> or <b>error</b>. A separate trace record stores spans, final answer, terminal status, and timing."))
     story.append(
         callout(
@@ -873,7 +873,7 @@ def add_trust(story: list[Flowable]) -> None:
     )
     rows = [
         ["System prompt", "Soft", "Quoting, aggregation, grounding, and answer-style instructions.", "The model may ignore or misapply it."],
-        ["Haiku classifier", "Soft", "Fast-fail off-topic, adversarial, and inappropriate input.", "Fails open on timeout or error."],
+        ["GPT-5 nano classifier", "Soft", "Fast-fail off-topic, adversarial, and inappropriate input.", "Fails open on timeout or error."],
         ["Ambiguity backstop", "Hard", "Blocks SQL when a geography resolved as ambiguous during the turn.", "Produces deterministic clarification."],
         ["SQL gate", "Hard", "Parses one SELECT, checks every table, rejects banned structures, injects LIMIT.", "Defaults to deny; rejected SQL never executes."],
         ["Snowflake session", "Hard", "25-second statement timeout and sanitized SQL only.", "Bounds database execution, not connection or model time."],
@@ -993,7 +993,7 @@ def add_production(story: list[Flowable]) -> None:
     rows = [
         ["Edge", "Native Caddy on EC2", "TLS, basic auth, SSE flushing; app port bound to loopback on the host."],
         ["Application", "Dockerized FastAPI/Uvicorn", "One stateless process around stateful local files; image includes frontend and committed eval artifacts."],
-        ["Model", "Anthropic SDK", "Sonnet agent and Haiku classifier, pinned in one module."],
+        ["Models", "Anthropic + OpenAI SDKs", "Haiku 4.5 agent and GPT-5 nano classifier, pinned in one module."],
         ["Data", "Snowflake Marketplace share", "Only run_census_sql touches it at request time; local snapshot handles discovery."],
         ["Persistence", "Mounted SQLite files", "Sessions and traces survive restart and deploy, but do not support horizontal replicas."],
         ["CI", "GitHub Actions", "Credential-free offline tests on PR/main; protected, manually triggered paid regression workflow."],
@@ -1114,7 +1114,7 @@ def add_questions_one(story: list[Flowable]) -> None:
     questions = [
         (
             "Why does the classifier fail open?",
-            "Because it is an availability and UX layer, not the trust boundary. If Haiku is unavailable, a legitimate Census request should still proceed. SQL safety remains fail-closed below it, and off-topic content still cannot escape the three-tool action space. The tradeoff is that an outage may allow irrelevant turns to reach Sonnet and cost more.",
+            "Because it is an availability and UX layer, not the trust boundary. If GPT-5 nano is unavailable, a legitimate Census request should still proceed. SQL safety remains fail-closed below it, and off-topic content still cannot escape the three-tool action space. The tradeoff is that a classifier outage may allow irrelevant turns to reach Haiku and cost more.",
         ),
         (
             "Why FTS5 instead of embeddings?",
@@ -1122,7 +1122,7 @@ def add_questions_one(story: list[Flowable]) -> None:
         ),
         (
             "Why did you avoid LangChain or LangGraph?",
-            "The loop has three tools, one model vendor, eight bounded rounds, and custom streaming and trace events. A handwritten Anthropic loop makes every transition and failure rule visible. A framework would become attractive when orchestration complexity, provider portability, or durable workflow resumption exceeded this small control surface.",
+            "The agent loop has three tools, eight bounded rounds, and custom streaming and trace events. It stays on Anthropic, while the independent guardrail uses OpenAI behind a narrow classifier interface. A handwritten loop keeps every transition and failure rule visible. A framework would become attractive when orchestration complexity or durable workflow resumption exceeded this small control surface.",
         ),
         (
             "Why only the 2020 ACS five-year vintage?",

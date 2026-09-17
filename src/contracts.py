@@ -500,7 +500,7 @@ async def agent_turn(
     session_id: str, user_message: str
 ) -> AsyncIterator[ChatEvent]:
     """Full pipeline for one user turn:
-    guardrail → full-history replay → Sonnet tool loop (three tools; at most
+    guardrail → full-history replay → Haiku tool loop (three tools; at most
     MAX_RECOVERY_RETRIES recovery attempts after a SQL error or zero-row
     result, then honest failure describing what was tried) → grounded answer.
 

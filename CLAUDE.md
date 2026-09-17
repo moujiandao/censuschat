@@ -58,9 +58,10 @@ entry, flagged inline.
 14. No agent frameworks (LangChain, LangGraph, etc.). Anthropic SDK +
     FastAPI + sqlglot + snowflake-connector-python. Models pinned in one
     config module: Sonnet for the agent, Haiku for the classifier.
-    *The guardrail now uses GPT-5 nano through the OpenAI SDK; Sonnet and the
-    handwritten tool loop remain on Anthropic. The single model-config module
-    and no-framework constraints still hold. **D-031**.*
+    *The guardrail now uses GPT-5 nano through the OpenAI SDK, and the
+    handwritten tool loop now uses Haiku through Anthropic. The single
+    model-config module and no-framework constraints still hold. **D-031**,
+    **D-032**.*
 15. Frontend is one static HTML file (vanilla JS, CDN assets only, no build
     step) with three tabs: Chat, Evals, Flow Diagram.
     *D-027 supersedes the historical five-tab implementation, with ordering
