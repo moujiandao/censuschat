@@ -34,11 +34,13 @@ normalized result → answer → evidence**. Variable and geography discovery us
 the local SQLite snapshot. `run_census_sql` is the one request-time Snowflake
 code path, although one question can make more than one query through it.
 
-The four tabs are **Chat, Evidence, Evals, and How It Works** (**D-028**). Chat contains
-the four curated examples below. Evidence shows durable SQLite-backed traces
-for this and previous sessions, including raw trace JSON on demand. Evals
-separates the six regression scenarios from the eight capability scenarios.
-How It Works explains the data flow and protection layers.
+The five tabs are **Chat, Evidence, Evals, Design Trade-Offs, and How It Works**
+(**D-033**). Chat contains the four curated examples below. Evidence shows
+durable SQLite-backed traces for this and previous sessions, including raw
+trace JSON on demand. Evals separates the six regression scenarios from the
+eight capability scenarios. Design Trade-Offs explains the choices and accepted
+costs behind the implementation. How It Works explains the data flow and
+protection layers.
 
 **1. Factual question**
 
@@ -208,9 +210,10 @@ The frontend is one static HTML file, vanilla JS, CDN-free, no build step.
 | Tab | Shows |
 |---|---|
 | **Chat** | The agent itself. SSE token streaming, a tool-status line, session id persisted in `localStorage`. |
-| **How It Works** | The request flow, code-enforced SQL boundary, local SQLite versus Snowflake split, result normalization, and source limits. |
 | **Evidence** | The one trace view: ordered guardrail, model, and tool spans from the durable SQLite trace store, with a cross-session picker and raw JSON disclosure (**D-023**, **D-027**). |
 | **Evals** | The latest committed benchmark, split into six regression scenarios and eight informational capability scenarios with pass, fail, and inconclusive results. |
+| **Design Trade-Offs** | Fourteen implementation choices, each framed by the problem, selected approach, accepted cost, and supporting decision record. |
+| **How It Works** | The request flow, code-enforced SQL boundary, local SQLite versus Snowflake split, result normalization, and source limits. |
 
 ---
 
@@ -419,9 +422,9 @@ Decisions, recorded in full in [`docs/decisions.md`](docs/decisions.md).
 | `D-021` | Langfuse cut; the span model shipped in-process |
 | `D-023` | Trace history is durable, and has no per-session cap |
 | `D-027` | The reviewer interface has four ordered surfaces |
-| `D-028` | How It Works moves to the end of reviewer navigation |
 | `D-030` | Editable contextual next questions replace direct actions |
 | `D-031` | GPT-5 nano replaces Haiku for guardrail classification |
 | `D-032` | Haiku 4.5 replaces Sonnet 5 for the agent loop |
+| `D-033` | Design Trade-Offs restores a fifth reviewer surface |
 
 <!-- END id-reference -->

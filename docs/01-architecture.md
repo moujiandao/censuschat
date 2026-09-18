@@ -11,17 +11,18 @@ consumes this + schema-notes and must not re-decide anything here.
 > code is load-bearing evidence, and editing it retroactively would destroy
 > that. Where the build departed from it, the departure is recorded in
 > `docs/decisions.md` and the shipped behavior is described in `README.md`.
-> **Current-status annotation, 2026-08-13:** the reviewer-clarity specification
-> is **D-027**, with tab order amended by **D-028**. The shipped UI has Chat,
-> Evidence, Evals, and How It Works;
+> **Current-status annotation, 2026-09-18:** the reviewer-clarity specification
+> is **D-027**, with tab order amended by **D-028** and a fifth explanatory
+> surface restored by **D-033**. The shipped UI has Chat, Evidence, Evals,
+> Design Trade-Offs, and How It Works;
 > Evidence is the durable SQLite trace view. This annotation supersedes the
 > related historical statements below without rewriting the M1 decisions.
 > Three sections below are superseded:
 >
 > - **§5 Observability:** Langfuse and prompt caching are not implemented.
 >   The local trace store persists in SQLite. **D-021**, **D-023**.
-> - **§6 Frontend:** D-027 supersedes this section's three-tab proposal with
->   the four reviewer surfaces above; D-028 amends their order.
+> - **§6 Frontend:** D-027 supersedes this section's three-tab proposal, D-028
+>   amends the order, and D-033 restores the fifth surface listed above.
 > - **§7 Eval plan** — scenarios live in `evals/scenarios.py` as typed
 >   `EvalScenario` objects, not `evals/goldens/*.json`; the set is six
 >   regression scenarios and eight informational capability scenarios

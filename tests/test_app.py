@@ -20,6 +20,15 @@ from src.contracts import ChatEvent, EventType, SnapshotError
 client = TestClient(app)
 
 
+def test_homepage_includes_design_tradeoffs_tab():
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert 'data-tab="tradeoffs"' in response.text
+    assert 'id="panel-tradeoffs"' in response.text
+    assert "Who should write the database query?" in response.text
+
+
 def _parse_sse(text: str) -> list[dict]:
     events = []
     for block in text.strip().split("\n\n"):

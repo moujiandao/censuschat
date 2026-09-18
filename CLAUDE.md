@@ -64,8 +64,9 @@ entry, flagged inline.
     **D-032**.*
 15. Frontend is one static HTML file (vanilla JS, CDN assets only, no build
     step) with three tabs: Chat, Evals, Flow Diagram.
-    *D-027 supersedes the historical five-tab implementation, with ordering
-    amended by D-028: the shipped reviewer surfaces are Chat, Evidence, Evals,
+    *D-027 superseded the historical five-tab implementation, D-028 amended
+    its ordering, and D-033 restores a distinct Design Trade-Offs surface. The
+    shipped reviewer surfaces are Chat, Evidence, Evals, Design Trade-Offs,
     and How It Works. The single-file/no-build half remains binding.*
 16. Session state = full history replay from SQLite keyed by `session_id`.
 17. Every turn is one Langfuse trace: `session_id` in metadata; spans for
@@ -100,8 +101,8 @@ entry, flagged inline.
 These notes describe the current implementation. They do not rewrite the
 historical invariants above.
 
-- Frontend: one static file with Chat, Evidence, Evals, and How It Works
-  (**D-027**, ordering amended by **D-028**).
+- Frontend: one static file with Chat, Evidence, Evals, Design Trade-Offs, and
+  How It Works (**D-033**, preserving the final position from **D-028**).
 - Tracing: `src/tracing.py` persists local turn spans in
   `data/traces.sqlite3`; Evidence is the sole trace view. This is not
   Langfuse (**D-021**, **D-023**).
@@ -121,7 +122,7 @@ src/
   tracing.py      SQLite-backed turn traces
   snapshot.py     local variable and geography snapshots
   sessions.py     SQLite conversation history
-static/index.html entire four-tab frontend
+static/index.html entire five-tab frontend
 evals/            live scenarios, runner, committed benchmark results
 tests/            complete offline suite
 ```

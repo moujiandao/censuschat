@@ -3,10 +3,11 @@
 Four sections, matching the assignment's deliverables. Written afterwards, so
 the mistakes are in here too.
 
-> **Current status, 2026-08-11.** This reflection preserves the build history
-> below. The current reviewer surface is the four-tab UI in **D-027**: Evidence
+> **Current status, 2026-09-18.** This reflection preserves the build history
+> below. The current reviewer surface is the five-tab UI in **D-033**: Evidence
 > consolidates the former Turn Detail and Trace Logging views, and reads traces
-> persisted in SQLite. Langfuse and prompt caching are not implemented. There
+> persisted in SQLite, while Design Trade-Offs explains implementation choices.
+> Langfuse and prompt caching are not implemented. There
 > is one request-time Snowflake code path (`run_census_sql`), which can make
 > multiple calls in a turn. For direct or simply aliased demographic cells,
 > result-seam normalization renders SQL NULL as `not reported` and the single
@@ -515,6 +516,6 @@ Decisions, recorded in full in [`docs/decisions.md`](decisions.md).
 | `D-020` | FTS falls back to token-OR only when token-AND finds nothing |
 | `D-021` | Langfuse cut; the span model shipped in-process |
 | `D-022` | The unrun backlog is deleted; the set is 14 examples that all ran |
-| `D-027` | The reviewer interface has four ordered surfaces |
+| `D-033` | Design Trade-Offs restores a fifth reviewer surface |
 
 <!-- END id-reference -->

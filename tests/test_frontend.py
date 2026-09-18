@@ -8,10 +8,24 @@ def _html() -> str:
 
 def test_exact_reviewer_tab_order():
     html = _html()
-    labels = ["Chat", "Evidence", "Evals", "How It Works"]
+    labels = ["Chat", "Evidence", "Evals", "Design Trade-Offs", "How It Works"]
     positions = [html.index(f">{label}</button>") for label in labels]
     assert positions == sorted(positions)
-    assert html.count('data-tab="') == 4
+    assert html.count('data-tab="') == 5
+
+
+def test_tradeoffs_tab_is_wired_and_complete():
+    html = _html()
+
+    assert 'aria-controls="panel-tradeoffs"' in html
+    assert 'tradeoffs: document.getElementById("panel-tradeoffs")' in html
+    assert html.count('class="tradeoff-card"') == 14
+    assert 'button.setAttribute("aria-selected", String(selected))' in html
+    assert 'panels[key].hidden = !selected' in html
+    assert 'event.key === "ArrowRight"' in html
+    assert 'event.key === "ArrowLeft"' in html
+    assert 'event.key === "Home"' in html
+    assert 'event.key === "End"' in html
 
 
 def test_tab_scroll_container_does_not_expose_vertical_scrollbar():

@@ -154,6 +154,22 @@
   .q-text.followup, .answer-preview, .row-note { color: var(--muted); }
   .answer-preview, .row-note { margin-top: 6px; font-size: 12px; line-height: 1.45; }
 
+  .tradeoffs-intro, .ds-note { color: var(--muted); font-size: 13px; line-height: 1.55; }
+  .tradeoffs-intro { margin: 0 0 16px; max-width: 72ch; }
+  .tradeoff-card {
+    margin-bottom: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    background: var(--card);
+  }
+  .tradeoff-card h3 { margin: 0 0 8px; font-size: 14px; }
+  .tradeoff-card p { margin: 0 0 8px; font-size: 13px; line-height: 1.55; }
+  .tradeoff-card p:last-child { margin-bottom: 0; }
+  .tradeoff-card .decision { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; color: var(--muted); }
+  .matrix-scroll { overflow-x: auto; }
+  .tradeoff-options { min-width: 620px; margin-bottom: 10px; font-size: 12.5px; }
+
   @media (max-width: 650px) {
     .example-list, .how-grid { grid-template-columns: 1fr; }
     .refresh-row { align-items: stretch; flex-direction: column; }
@@ -167,15 +183,16 @@
     <h1>censuschat</h1>
     <p>Ask about US population, income, or housing from the 2020 ACS 5-year estimates.</p>
     <div id="banner"></div>
-    <nav class="tabs">
-      <button type="button" data-tab="chat" class="active">Chat</button>
-      <button type="button" data-tab="evidence">Evidence</button>
-      <button type="button" data-tab="evals">Evals</button>
-      <button type="button" data-tab="how">How It Works</button>
+    <nav class="tabs" role="tablist" aria-label="Census Chat views">
+      <button type="button" id="tab-chat" role="tab" aria-controls="panel-chat" aria-selected="true" data-tab="chat" class="active">Chat</button>
+      <button type="button" id="tab-evidence" role="tab" aria-controls="panel-evidence" aria-selected="false" tabindex="-1" data-tab="evidence">Evidence</button>
+      <button type="button" id="tab-evals" role="tab" aria-controls="panel-evals" aria-selected="false" tabindex="-1" data-tab="evals">Evals</button>
+      <button type="button" id="tab-tradeoffs" role="tab" aria-controls="panel-tradeoffs" aria-selected="false" tabindex="-1" data-tab="tradeoffs">Design Trade-Offs</button>
+      <button type="button" id="tab-how" role="tab" aria-controls="panel-how" aria-selected="false" tabindex="-1" data-tab="how">How It Works</button>
     </nav>
   </header>
 
-  <section class="panel active" id="panel-chat">
+  <section class="panel active" id="panel-chat" role="tabpanel" aria-labelledby="tab-chat">
     <div class="examples">
       <div class="examples-heading">
         <h2>Example questions</h2>
@@ -196,7 +213,7 @@
     </form>
   </section>
 
-  <section class="panel" id="panel-how">
+  <section class="panel" id="panel-how" role="tabpanel" aria-labelledby="tab-how" hidden>
     <div class="scroll-area">
       <p class="how-flow">Question → Guardrail → Local discovery → SQL gate → Snowflake → Normalize → Answer → Evidence</p>
       <div class="how-grid">
@@ -240,7 +257,7 @@
     </div>
   </section>
 
-  <section class="panel" id="panel-evidence">
+  <section class="panel" id="panel-evidence" role="tabpanel" aria-labelledby="tab-evidence" hidden>
     <div class="scroll-area">
       <div class="refresh-row">
         <label for="evidence-session">History</label>
@@ -255,8 +272,163 @@
     </div>
   </section>
 
-  <section class="panel" id="panel-evals">
+  <section class="panel" id="panel-evals" role="tabpanel" aria-labelledby="tab-evals" hidden>
     <div class="scroll-area" id="evals-content"><p class="empty-state">Loading…</p></div>
+  </section>
+
+  <section class="panel" id="panel-tradeoffs" role="tabpanel" aria-labelledby="tab-tradeoffs" hidden>
+    <div class="scroll-area">
+      <h2>Design Trade-Offs</h2>
+      <p class="tradeoffs-intro">
+        Why Census Chat works this way: the problem behind each decision, an example to
+        remember it by, and what we gained or gave up. These are lessons from this build,
+        not rules that every app must follow.
+      </p>
+
+      <article class="tradeoff-card">
+        <h3>1. Who should write the database query?</h3>
+        <p><strong>In your app:</strong> <code>agent_turn</code> (<code>src/agent.py</code>) asks the model for tool calls. The model sends SQL to <code>run_census_sql</code> (<code>src/tools.py</code>), which calls <code>validate_sql</code> (<code>src/sqlgate.py</code>) before executing the accepted query in Snowflake.</p>
+        <p><strong>The problem:</strong> Snowflake needs precise SQL instructions. The model can understand a question about employment and still write a query with the wrong quotation marks or an invented table name.</p>
+        <div class="matrix-scroll">
+          <table class="tradeoff-options">
+            <thead><tr><th>Design</th><th>Strength</th><th>Cost</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong>LLM writes SQL, code validates it</strong></td>
+                <td>The model writes the whole query, so it can combine data in ways we did not build a specific template for.</td>
+                <td>Code must check its work. A query can be rejected and need another attempt before the user gets an answer.</td>
+              </tr>
+              <tr>
+                <td><strong>LLM selects options, code builds SQL</strong></td>
+                <td>The model picks a metric, location, and supported calculation. Tested code assembles the query with the correct syntax and verified table names.</td>
+                <td>We must build each supported calculation. A request outside that menu needs more implementation.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p><strong>Example:</strong> for an employment total in Texas, the model could write the entire SQL statement, or select “employment count + Texas + total” and let code write it. The second path removes syntax choices, but the model could still select the wrong employment measure.</p>
+        <p class="decision"><strong>Remember:</strong> writing freely gives flexibility; choosing from a tested menu gives predictability. Today the model writes SQL and code validates it. The menu approach is an option to evaluate, not a shipped feature.</p>
+      </article>
+
+      <article class="tradeoff-card">
+        <h3>2. Asking the model to follow a rule is not enforcing it</h3>
+        <p><strong>In your app:</strong> <code>validate_sql</code> checks query structure and <code>ALLOWED_TABLES</code>. Separately, <code>agent_turn</code> blocks SQL when <code>resolve_geography</code> reports unresolved ambiguity. Multiple matches for “Washington County” trigger clarification instead of a silent choice.</p>
+        <p><strong>The problem:</strong> a prompt saying “only read approved tables” is an instruction the model can get wrong. We need the app to stop a forbidden query even when the model tries it.</p>
+        <p><strong>Our choice:</strong> code checks SQL before Snowflake sees it and rejects queries that violate the rules. For example, an instruction to delete records is blocked even if the model generated it. Code also controls retry limits and time budgets.</p>
+        <p class="decision"><strong>Remember:</strong> the prompt explains the rules; code controls what can happen. The cost is writing and maintaining those checks, and sometimes rejecting a query the checker cannot safely understand.</p>
+        <p class="ds-note">Decision record: D-007, D-010, D-013, D-014. The gate checks query structure; passing it does not prove the answer is statistically correct. Row limits, explicit columns, and execution timeouts bound different resources.</p>
+      </article>
+
+      <article class="tradeoff-card">
+        <h3>3. Let the model look up data instead of memorizing a short list</h3>
+        <p><strong>In your app:</strong> <code>search_census_variables</code> answers “which measure?”; <code>resolve_geography</code> answers “which place?” Both live in <code>src/tools.py</code> and read the local SQLite snapshot prepared by <code>build_snapshot</code> (<code>src/snapshot.py</code>). For rented homes in Travis County, the first finds the renter measure and the second finds the county’s geographic code. Neither retrieves the final count: that is <code>run_census_sql</code>’s job.</p>
+        <p><strong>The problem:</strong> Census has thousands of measures. Putting a handful of familiar ones in the prompt would make population demos easy, but could miss a less expected question about housing or commuting.</p>
+        <p><strong>Our choice:</strong> the model searches a local copy of the catalog when a question arrives. For “How many homes are rented?”, it looks up available measures before choosing what to query.</p>
+        <p class="decision"><strong>Remember:</strong> give the model a searchable catalog, not just a cheat sheet. This expands discovery, but introduces search errors and a local catalog that must be kept current.</p>
+        <p class="ds-note">Architecture §2-4: local SQLite lookups keep discovery fast and avoid warehouse calls. The trade-off is maintaining a snapshot that must be rebuilt when the catalog changes.</p>
+      </article>
+
+      <article class="tradeoff-card">
+        <h3>4. A successful retry can hide a recurring bug</h3>
+        <p><strong>In your app:</strong> <code>agent_turn</code> (<code>src/agent.py</code>) returns tool errors to the model and tracks <code>recovery_attempts</code> and <code>recovery_log</code>. The Evidence tab exposes failed and successful tool calls so you can inspect the repair sequence.</p>
+        <p><strong>What happened:</strong> the model generated incorrectly quoted column names, received a database error, and sometimes fixed the query on retry. The user got an answer, making the system look healthier than its first attempt really was.</p>
+        <p><strong>The trade-off:</strong> recovery saves a conversation, but costs extra time and model calls. If we only count final success, we can miss the same avoidable mistake happening repeatedly.</p>
+        <p class="decision"><strong>Remember:</strong> “worked immediately,” “worked after repair,” and “failed” are different outcomes. Track them separately so recovery does not become an excuse to leave the original bug unfixed.</p>
+        <p class="ds-note">Source: Reflection §4, the quoted-identifier incident. This is a measurement lesson, not a claim that every metric is already implemented.</p>
+      </article>
+
+      <article class="tradeoff-card">
+        <h3>5. Testing the parts and testing the real answer are different jobs</h3>
+        <p><strong>In your app:</strong> <code>tests/test_sqlgate.py</code> checks <code>validate_sql</code> offline; <code>tests/test_agent.py</code> checks loop controls with simulated responses. <code>evals/scenarios.py</code> defines live cases, and <code>evals/run_evals.py</code> runs and scores them through the real <code>agent_turn</code>.</p>
+        <p><strong>Offline example:</strong> give the SQL validator a saved DELETE statement or a query against a disallowed table. Check that it rejects the query before contacting Snowflake. This is fast, repeatable, and needs no paid model call.</p>
+        <p><strong>Live example:</strong> ask the original employment question again using the real model and Snowflake. Check whether it picks the right data and returns the expected answer. Its newly generated query can differ on each run.</p>
+        <p class="decision"><strong>Remember:</strong> offline tests check predictable code behavior; live evals check whether the full app delivers. Live runs cost more and can vary, while offline tests cannot prove that the real model and database work together.</p>
+        <p class="ds-note">Reflection §4: calibrate graders against known-correct and deliberately wrong answers. A failing score can reveal a broken grader; a passing score only supports what the checks actually measure.</p>
+      </article>
+
+      <article class="tradeoff-card">
+        <h3>6. A plausible number is not always an answer we can support</h3>
+        <p><strong>In your app:</strong> <code>ALLOWED_TABLES</code> (<code>src/contracts.py</code>) enforces the permitted vintage through <code>validate_sql</code>. In <code>src/tools.py</code>, <code>resolve_geography</code> searches available places and <code>_geo_levels_for</code> marks median measures as valid only at block-group level. That metadata informs the model; it is not itself a SQL-level ban on averaging medians.</p>
+        <p><strong>Example:</strong> a user asks about Austin, but our source does not include city boundaries. Returning Travis County's population as Austin's population would sound convincing and still answer the wrong question.</p>
+        <p><strong>Our choice:</strong> explain missing coverage and make any substitute explicit. We also restrict queries to the 2020 ACS release. For income, averaging neighborhood medians does not produce the county median, so that shortcut is not a valid substitute.</p>
+        <p class="decision"><strong>Remember:</strong> fewer supported questions is an accepted cost of being honest about the data. Expanding coverage requires the right data and calculations, not just a more confident prompt.</p>
+        <p class="ds-note">Decision record: D-002, D-003, D-005, D-009. A county substitute or a mean instead of a median must be explained. The single-vintage restriction avoids boundary and overlapping-window complications; it is not a claim that every comparison across years is invalid.</p>
+      </article>
+
+      <article class="tradeoff-card">
+        <h3>7. Search can be so strict that it misses data we have</h3>
+        <p><strong>In your app:</strong> <code>search_census_variables</code> uses SQLite FTS5 keyword search and BM25 ranking. Its helper <code>_fts_match_query</code> builds the strict AND search, then an OR search if no rows match. <code>_should_index_variable</code> (<code>src/snapshot.py</code>) excludes margin-of-error and allocation fields when building the index.</p>
+        <p><strong>What happened:</strong> searches like “number of households” returned nothing because all words had to appear together in a Census label. The household data existed, but the wording did not match.</p>
+        <p><strong>Our choice:</strong> try the strict search first. If it finds nothing, try matching any of the words. Local keyword search keeps the setup simple, without a separate service for matching by meaning.</p>
+        <p class="decision"><strong>Remember:</strong> broader search finds more possibilities but also more distractions. “Number of households” can surface “number of rooms,” so the model must still check what a result means. We also exclude margins of error from normal search to reduce misleading matches.</p>
+        <p class="ds-note">Decision record: D-008, D-020. Search relevance still needs evaluation; finding a variable does not establish that it is the right one.</p>
+      </article>
+
+      <article class="tradeoff-card">
+        <h3>8. If the topic checker breaks, should chat stop?</h3>
+        <p><strong>In your app:</strong> <code>classify_input</code> (<code>src/guardrail.py</code>) calls the classifier and allows requests on errors or timeouts. <code>_ALLOW_VERDICTS</code> includes <code>unknown_subject</code>. Later, <code>run_census_sql</code> raises <code>SqlRejected</code> if <code>validate_sql</code> rejects the query, before opening a Snowflake connection.</p>
+        <p><strong>The problem:</strong> a small model first checks whether a question belongs in Census Chat. If that check times out while someone asks a legitimate population question, refusing everything would make a helper component take down the experience.</p>
+        <p><strong>Our choice:</strong> let the question continue when the topic check fails. The SQL gate still runs and blocks queries that fail validation. A question about an unknown place also gets a chance to reach data discovery.</p>
+        <p class="decision"><strong>Remember:</strong> losing the topic checker may waste an extra model call; losing SQL validation must stop execution. The two checks have different consequences, so their failure behavior is different.</p>
+        <p class="ds-note">Reflection §1; decision record D-019. The classifier helps route requests efficiently; it is not the SQL security boundary.</p>
+      </article>
+
+      <article class="tradeoff-card">
+        <h3>9. How long should the agent keep trying?</h3>
+        <p><strong>In your app:</strong> <code>agent_turn</code> counts failed or empty SQL results against <code>MAX_RECOVERY_RETRIES</code>, limits rounds with <code>_MAX_TOOL_LOOP_ITERATIONS</code>, and checks elapsed time before further work. Separately, <code>run_census_sql</code> sets Snowflake’s <code>STATEMENT_TIMEOUT_IN_SECONDS</code> to limit query execution.</p>
+        <p><strong>Example:</strong> the model cannot find household data, searches again, rewrites the query, and searches again. Without limits, one question can keep consuming time and paid calls without making progress.</p>
+        <p><strong>Our choice:</strong> cap recovery attempts and tool rounds, and stop further tool use when the time budget is exhausted. Explain the failure instead of endlessly retrying.</p>
+        <p class="decision"><strong>Remember:</strong> more attempts can rescue difficult questions, but also make failures slower and more expensive. Fix why the agent is stuck before simply giving it a larger budget.</p>
+        <p class="ds-note">Decision record: D-013, D-020. Successful recovery is useful evidence, but should remain distinguishable from first-attempt success.</p>
+      </article>
+
+      <article class="tradeoff-card">
+        <h3>10. Keep a useful activity log without building a monitoring platform</h3>
+        <p><strong>In your app:</strong> <code>TraceSpan</code> records each step and <code>TurnTrace</code> groups a turn (<code>src/tracing.py</code>). <code>record_turn_trace</code> saves it to SQLite; <code>get_traces</code> retrieves it. <code>/api/traces</code> feeds the history displayed by the Evidence tab.</p>
+        <p><strong>The need:</strong> when an answer fails, we need to see which searches and queries ran, what failed, and how long each step took. The in-app trace view provides that record.</p>
+        <p><strong>Our choice:</strong> defer Langfuse, a separate monitoring service, to fit the build budget. Store traces locally in SQLite so deploying a new version does not erase the old evidence.</p>
+        <p class="decision"><strong>Remember:</strong> this helps explain one conversation, but does not provide shared monitoring across several servers or automatic alerts. It is simpler to operate today; a larger service would need more monitoring and a policy for deleting old history.</p>
+        <p class="ds-note">Decision record: D-021, superseded for persistence by D-023. Earlier reflection text describing memory-only traces is historical.</p>
+      </article>
+
+      <article class="tradeoff-card">
+        <h3>11. “Connected at startup” does not mean “connected right now”</h3>
+        <p><strong>In your app:</strong> <code>lifespan</code> (<code>src/app.py</code>) calls <code>check_snowflake_reachability</code> at startup. In <code>src/health.py</code>, <code>health_report</code> and <code>is_degraded</code> read the cached result. The browser’s <code>/api/health</code> request does not perform a new Snowflake connection test.</p>
+        <p><strong>Our choice:</strong> test the Snowflake connection when the app starts and remember the result. Reading that saved status is cheaper than opening another database connection on every health check.</p>
+        <p><strong>Example:</strong> if Snowflake becomes unavailable an hour later, the saved status may still say healthy. The next real query will expose the problem, but the saved check cannot warn us first.</p>
+        <p class="decision"><strong>Remember:</strong> this was enough for checking a fresh deployment. Continuous outage detection would need refreshed checks, with the extra work and connections that brings.</p>
+        <p class="ds-note">Decision record: D-015; implemented in the health module.</p>
+      </article>
+
+      <article class="tradeoff-card">
+        <h3>12. Use a simple setup that fits the server we already have</h3>
+        <p><strong>In your app:</strong> <code>src/app.py</code> serves <code>static/index.html</code> directly. Its <code>activateTab</code> function switches visible panels. <code>deploy.sh</code> starts the app container, and <code>docker-compose.override.yml</code> publishes it on <code>127.0.0.1:8000</code> for the host’s Caddy server.</p>
+        <p><strong>Our choice:</strong> keep the frontend in one HTML file, with no separate build process. Reuse Caddy, the server already handling HTTPS and login protection, instead of starting a competing copy that would disrupt another site.</p>
+        <p><strong>Example:</strong> adding this learning tab only needs an HTML edit. But moving the whole app to another machine also requires recreating the existing server configuration; the container alone does not describe everything.</p>
+        <p class="decision"><strong>Remember:</strong> fewer moving parts helped us ship. The cost is a growing frontend file, manually maintained explanation pages, and some setup tied to this host.</p>
+        <p class="ds-note">Decision record: D-016, D-017. Simplicity was chosen for this deployment and build budget, not as a universal architecture rule.</p>
+      </article>
+
+      <article class="tradeoff-card">
+        <h3>13. A long test list can look more convincing than it is</h3>
+        <p><strong>In your app:</strong> <code>evals/scenarios.py</code> holds the active scenarios. <code>evals/run_evals.py</code> writes results into <code>evals/results/</code>. The <code>/api/evals</code> endpoint (<code>src/app.py</code>) supplies recorded results to the Evals tab; opening the tab does not run evaluations.</p>
+        <p><strong>What happened:</strong> the evaluation page mixed executed scenarios with a much larger backlog of scenarios that had never run. Readers had to work too hard to understand what was actually verified.</p>
+        <p><strong>Our choice:</strong> reduce the active set, preserve historical results, and label the captured but unrun regression as pending. The report is easier to read, but omitted coverage still needs work.</p>
+        <p class="decision"><strong>Remember:</strong> a written test idea is not evidence. A smaller executed set is easier to assess, but cannot justify claims about cases it never tested. Keep gaps visible and preserve failures.</p>
+        <p class="ds-note">Decision record: D-022. Never erase failed results to improve the reported score.</p>
+      </article>
+
+      <article class="tradeoff-card">
+        <h3>14. Build one complete answer early enough to learn from it</h3>
+        <p><strong>In your app:</strong> The form in <code>static/index.html</code> posts to <code>/api/chat</code>. <code>agent_turn</code> coordinates <code>search_census_variables</code>, <code>resolve_geography</code>, and <code>run_census_sql</code>, then streams events back to the browser. Exercising that whole path checks how the parts work together.</p>
+        <p><strong>What helped:</strong> inspecting the real data before coding uncovered missing city boundaries and invalid ways to combine medians. That prevented us from planning features the dataset could not support.</p>
+        <p><strong>What hurt:</strong> the browser interface came late. Offline tests passed, but typing real questions exposed database naming problems that simulated database responses could not catch.</p>
+        <p class="decision"><strong>Remember:</strong> investigate the data, then get one question working from browser to database to answer. Planning reduces bad assumptions; using the complete app reveals the assumptions you still missed.</p>
+        <p class="ds-note">Reflection §1, §2, §4. Planning and isolated tests cannot substitute for exercising the complete user journey.</p>
+      </article>
+
+      <p class="ds-note">Summaries reflect this checkout's implementation. Rationale and incident evidence are recorded in <code>docs/decisions.md</code>, <code>docs/01-architecture.md</code>, and <code>docs/reflection.md</code>. Proposed alternatives are not shipped guarantees.</p>
+    </div>
   </section>
 
 <script>
@@ -289,6 +461,7 @@
     how: document.getElementById("panel-how"),
     evidence: document.getElementById("panel-evidence"),
     evals: document.getElementById("panel-evals"),
+    tradeoffs: document.getElementById("panel-tradeoffs"),
   };
   const tabButtons = document.querySelectorAll("nav.tabs button");
   let evalsLoaded = false;
@@ -313,10 +486,15 @@
 
   function activateTab(name) {
     tabButtons.forEach(function (button) {
-      button.classList.toggle("active", button.dataset.tab === name);
+      const selected = button.dataset.tab === name;
+      button.classList.toggle("active", selected);
+      button.setAttribute("aria-selected", String(selected));
+      button.tabIndex = selected ? 0 : -1;
     });
     Object.keys(panels).forEach(function (key) {
-      panels[key].classList.toggle("active", key === name);
+      const selected = key === name;
+      panels[key].classList.toggle("active", selected);
+      panels[key].hidden = !selected;
     });
     if (name === "evidence") loadEvidence();
     if (name === "evals" && !evalsLoaded) loadEvals();
@@ -324,6 +502,19 @@
 
   tabButtons.forEach(function (button) {
     button.addEventListener("click", function () { activateTab(button.dataset.tab); });
+    button.addEventListener("keydown", function (event) {
+      const buttons = Array.from(tabButtons);
+      const current = buttons.indexOf(button);
+      let next = null;
+      if (event.key === "ArrowRight") next = (current + 1) % buttons.length;
+      if (event.key === "ArrowLeft") next = (current - 1 + buttons.length) % buttons.length;
+      if (event.key === "Home") next = 0;
+      if (event.key === "End") next = buttons.length - 1;
+      if (next === null) return;
+      event.preventDefault();
+      activateTab(buttons[next].dataset.tab);
+      buttons[next].focus();
+    });
   });
 
   document.querySelectorAll(".example-question").forEach(function (button) {

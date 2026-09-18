@@ -1,5 +1,11 @@
 # Changelog
 
+## [2026-09-18]
+
+### Added
+
+- Restore the Design Trade-Offs tab as a fifth reviewer surface while preserving Evidence as the only trace view and How It Works as the final tab (D-033).
+
 ## [2026-09-17]
 
 ### Added
@@ -278,5 +284,6 @@ Decisions, recorded in full in [`docs/decisions.md`](docs/decisions.md).
 | `D-030` | Editable contextual next questions replace direct actions |
 | `D-031` | GPT-5 nano replaces Haiku for guardrail classification |
 | `D-032` | Haiku 4.5 replaces Sonnet 5 for the agent loop |
+| `D-033` | Design Trade-Offs restores a fifth reviewer surface |
 
 <!-- END id-reference -->

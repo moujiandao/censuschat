@@ -12,10 +12,11 @@ The build proceeds from this document without further discovery.
 > subset can be called evidence rather than a system describing itself; see
 > `evals/README.md`. Departures made during the build are recorded in
 > `docs/decisions.md`, and the shipped system is described in `README.md`.
-> **Current-status annotation, updated 2026-08-13:** the reviewer-clarity
-> specification is **D-027**, with tab order amended by **D-028**. The UI now
-> has Chat, Evidence, Evals, and How It Works, with Evidence backed by the
-> durable SQLite trace store. The executed
+> **Current-status annotation, updated 2026-09-18:** the reviewer-clarity
+> specification is **D-027**, with tab order amended by **D-028** and Design
+> Trade-Offs restored by **D-033**. The UI now has Chat, Evidence, Evals,
+> Design Trade-Offs, and How It Works, with Evidence backed by the durable
+> SQLite trace store. The executed
 > set has six regression scenarios and eight informational capability scenarios
 > (**D-026**). Langfuse and prompt caching are not implemented (**D-021**).
 > This annotation supersedes related shipped-status claims below without
