@@ -57,6 +57,7 @@ from src.contracts import (  # noqa: E402
     EventType,
 )
 from src.model_config import AGENT_MODEL, CLASSIFIER_MODEL  # noqa: E402
+from src.sqlgate import validate_sql  # noqa: E402
 
 RESULTS_DIR = Path(__file__).parent / "results"
 
@@ -125,6 +126,7 @@ class Observation:
         self.final_answer: str = ""
         self.terminal: str | None = None
         self.errored: bool = False
+        self.session_id: str | None = None
 
     def start_turn(self) -> None:
         """Called before each turn — resets the per-turn view while leaving
@@ -195,6 +197,7 @@ async def _run_scenario(scenario: EvalScenario) -> tuple[Observation, float]:
     multi-turn context replay is exercised for real."""
     session_id = f"eval-{scenario.id}-{uuid.uuid4().hex[:8]}"
     obs = Observation()
+    obs.session_id = session_id
     start = time.monotonic()
 
     for turn in scenario.turns:
@@ -240,6 +243,8 @@ def _score_check(check: Check, obs: Observation) -> CheckResult:
         )
 
     if check.type == CheckType.NO_TOOL_ERRORS:
+        if expected == "first_sql_validity:final_turn":
+            return _first_sql_validity(check, obs)
         failed = [c.get("tool", "unknown") for c in obs.tool_calls if not c.get("ok")]
         observed = f"{len(obs.tool_calls)} tool calls, {len(failed)} failed"
         if failed:
@@ -369,12 +374,72 @@ def _score_check(check: Check, obs: Observation) -> CheckResult:
         )
 
     if check.type == CheckType.JUDGE_GROUNDEDNESS:
+        if expected == "manual_review:employment_comparison":
+            return _employment_comparison_review(check, obs)
         # Implemented for the numeric half only — see _grounding_check. Every
         # scenario gets this appended automatically, so declaring it on a
         # scenario is redundant rather than wrong.
         return _grounding_check(obs)
 
     return _check_result(check, EvalOutcome.FAIL, f"unknown check {check.type}")
+
+
+def _first_sql_validity(check: Check, obs: Observation) -> CheckResult:
+    """Score the first SQL on the target turn, independent of later recovery.
+
+    This is gate validity (dialect, SELECT, allowlist), not execution success
+    or semantic correctness. Re-validation is local and never queries Snowflake.
+    """
+    first = next((c for c in obs.final_turn_tool_calls if c.get("tool") == "run_census_sql"), None)
+    if first is None:
+        return _check_result(check, EvalOutcome.FAIL, "first SQL validity: no SQL on final turn")
+    try:
+        sql = json.loads(first.get("args", ""))["sql"]
+        if not isinstance(sql, str):
+            raise TypeError("sql is not a string")
+    except (ValueError, KeyError, TypeError) as exc:
+        # TOOL_START contains a bounded UI preview, not guaranteed full JSON.
+        # A successful run_census_sql necessarily passed the gate. Otherwise
+        # unreadable evidence cannot distinguish rejection from execution error.
+        if first.get("ok"):
+            return _check_result(
+                check, EvalOutcome.PASS,
+                "first SQL validity: successful gated execution; full SQL unavailable in argument preview",
+            )
+        return _check_result(
+            check, EvalOutcome.INCONCLUSIVE,
+            f"first SQL validity: argument preview is unreadable; gate outcome unknown: {exc}",
+        )
+    gate = validate_sql(sql)
+    violations = ", ".join(v.value for v in gate.violations) or "none"
+    return _check_result(
+        check, EvalOutcome.PASS if gate.ok else EvalOutcome.FAIL,
+        f"first SQL validity: violations={violations}; sql={sql}; detail={gate.detail or ''}",
+    )
+
+
+def _employment_comparison_review(check: Check, obs: Observation) -> CheckResult:
+    """Never invent a correctness oracle for the captured, unsuccessful turn.
+
+    The frozen Check.expected field selects this explicit manual rubric. A
+    future verified answer key can automate it; a numeric substring cannot.
+    """
+    has_rows = any(
+        c.get("tool") == "run_census_sql" and c.get("ok")
+        and ((c.get("summary") or {}).get("row_count") or 0) > 0
+        for c in obs.final_turn_tool_calls
+    )
+    if obs.terminal != "done" or obs.errored or not obs.final_answer.strip() or not has_rows:
+        return _check_result(check, EvalOutcome.FAIL,
+                             "final answer correctness: incomplete answer or no successful final-turn query rows")
+    return _check_result(
+        check, EvalOutcome.INCONCLUSIVE,
+        "final answer correctness: manual review required; verify Texas, California and New York "
+        "figures, state attribution, common ACS vintage, denominator, arithmetic/rounding and "
+        "comparison direction against independent reference results. No verified answer key is "
+        "available for the captured failure. Rubric: evals/cases/texas-employment-parser-rejection.json; "
+        f"trace session={obs.session_id or 'not captured'}",
+    )
 
 
 def _check_result(
@@ -586,7 +651,8 @@ async def _run_all(
         # rather than being something an author has to remember to declare.
         # Appended, not declared, precisely so a new example cannot omit it.
         check_results = [_score_check(c, obs) for c in scenario.checks]
-        if not any(c.check.type == CheckType.JUDGE_GROUNDEDNESS for c in check_results):
+        if not any(c.check.type == CheckType.JUDGE_GROUNDEDNESS and not c.check.expected
+                   for c in check_results):
             check_results.append(_grounding_check(obs))
         outcome = _scenario_outcome(check_results)
         results.append(

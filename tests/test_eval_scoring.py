@@ -427,13 +427,13 @@ def test_suite_partition_is_exact_and_complete():
     regression = {s.id for s in GOLDEN_SCENARIOS if s.suite == EvalSuite.REGRESSION}
     capability = {s.id for s in GOLDEN_SCENARIOS if s.suite == EvalSuite.CAPABILITY}
 
-    assert regression == {"DF-05", "MT-01", "AMB-01", "UN-01", "OT-01", "INJ-02"}
+    assert regression == {"DF-05", "MT-01", "MT-02", "AMB-01", "UN-01", "OT-01", "INJ-02"}
     assert capability == {
         "DF-01", "CMP-01", "AMB-02", "PM-02",
         "PM-03", "AMB-03", "UN-08", "PM-08",
     }
     assert regression.isdisjoint(capability)
-    assert len(regression | capability) == 14
+    assert len(regression | capability) == 15
 
 
 def test_historical_eval_models_parse_without_new_fields():
@@ -463,7 +463,8 @@ def test_no_scenario_needs_to_declare_the_grounding_check():
     from evals.scenarios import GOLDEN_SCENARIOS
 
     for s in GOLDEN_SCENARIOS:
-        assert CheckType.JUDGE_GROUNDEDNESS not in {c.type for c in s.checks}, s.id
+        assert not any(c.type == CheckType.JUDGE_GROUNDEDNESS and not c.expected
+                       for c in s.checks), s.id
 
 
 # --------------------------------------------------------------------------

@@ -407,14 +407,13 @@ def test_evals_endpoint_still_serves_results_when_scenario_metadata_is_unavailab
     assert rows[0]["turns"] == []
 
 
-def test_every_golden_scenario_has_been_run():
-    """The set no longer carries an unrun backlog. A scenario that has never
-    been executed is a wish, not a test, and must not sit alongside ones that
-    have — which is exactly the confusion this set was cleaned up to remove."""
+def test_golden_scenarios_distinguish_the_unrun_captured_regression():
+    """Adding a captured failure must not pretend a live eval was executed."""
     from evals.scenarios import GOLDEN_SCENARIOS
 
     assert GOLDEN_SCENARIOS
-    assert all(s.status == "executed" for s in GOLDEN_SCENARIOS)
+    assert {s.id for s in GOLDEN_SCENARIOS if s.status == "pending"} == {"MT-02"}
+    assert all(s.status == "executed" for s in GOLDEN_SCENARIOS if s.id != "MT-02")
 
 
 def test_traces_endpoint_returns_empty_list_for_unknown_session():

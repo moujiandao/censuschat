@@ -1,4 +1,4 @@
-"""The golden set: 14 examples, every one of them actually run.
+"""The golden set: 14 previously run examples and one unrun regression.
 
 Each row is a real question, a set of deterministic checks, and a note
 saying what it is meant to demonstrate. `run_evals.py` drives them against
@@ -10,9 +10,9 @@ written during scaffolding before any agent code existed — the ids
 `UN-08` and `PM-08` were added later to pin two known failures; both carry
 that history in their `notes`.
 
-There is deliberately no backlog here. A scenario that has never been run
-is a wish, not a test, and mixing the two makes the set harder to read
-than it is worth.
+MT-02 captures a production failure and is pending its first live eval.
+Pending describes its evidence history, not exclusion: the runner executes
+every selected scenario, including this one. No live result is claimed yet.
 
 Not covered, and why:
 - `conflicting` (CF-01, CF-02) — both require the decennial redistricting
@@ -28,7 +28,14 @@ snapshot before being written here, not assumed.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from src.contracts import Check, CheckType, EvalScenario, EvalSuite, ScenarioCategory
+
+_TEXAS_EMPLOYMENT_CASE = json.loads(
+    (Path(__file__).parent / "cases/texas-employment-parser-rejection.json").read_text()
+)
 
 GOLDEN_SCENARIOS: list[EvalScenario] = [
     EvalScenario(
@@ -95,6 +102,26 @@ GOLDEN_SCENARIOS: list[EvalScenario] = [
             "PRD §7 multi_turn — the second turn must reuse the geography "
             "without restatement. Checks accumulate across both turns; any "
             "failed tool call catches a recovered table-routing regression."
+        ),
+    ),
+    EvalScenario(
+        id="MT-02",
+        category=ScenarioCategory.MULTI_TURN,
+        suite=EvalSuite.REGRESSION,
+        status="pending",
+        turns=[_TEXAS_EMPLOYMENT_CASE["context_question"], _TEXAS_EMPLOYMENT_CASE["original_question"]],
+        checks=[
+            Check(type=CheckType.NO_TOOL_ERRORS, expected="first_sql_validity:final_turn"),
+            Check(type=CheckType.JUDGE_GROUNDEDNESS, expected="manual_review:employment_comparison"),
+            Check(type=CheckType.ANSWER_REQUIRED),
+            Check(type=CheckType.NO_UNHANDLED_ERROR),
+        ],
+        notes=(
+            "Captured production failure on 2026-09-17. Minimal two-turn replay; "
+            "the Texas turn used backticks and an invented table, then retried an "
+            "unsupported table. First SQL gate validity and final-answer correctness "
+            "are separate checks. No verified answer key: correctness requires manual "
+            "review and cannot automatically pass. Not yet run as a live eval."
         ),
     ),
     EvalScenario(

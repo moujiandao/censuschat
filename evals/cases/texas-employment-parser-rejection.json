@@ -1,0 +1,28 @@
+{
+  "scenario_id": "MT-02",
+  "provenance": {
+    "source": "Production SQLite trace, read-only retrieval; matches reported screenshot",
+    "started_at": "2026-09-17T23:42:16.204477+00:00",
+    "model": "claude-haiku-4-5",
+    "screenshot": "codex-clipboard-fb96f5a3-02f1-46f9-9e0d-52d40b42e54c.png"
+  },
+  "context_question": "What's the percentage of employed versus unemployed people in California versus New York",
+  "original_question": "What about compared to Texas",
+  "generated_sql": "SELECT SUM(\"B23025e1\") as total_pop_16plus, SUM(\"B23025e4\") as employed, SUM(\"B23025e5\") as unemployed FROM `acs_2020_5yr`.`census_blockgroup_b23025` WHERE SUBSTR(CENSUS_BLOCK_GROUP,1,2) = '48'",
+  "error": "could not parse SQL: Invalid expression / Unexpected token. Line 1, Col: 122.\n  ) as total_pop_16plus, SUM(\"B23025e4\") as employed, SUM(\"B23025e5\") as unemployed FROM `acs_2020_5yr\u001b[4m`\u001b[0m.`census_blockgroup_b23025` WHERE SUBSTR(CENSUS_BLOCK_GROUP,1,2) = '48'",
+  "expected_violation": "parse_error",
+  "retry": {
+    "generated_sql": "SELECT SUM(\"B23025e1\") as total_pop_16plus, SUM(\"B23025e4\") as employed, SUM(\"B23025e5\") as unemployed FROM census_blockgroup_b23025 WHERE SUBSTR(CENSUS_BLOCK_GROUP,1,2) = '48'",
+    "error": "table(s) not in the allowlist: CENSUS_BLOCKGROUP_B23025"
+  },
+  "replay_note": "Minimal two-turn replay using verbatim user questions. Earlier unrelated turns and original assistant/tool history are not seeded; a fresh live run may follow a different path.",
+  "answer_key": null,
+  "answer_key_note": "No successful Texas query in the captured turn. Do not treat the prior assistant answer or failed SQL as a verified correctness oracle.",
+  "correctness_rubric": [
+    "Compare Texas with both California and New York using supported data and the same stated ACS vintage.",
+    "Verify figures and state attribution against independent reference results, not merely the generated SQL or answer.",
+    "State and consistently apply the percentage denominator. Employed/unemployed shares of population age 16+ differ from shares of the civilian labor force. Do not label unemployed/population age 16+ as the unemployment rate.",
+    "Verify percentage arithmetic and rounding, and support the comparison direction with those figures.",
+    "A refusal, recovery failure, or blank response does not answer the comparison. A correct recovery does not erase invalid first SQL."
+  ]
+}

@@ -342,12 +342,15 @@ golden-eval concern, and the split is load-bearing: the single worst bug in
 this project — every live query failing on Snowflake identifier casing —
 passed the entire mocked suite and was only caught against the real database.
 
-**`make eval`** runs the 14-scenario committed benchmark against the real
+**`make eval`** runs the 15-scenario set (14 previously run cases plus the
+unrun Texas employment regression, MT-02) against the real
 Anthropic, OpenAI, Snowflake, and guardrail stack. It writes a full timestamped
 `EvalRun` and `latest.json` under `evals/results/`, including red rows. It is a
 paid live-call command, not part of the unit suite. `evals/README.md` defines
 the regression gate, informational capability evidence, tri-state semantics,
-and manual CI command.
+and manual CI command. MT-02 separates first-query validity from final-answer
+correctness; the latter remains inconclusive pending a verified answer key
+and review. The committed benchmark artifacts still contain 14 scenarios.
 
 ---
 
@@ -398,6 +401,7 @@ Eval scenarios. **live** runs today, so the question shown is the one
 
 | id | status | question |
 |---|---|---|
+| `MT-02` | live | "What's the percentage of employed versus unemployed people in California versus New York" → "What about compared to Texas" |
 | `PM-08` | live | "What's the average household income in Texas?" |
 
 Decisions, recorded in full in [`docs/decisions.md`](docs/decisions.md).
