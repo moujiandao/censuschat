@@ -1,5 +1,9 @@
 from pathlib import Path
+import json
 import re
+import subprocess
+
+import pytest
 
 
 def _html() -> str:
@@ -118,9 +122,83 @@ def test_evidence_explains_model_calls_from_observable_metadata():
     html = _html()
 
     assert "function describeModelCall(meta)" in html
-    assert '"Model decision " + span.name.slice("model_call_".length)' in html
+    assert 'spanStepName(span)' in html
+    assert '"Census agent decision"' in html
+    assert '"Census agent response"' in html
     assert 'setStepDetail(item, describeModelCall(meta))' in html
     assert '["recovery attempts", meta.recovery_attempts]' in html
+
+
+def _progress_steps(events):
+    html = _html()
+    model = html.split("// BEGIN PROGRESS MODEL", 1)[1].split("\n", 1)[1]
+    model = model.split("// END PROGRESS MODEL", 1)[0]
+    runner = model + """
+      const events = JSON.parse(process.argv[1]);
+      let state = { steps: [{ label: "Census data check", state: "running" }] };
+      let answer = "";
+      for (const event of events) {
+        state = advanceProgress(state, event, Boolean(answer.trim()));
+        if (event.type === "token") answer += event.data.text;
+      }
+      process.stdout.write(JSON.stringify(state.steps));
+    """
+    result = subprocess.run(
+        ["node", "-e", runner, json.dumps(events)],
+        check=True, capture_output=True, text=True,
+    )
+    return [(step["label"], step["state"]) for step in json.loads(result.stdout)]
+
+
+@pytest.mark.parametrize(
+    ("events", "expected"),
+    [
+        (
+            [{"type": "token", "data": {"text": "Data unavailable."}}, {"type": "done"}],
+            [("Census data check", "failed"), ("Response stream", "done")],
+        ),
+        (
+            [{"type": "status", "data": {"message": "Request check"}},
+             {"type": "token", "data": {"text": "I can only help with census data."}},
+             {"type": "done"}],
+            [("Census data check", "done"), ("Request check", "done"),
+             ("Response stream", "done")],
+        ),
+        (
+            [{"type": "status", "data": {"message": "Request check"}},
+             {"type": "status", "data": {"message": "Census agent decision"}},
+             {"type": "tool_start", "data": {"tool": "search_census_variables"}},
+             {"type": "tool_end", "data": {"tool": "search_census_variables", "ok": True}},
+             {"type": "tool_start", "data": {"tool": "resolve_geography"}},
+             {"type": "tool_end", "data": {"tool": "resolve_geography", "ok": True}},
+             {"type": "status", "data": {"message": "Census agent decision"}},
+             {"type": "token", "data": {"text": "Result."}}, {"type": "done"}],
+            [("Census data check", "done"), ("Request check", "done"),
+             ("Census agent decision", "done"), ("Variable finder", "done"),
+             ("Geography resolver", "done"), ("Census agent decision", "done"),
+             ("Response stream", "done")],
+        ),
+        (
+            [{"type": "status", "data": {"message": "Request check"}},
+             {"type": "status", "data": {"message": "Census agent decision"}},
+             {"type": "tool_start", "data": {"tool": "run_census_sql"}},
+             {"type": "tool_end", "data": {"tool": "run_census_sql", "ok": True,
+                                           "summary": {"row_count": 0}}},
+             {"type": "status", "data": {"message": "Census agent recovery"}},
+             {"type": "token", "data": {"text": "No rows matched."}}, {"type": "done"}],
+            [("Census data check", "done"), ("Request check", "done"),
+             ("Census agent decision", "done"), ("Census query", "empty"),
+             ("Census agent recovery", "done"), ("Response stream", "done")],
+        ),
+        (
+            [{"type": "status", "data": {"message": "Request check"}},
+             {"type": "error"}],
+            [("Census data check", "done"), ("Request check", "failed")],
+        ),
+    ],
+)
+def test_stream_progress_keeps_only_real_steps_and_terminal_states(events, expected):
+    assert _progress_steps(events) == expected
 
 
 def test_clean_zero_tool_done_turn_is_not_rendered_as_failed():

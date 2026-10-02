@@ -214,6 +214,18 @@ _TOOL_FUNCS = {
     "run_census_sql": census_tools.run_census_sql,
 }
 
+_TRACE_TOOL_LABELS = {
+    "search_census_variables": "Variable finder",
+    "resolve_geography": "Geography resolver",
+    "run_census_sql": "Census query",
+}
+
+
+def _model_step_label(trigger: str, action: str) -> str:
+    if trigger in {"tool error", "zero-row result"}:
+        return "Census agent recovery"
+    return "Census agent response" if action == "responded to user" else "Census agent decision"
+
 
 _ARGS_PREVIEW_CAP = 500
 _MODEL_RESPONSE_PREVIEW_CAP = 500
@@ -422,8 +434,15 @@ async def agent_turn(
     # doesn't also spend a classifier call it has no use for. is_degraded()
     # short-circuits its own live Snowflake probe whenever a snapshot
     # exists, so this costs nothing extra on a healthy turn.
-    if await asyncio.to_thread(is_degraded):
-        spans.append(TraceSpan(name="degraded_check", latency_ms=0, ok=False))
+    data_check_start = time.monotonic()
+    degraded = await asyncio.to_thread(is_degraded)
+    spans.append(TraceSpan(
+        name="degraded_check",
+        latency_ms=int((time.monotonic() - data_check_start) * 1000),
+        ok=not degraded,
+        meta={"display_name": "Census data check"},
+    ))
+    if degraded:
         yield ChatEvent(type=EventType.TOKEN, data={"text": _DEGRADED_MESSAGE})
         await asyncio.to_thread(
             append_message, session_id, ChatMessage(role="assistant", content=_DEGRADED_MESSAGE)
@@ -443,6 +462,7 @@ async def agent_turn(
         )
         return
 
+    yield ChatEvent(type=EventType.STATUS, data={"message": "Request check"})
     guardrail_start = time.monotonic()
     verdict = await asyncio.to_thread(classify_input, user_message, recent_turns)
     spans.append(
@@ -453,6 +473,7 @@ async def agent_turn(
             meta={
                 "verdict": verdict.action.value,
                 "category": verdict.category.value if verdict.category else None,
+                "display_name": "Request check",
             },
         )
     )
@@ -508,6 +529,12 @@ async def agent_turn(
             break
 
         model_call_index += 1
+        model_label = (
+            "Census agent recovery"
+            if model_trigger in {"tool error", "zero-row result"}
+            else "Census agent decision"
+        )
+        yield ChatEvent(type=EventType.STATUS, data={"message": model_label})
         model_call_start = time.monotonic()
         recovery_attempts_before_call = recovery_attempts
         response_text_parts: list[str] = []
@@ -534,6 +561,13 @@ async def agent_turn(
             for block in getattr(response, "content", [])
             if getattr(block, "type", None) == "tool_use"
         ]
+        model_action = (
+            "requested tool"
+            if tools_requested
+            else "responded to user"
+            if response_text
+            else "returned no text"
+        )
         spans.append(
             TraceSpan(
                 name=f"model_call_{model_call_index}",
@@ -542,13 +576,8 @@ async def agent_turn(
                 meta={
                     "model": AGENT_MODEL,
                     "trigger": model_trigger,
-                    "action": (
-                        "requested tool"
-                        if tools_requested
-                        else "responded to user"
-                        if response_text
-                        else "returned no text"
-                    ),
+                    "action": model_action,
+                    "display_name": _model_step_label(model_trigger, model_action),
                     "tools_requested": tools_requested,
                     "response_preview": response_text[:_MODEL_RESPONSE_PREVIEW_CAP] or None,
                     "context_messages": len(messages),
@@ -618,7 +647,10 @@ async def agent_turn(
                         name=f"tool:{block.name}",
                         latency_ms=0,
                         ok=False,
-                        meta={"blocked": "ambiguous_geography"},
+                        meta={
+                            "blocked": "ambiguous_geography",
+                            "display_name": _TRACE_TOOL_LABELS[block.name],
+                        },
                     )
                 )
                 ambiguity_blocked = True
@@ -683,7 +715,11 @@ async def agent_turn(
                     name=f"tool:{block.name}",
                     latency_ms=elapsed_ms,
                     ok=not is_error,
-                    meta={"args_preview": _preview(block.input), **result_summary},
+                    meta={
+                        "args_preview": _preview(block.input),
+                        "display_name": _TRACE_TOOL_LABELS.get(block.name, block.name),
+                        **result_summary,
+                    },
                 )
             )
             tool_results.append(

@@ -98,6 +98,10 @@ def _collect(session_id: str, message: str) -> list:
     return asyncio.run(_run())
 
 
+def _without_status(events: list) -> list:
+    return [event for event in events if event.type != EventType.STATUS]
+
+
 @pytest.mark.parametrize("ending", ["end_turn", "max_tokens"])
 def test_follow_ups_require_normal_completion_without_extra_tool_calls(monkeypatch, ending):
     from src.contracts import GeoCandidate, GeoLevel
@@ -188,8 +192,9 @@ def test_refuse_verdict_short_circuits_before_tool_loop(monkeypatch):
 
     events = _collect("s-refuse", "what's the weather like?")
 
-    assert [e.type for e in events] == [EventType.TOKEN, EventType.DONE]
-    assert events[0].data["text"] == agent._REFUSAL_MESSAGES[RefusalCategory.OFF_TOPIC]
+    assert [e.type for e in _without_status(events)] == [EventType.TOKEN, EventType.DONE]
+    assert _without_status(events)[0].data["text"] == agent._REFUSAL_MESSAGES[RefusalCategory.OFF_TOPIC]
+    assert [e.data["message"] for e in events if e.type == EventType.STATUS] == ["Request check"]
 
     session = sessions.get_session("s-refuse")
     assert [m.role for m in session.messages] == ["user", "assistant"]
@@ -214,7 +219,7 @@ def test_refuse_verdict_with_unmapped_category_uses_default_message(monkeypatch)
 
     events = _collect("s-refuse-default", "anything")
 
-    assert events[0].data["text"] == agent._REFUSAL_MESSAGES[None]
+    assert _without_status(events)[0].data["text"] == agent._REFUSAL_MESSAGES[None]
 
 
 def test_degraded_mode_short_circuits_before_guardrail_and_tool_loop(monkeypatch):
@@ -246,6 +251,8 @@ def test_degraded_mode_short_circuits_before_guardrail_and_tool_loop(monkeypatch
     trace = tracing.get_traces("s-degraded")[0]
     assert trace.final_answer == agent._DEGRADED_MESSAGE
     assert trace.terminal_status == "done"
+    assert [span.name for span in trace.spans] == ["degraded_check"]
+    assert not any(event.type == EventType.STATUS for event in events)
 
 
 def test_not_degraded_reaches_guardrail_normally(monkeypatch):
@@ -276,8 +283,11 @@ def test_allow_verdict_reaches_tool_loop_and_terminates(monkeypatch):
     events = _collect("s-allow", "population of Wyoming?")
 
     assert len(factory.calls) == 1
-    assert [e.type for e in events] == [EventType.TOKEN, EventType.DONE]
-    assert events[0].data["text"] == "Wyoming has "
+    assert [e.type for e in _without_status(events)] == [EventType.TOKEN, EventType.DONE]
+    assert _without_status(events)[0].data["text"] == "Wyoming has "
+    assert [e.data["message"] for e in events if e.type == EventType.STATUS] == [
+        "Request check", "Census agent decision",
+    ]
 
     session = sessions.get_session("s-allow")
     assert session.messages[1].content == "Wyoming has"  # persisted answer is .strip()'d
@@ -294,14 +304,14 @@ def test_blank_final_model_response_ends_with_error_and_error_trace(monkeypatch)
 
     events = _collect("s-blank-final", "population of Wyoming?")
 
-    assert [event.type for event in events] == [EventType.ERROR]
-    assert events[0].data["message"]
+    assert [event.type for event in _without_status(events)] == [EventType.ERROR]
+    assert events[-1].data["message"]
     messages = sessions.get_session("s-blank-final").messages
     assert [(message.role, message.content) for message in messages] == [
         ("user", "population of Wyoming?")
     ]
     trace = tracing.get_traces("s-blank-final")[0]
-    assert trace.final_answer == events[0].data["message"]
+    assert trace.final_answer == events[-1].data["message"]
     assert trace.terminal_status == "error"
 
 
@@ -358,15 +368,18 @@ def test_allow_verdict_runs_tool_round_trip_before_final_answer(monkeypatch):
     events = _collect("s-tool", "total population?")
 
     assert len(factory.calls) == 2
-    event_types = [e.type for e in events]
+    event_types = [e.type for e in _without_status(events)]
     assert event_types == [
         EventType.TOOL_START,
         EventType.TOOL_END,
         EventType.TOKEN,
         EventType.DONE,
     ]
-    assert events[0].data["tool"] == "search_census_variables"
-    assert events[1].data["ok"] is True
+    assert _without_status(events)[0].data["tool"] == "search_census_variables"
+    assert _without_status(events)[1].data["ok"] is True
+    assert [e.data["message"] for e in events if e.type == EventType.STATUS] == [
+        "Request check", "Census agent decision", "Census agent decision",
+    ]
 
 
 def test_tool_end_events_carry_a_result_summary(monkeypatch):
@@ -434,9 +447,12 @@ def test_allow_verdict_records_a_trace_with_guardrail_model_and_tool_spans(monke
     traces = tracing.get_traces("s-trace-tool")
     assert len(traces) == 1
     span_names = [s.name for s in traces[0].spans]
-    assert span_names == ["guardrail", "model_call_1", "tool:search_census_variables", "model_call_2"]
-    assert traces[0].spans[0].meta["verdict"] == "allow"
-    assert traces[0].spans[2].ok is True
+    assert span_names == [
+        "degraded_check", "guardrail", "model_call_1",
+        "tool:search_census_variables", "model_call_2",
+    ]
+    assert traces[0].spans[1].meta["verdict"] == "allow"
+    assert traces[0].spans[3].ok is True
     assert traces[0].final_answer == "found it."
     assert traces[0].terminal_status == "done"
 
@@ -482,6 +498,7 @@ def test_model_spans_record_observable_trigger_action_and_usage(monkeypatch, tmp
         "model": agent.AGENT_MODEL,
         "trigger": "user request",
         "action": "requested tool",
+        "display_name": "Census agent decision",
         "tools_requested": ["search_census_variables"],
         "response_preview": None,
         "context_messages": 1,
@@ -496,6 +513,7 @@ def test_model_spans_record_observable_trigger_action_and_usage(monkeypatch, tmp
         "model": agent.AGENT_MODEL,
         "trigger": "tool results",
         "action": "responded to user",
+        "display_name": "Census agent response",
         "tools_requested": [],
         "response_preview": "found it.",
         "context_messages": 3,
@@ -506,6 +524,10 @@ def test_model_spans_record_observable_trigger_action_and_usage(monkeypatch, tmp
         "cache_creation_input_tokens": 0,
         "stop_reason": "end_turn",
     }
+    trace = tracing.get_traces("s-model-evidence")[0]
+    names = {span.name: span.meta.get("display_name") for span in trace.spans}
+    assert names["guardrail"] == "Request check"
+    assert names["tool:search_census_variables"] == "Variable finder"
 
 
 def test_model_span_identifies_recovery_after_a_tool_error(monkeypatch, tmp_path):
@@ -526,6 +548,7 @@ def test_model_span_identifies_recovery_after_a_tool_error(monkeypatch, tmp_path
     trace = tracing.get_traces("s-model-recovery-evidence")[0]
     second_model_call = next(span for span in trace.spans if span.name == "model_call_2")
     assert second_model_call.meta["trigger"] == "tool error"
+    assert second_model_call.meta["display_name"] == "Census agent recovery"
     assert second_model_call.meta["recovery_attempts"] == 1
 
 
@@ -545,7 +568,11 @@ def test_model_span_identifies_recovery_after_a_zero_row_result(monkeypatch, tmp
         [_FakeStream([], tool_response), _FakeStream(["No rows matched."], final_response)],
     )
 
-    _collect("s-model-zero-row-evidence", "population?")
+    events = _collect("s-model-zero-row-evidence", "population?")
+
+    assert [e.data["message"] for e in events if e.type == EventType.STATUS] == [
+        "Request check", "Census agent decision", "Census agent recovery",
+    ]
 
     trace = tracing.get_traces("s-model-zero-row-evidence")[0]
     second_model_call = next(span for span in trace.spans if span.name == "model_call_2")
@@ -579,9 +606,9 @@ def test_refuse_verdict_still_records_a_trace(monkeypatch, tmp_path):
 
     traces = tracing.get_traces("s-trace-refuse")
     assert len(traces) == 1
-    assert [s.name for s in traces[0].spans] == ["guardrail"]
-    assert traces[0].spans[0].meta["verdict"] == "refuse"
-    assert traces[0].spans[0].meta["category"] == "off_topic"
+    assert [s.name for s in traces[0].spans] == ["degraded_check", "guardrail"]
+    assert traces[0].spans[1].meta["verdict"] == "refuse"
+    assert traces[0].spans[1].meta["category"] == "off_topic"
     assert traces[0].final_answer == agent._REFUSAL_MESSAGES[RefusalCategory.OFF_TOPIC]
     assert traces[0].terminal_status == "done"
 
@@ -631,7 +658,7 @@ def test_recovery_stops_after_max_retries_of_sql_rejected(monkeypatch):
     # Exactly MAX_RECOVERY_RETRIES model calls — the loop must not ask the
     # model again once the recovery budget is spent.
     assert len(factory.calls) == MAX_RECOVERY_RETRIES
-    event_types = [e.type for e in events]
+    event_types = [e.type for e in _without_status(events)]
     assert event_types == [
         EventType.TOOL_START,
         EventType.TOOL_END,
@@ -764,7 +791,7 @@ def test_successful_retry_does_not_consume_extra_budget_or_force_exit(monkeypatc
     # message, all 3 model calls happen (1 fewer than MAX_RECOVERY_RETRIES
     # would allow, since only 1 of the 2 outcomes was bad).
     assert len(factory.calls) == 3
-    event_types = [e.type for e in events]
+    event_types = [e.type for e in _without_status(events)]
     assert event_types == [
         EventType.TOOL_START,
         EventType.TOOL_END,
@@ -800,6 +827,9 @@ def test_multiple_run_census_sql_failures_in_one_batch_can_exceed_budget(monkeyp
     # stop mid-batch, so recovery_attempts (3) exceeds MAX_RECOVERY_RETRIES
     # (2) by the time exhaustion is checked after the batch.
     assert len(factory.calls) == 1
+    assert [e.data["message"] for e in events if e.type == EventType.STATUS] == [
+        "Request check", "Census agent decision",
+    ]
     assert events[-1].type == EventType.DONE
     failure_text = events[-2].data["text"]
     assert failure_text.count("run_census_sql failed") == 3
@@ -885,7 +915,7 @@ def test_ambiguous_geography_blocks_sql_and_forces_clarifying_question(monkeypat
     events = _collect("s-ambiguous", "population of Washington County?")
 
     assert len(factory.calls) == 2  # the model was never called a 3rd time
-    event_types = [e.type for e in events]
+    event_types = [e.type for e in _without_status(events)]
     assert event_types == [
         EventType.TOOL_START,
         EventType.TOOL_END,
@@ -894,7 +924,7 @@ def test_ambiguous_geography_blocks_sql_and_forces_clarifying_question(monkeypat
         EventType.TOKEN,
         EventType.DONE,
     ]
-    assert events[3].data["ok"] is False  # the blocked run_census_sql attempt
+    assert _without_status(events)[3].data["ok"] is False  # the blocked run_census_sql attempt
     clarifying_text = events[-2].data["text"]
     assert "Washington County, Maryland" in clarifying_text
     assert "Washington County, Virginia" in clarifying_text

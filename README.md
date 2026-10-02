@@ -84,6 +84,9 @@ final answer number at runtime.
 Responses stream over SSE. The 50-second watchdog is a soft deadline checked
 between tool-loop rounds. It prevents later calls after the deadline, but does
 not interrupt a model or Snowflake call already in flight.
+Chat shows named checks, tool calls, and response progress as they happen, then
+keeps those steps beside the answer. The Evidence tab shows the same names on
+SQLite-backed turn traces, including failed and recovery steps.
 
 ---
 
@@ -338,7 +341,8 @@ colons` — an unhelpful message for a simple missing variable.
 
 **`make test`** covers deterministic layers: the SQL trust boundary,
 guardrail routing, bounded recovery, ambiguity handling, the soft watchdog,
-degraded mode, FTS ranking, result normalization, and the eval scorer.
+degraded mode, FTS ranking, result normalization, frontend progress transitions,
+and the eval scorer. The frontend transition checks use Node 22 with no npm packages.
 
 LLM *behavior* is deliberately not asserted in mocked unit tests. That is a
 golden-eval concern, and the split is load-bearing: the single worst bug in

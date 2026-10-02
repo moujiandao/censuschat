@@ -97,11 +97,20 @@
   #log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 16px 4px; }
   .row { display: flex; }
   .row.user { justify-content: flex-end; }
+  .row.assistant { flex-direction: column; align-items: flex-start; }
   .bubble { max-width: 82%; padding: 10px 14px; border-radius: 14px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.4; font-size: 14.5px; }
   .row.user .bubble { border-bottom-right-radius: 4px; background: var(--primary); color: #fff; }
   .row.assistant .bubble { border-bottom-left-radius: 4px; background: var(--assistant); }
   .row.assistant .bubble.error { background: var(--error); color: #fff; }
   .bubble.pending { color: var(--muted); font-style: italic; }
+  .turn-progress { width: min(100%, 560px); margin-bottom: 7px; padding: 10px 13px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); font-size: 12.5px; }
+  .turn-progress strong { display: block; margin-bottom: 5px; font-size: 12px; }
+  .turn-progress ol { margin: 0; padding-left: 20px; }
+  .turn-progress li { padding: 3px 0; color: var(--muted); }
+  .turn-progress li.running { color: var(--fg); }
+  .turn-progress li.done { color: var(--ok); }
+  .turn-progress li.fail { color: var(--error); }
+  .turn-progress li.empty { color: var(--amber); }
   .follow-ups { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; white-space: normal; }
   .follow-ups button { max-width: 100%; overflow-wrap: anywhere; }
   .status-line { min-height: 16px; padding: 0 4px; color: var(--muted); font-size: 12px; }
@@ -687,6 +696,75 @@
     return item;
   }
 
+  // BEGIN PROGRESS MODEL (also executed by tests/test_frontend.py)
+  const TOOL_STEP_NAMES = {
+    search_census_variables: "Variable finder",
+    resolve_geography: "Geography resolver",
+    run_census_sql: "Census query",
+  };
+
+  function toolStepName(tool) {
+    return TOOL_STEP_NAMES[tool] || tool;
+  }
+
+  function advanceProgress(state, event, hasAnswer) {
+    const steps = state.steps.map(function (step) {
+      return { label: step.label, state: step.state };
+    });
+    let active = steps.length - 1;
+    if (active < 0 || steps[active].state !== "running") active = -1;
+    function finish(outcome) {
+      if (active < 0) return;
+      steps[active].state = outcome;
+      active = -1;
+    }
+    function start(label) {
+      steps.push({ label: label, state: "running" });
+      active = steps.length - 1;
+    }
+    const data = event.data || {};
+    if (event.type === "status") {
+      finish("done");
+      start(data.message);
+    } else if (event.type === "token") {
+      if (active < 0 || steps[active].label !== "Response stream") {
+        finish(active >= 0 && steps[active].label === "Census data check" ? "failed" : "done");
+        start("Response stream");
+      }
+    } else if (event.type === "tool_start") {
+      finish("done");
+      start(toolStepName(data.tool));
+    } else if (event.type === "tool_end") {
+      const noRows = data.ok && data.tool === "run_census_sql" &&
+        data.summary && data.summary.row_count === 0;
+      finish(noRows ? "empty" : data.ok ? "done" : "failed");
+    } else if (event.type === "error") {
+      if (active < 0) start("Turn error");
+      finish("failed");
+    } else if (event.type === "done") {
+      if (active < 0 && !hasAnswer) start("No answer produced");
+      finish(hasAnswer ? "done" : "failed");
+    }
+    return { steps: steps };
+  }
+  // END PROGRESS MODEL
+
+  function spanStepName(span) {
+    const meta = span.meta || {};
+    if (typeof meta.display_name === "string" && meta.display_name) return meta.display_name;
+    if (span.name === "guardrail") return "Request check";
+    if (span.name === "degraded_check") return "Census data check";
+    if (span.name.indexOf("tool:") === 0) return toolStepName(span.name.slice(5));
+    if (span.name.indexOf("model_call_") === 0) {
+      if (meta.trigger === "tool error" || meta.trigger === "zero-row result") {
+        return "Census agent recovery";
+      }
+      return meta.action === "responded to user"
+        ? "Census agent response" : "Census agent decision";
+    }
+    return span.name;
+  }
+
   function describeArgs(tool, preview) {
     let args;
     try { args = JSON.parse(preview); } catch (error) { return preview ? [["args", preview]] : []; }
@@ -743,10 +821,7 @@
       const isTool = span.name.indexOf("tool:") === 0;
       const isModel = span.name.indexOf("model_call_") === 0;
       const tool = isTool ? span.name.slice(5) : null;
-      const label = isModel
-        ? "Model decision " + span.name.slice("model_call_".length) +
-          (meta.action ? ": " + meta.action : "")
-        : (tool || span.name) + (span.ok ? " - ok" : " - failed");
+      const label = spanStepName(span) + (span.ok ? " - done" : " - failed");
       const item = addEvidenceStep(steps, label, span.ok ? "ok" : "fail");
       const timing = document.createElement("span");
       timing.className = "ms";
@@ -757,7 +832,7 @@
       } else if (isModel) {
         setStepDetail(item, describeModelCall(meta));
       } else {
-        setStepDetail(item, Object.keys(meta).filter(function (key) { return key !== "args_preview"; })
+        setStepDetail(item, Object.keys(meta).filter(function (key) { return key !== "args_preview" && key !== "display_name"; })
           .map(function (key) { return [key, typeof meta[key] === "object" ? JSON.stringify(meta[key]) : String(meta[key])]; }));
       }
     });
@@ -939,8 +1014,34 @@
   const PROGRESS_LABEL = {
     resolve_geography: "Looking up the geography",
     search_census_variables: "Finding the right census variable",
-    run_census_sql: "Querying Snowflake",
+    run_census_sql: "Querying census data",
   };
+
+  function startChatProgress(bubble) {
+    const panel = document.createElement("div");
+    panel.className = "turn-progress";
+    panel.setAttribute("role", "status");
+    panel.setAttribute("aria-live", "polite");
+    const heading = document.createElement("strong");
+    heading.textContent = "Census Chat steps";
+    const list = document.createElement("ol");
+    panel.appendChild(heading);
+    panel.appendChild(list);
+    bubble.parentNode.insertBefore(panel, bubble);
+    return list;
+  }
+
+  function renderChatProgress(list, state) {
+    list.replaceChildren();
+    const endings = { running: "working", done: "done", failed: "failed", empty: "no rows" };
+    state.steps.forEach(function (step) {
+      const item = document.createElement("li");
+      item.className = step.state === "failed" ? "fail" : step.state;
+      item.textContent = step.label + " · " + endings[step.state];
+      list.appendChild(item);
+    });
+    logEl.scrollTop = logEl.scrollHeight;
+  }
 
   async function sendMessage(message) {
     const requestTurn = ++activeChatTurn;
@@ -953,6 +1054,9 @@
     }
     addRow("user").textContent = message;
     const assistantBubble = addRow("assistant");
+    const chatSteps = startChatProgress(assistantBubble);
+    let progress = { steps: [{ label: "Census data check", state: "running" }] };
+    renderChatProgress(chatSteps, progress);
     setPending(assistantBubble, "Thinking...");
     const evidenceSteps = startEvidenceTurn(message);
     let activeToolStep = null;
@@ -960,7 +1064,7 @@
     let assistantText = "";
     let ended = false;
     setBusy(true);
-    statusEl.textContent = "thinking...";
+    statusEl.textContent = "Checking census data...";
 
     let response;
     try {
@@ -970,6 +1074,8 @@
         body: JSON.stringify({ session_id: sessionId, message: message }),
       });
     } catch (error) {
+      progress = advanceProgress(progress, { type: "error" }, false);
+      renderChatProgress(chatSteps, progress);
       clearPending(assistantBubble);
       assistantBubble.classList.add("error");
       assistantBubble.textContent = "Couldn't reach the server. Check your connection and try again.";
@@ -980,6 +1086,8 @@
     }
 
     if (!response.ok || !response.body) {
+      progress = advanceProgress(progress, { type: "error" }, false);
+      renderChatProgress(chatSteps, progress);
       clearPending(assistantBubble);
       assistantBubble.classList.add("error");
       let detail = "Something went wrong talking to the server.";
@@ -1011,30 +1119,40 @@
           try { event = JSON.parse(rawEvent.slice(6)); } catch (error) { continue; }
           if (ended) continue;
 
-          if (event.type === "token") {
+          progress = advanceProgress(progress, event, Boolean(assistantText.trim()));
+          renderChatProgress(chatSteps, progress);
+
+          if (event.type === "status") {
+            statusEl.textContent = event.data.message + "...";
+          } else if (event.type === "token") {
             if (!assistantText) clearPending(assistantBubble);
             assistantText += event.data.text;
             assistantBubble.textContent = assistantText;
+            statusEl.textContent = "Streaming response...";
             logEl.scrollTop = logEl.scrollHeight;
           } else if (event.type === "tool_start") {
             toolStepsSeen = true;
-            statusEl.textContent = "using " + event.data.tool + "...";
+            statusEl.textContent = PROGRESS_LABEL[event.data.tool] || "Using " + event.data.tool;
             setPending(assistantBubble, PROGRESS_LABEL[event.data.tool] || "Running " + event.data.tool);
-            activeToolStep = addEvidenceStep(evidenceSteps, event.data.tool + " - running");
+            activeToolStep = addEvidenceStep(evidenceSteps, toolStepName(event.data.tool) + " - running");
             activeToolStep._tool = event.data.tool;
             activeToolStep._args = describeArgs(event.data.tool, event.data.args_preview || "");
             setStepDetail(activeToolStep, activeToolStep._args);
           } else if (event.type === "tool_end") {
             if (activeToolStep) {
               activeToolStep.classList.add(event.data.ok ? "ok" : "fail");
-              activeToolStep.querySelector(".label").textContent = activeToolStep._tool + (event.data.ok ? " - ok" : " - failed");
+              activeToolStep.querySelector(".label").textContent = toolStepName(activeToolStep._tool) + (event.data.ok ? " - done" : " - failed");
               const timing = document.createElement("span");
               timing.className = "ms";
               timing.textContent = event.data.elapsed_ms + "ms";
               activeToolStep.querySelector(".step-head").appendChild(timing);
               setStepDetail(activeToolStep, (activeToolStep._args || []).concat(describeResult(activeToolStep._tool, event.data.summary)));
             }
-            statusEl.textContent = event.data.ok ? "" : "a tool call failed, recovering...";
+            statusEl.textContent = !event.data.ok
+              ? "Tool call failed"
+              : event.data.tool === "run_census_sql" && event.data.summary && event.data.summary.row_count === 0
+              ? "No rows returned"
+              : "Waiting for the next step...";
           } else if (event.type === "error") {
             clearFollowUps();
             ended = true;
@@ -1072,6 +1190,8 @@
       }
     } finally {
       if (!ended) {
+        progress = advanceProgress(progress, { type: "error" }, false);
+        renderChatProgress(chatSteps, progress);
         addEvidenceStep(evidenceSteps, "Stream ended without a terminal event", "fail");
         if (!assistantText) {
           clearPending(assistantBubble);
