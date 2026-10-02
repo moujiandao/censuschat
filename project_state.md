@@ -1,20 +1,20 @@
 ---
 project: censuschat
 priority: P2
-state: BLOCKED
-attention: DECISION
-human_blocked: true
+state: RUNNING
+attention: NONE
+human_blocked: false
 owner: brian
 agent: codex
-current_task: Preserve per-scenario evaluation traces
-next_action: Add eval trace storage and display using Brian's chosen format
-waiting_on: Brian's choice of committed eval JSON or local SQLite traces
-updated: 2026-10-02T18:45:02Z
+current_task: Merge and deploy named turn progress
+next_action: Fast-forward main to the verified feature branch
+waiting_on: none
+updated: 2026-10-02T19:01:58Z
 ---
 
 # Current State
 
-Named live progress and durable trace labels are committed as `8413f60` on `feat/named-turn-progress`. Exposing per-scenario traces from Evals is pending an artifact decision.
+Named live progress and durable trace labels are committed as `8413f60` on `feat/named-turn-progress`. Brian authorized merging, pushing, and deploying this scope and chose to skip per-scenario Evals trace display.
 
 # Recent Work
 
@@ -22,11 +22,11 @@ Full offline suite: 508 passed. JavaScript syntax passed. Browser preview exerci
 
 # Blocker
 
-Brian must choose whether per-scenario traces are embedded in committed EvalResult JSON (portable but changes the frozen contract) or read from the existing local SQLite trace store (no contract change, local to one machine).
+None.
 
 # Next Action
 
-Add eval trace storage and display using Brian's chosen format.
+Fast-forward main to the verified feature branch.
 
 # Notes
 
