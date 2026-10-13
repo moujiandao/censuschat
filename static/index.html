@@ -511,7 +511,16 @@
       </details>
 
       <details class="tradeoff-card">
-        <summary><h3>5. Testing the parts and testing the real answer are different jobs</h3></summary>
+        <summary><h3>5. Do not ask the model to guess a table name that code can compute</h3></summary>
+        <p><strong>In your app:</strong> <code>search_census_variables</code> (<code>src/tools.py</code>) returns a <code>physical_table</code> with every variable hit, derived in code by <code>_physical_table_for_acs_variable</code> and checked against <code>ALLOWED_TABLES</code>. The prompt in <code>agent_turn</code> tells the model to copy that field into every <code>FROM</code> clause and never derive one itself.</p>
+        <p><strong>What happened:</strong> in the MT-01 eval (Harris County population, then “What about households?”), search returned the variable <code>B11012e1</code> and the prompt told the model to work out the table from the ACS table number. It wrote <code>2020_CBG_B11012</code>. That table does not exist: the SafeGraph share packs every ACS table with the same topic prefix into one wide table, so <code>B11012e1</code> lives in <code>2020_CBG_B11</code>. <code>validate_sql</code> rejected the name, and recovery spent a second model round finding the right one. The final answer was correct, so the eval stayed green.</p>
+        <p><strong>The fix:</strong> code now computes the table from the first three characters of the variable id and refuses to return a hit whose table is not allowlisted. The SQL gate still rejects a wrong table rather than correcting it. MT-01 gained a <code>no_tool_errors</code> check so a turn that needed a retry is red even when its answer is right.</p>
+        <p class="decision"><strong>Remember:</strong> a mapping you can compute with a string slice belongs in code, handed to the model as data. Describing it in the prompt turns a deterministic step into a guess, and recovery hides the cost of that guess unless the evals look at tool calls, not only answers.</p>
+        <p class="ds-note">Decision record: D-024, D-025. Spec: <code>docs/superpowers/specs/2026-08-13-physical-table-routing-design.md</code>.</p>
+      </details>
+
+      <details class="tradeoff-card">
+        <summary><h3>6. Testing the parts and testing the real answer are different jobs</h3></summary>
         <p><strong>In your app:</strong> <code>tests/test_sqlgate.py</code> checks <code>validate_sql</code> offline; <code>tests/test_agent.py</code> checks loop controls with simulated responses. <code>evals/scenarios.py</code> defines live cases, and <code>evals/run_evals.py</code> runs and scores them through the real <code>agent_turn</code>.</p>
         <p><strong>Offline example:</strong> give the SQL validator a saved DELETE statement or a query against a disallowed table. Check that it rejects the query before contacting Snowflake. This is fast, repeatable, and needs no paid model call.</p>
         <p><strong>Live example:</strong> ask the original employment question again using the real model and Snowflake. Check whether it picks the right data and returns the expected answer. Its newly generated query can differ on each run.</p>
@@ -520,7 +529,7 @@
       </details>
 
       <details class="tradeoff-card">
-        <summary><h3>6. A plausible number is not always an answer we can support</h3></summary>
+        <summary><h3>7. A plausible number is not always an answer we can support</h3></summary>
         <p><strong>In your app:</strong> <code>ALLOWED_TABLES</code> (<code>src/contracts.py</code>) enforces the permitted vintage through <code>validate_sql</code>. In <code>src/tools.py</code>, <code>resolve_geography</code> searches available places and <code>_geo_levels_for</code> marks median measures as valid only at block-group level. That metadata informs the model; it is not itself a SQL-level ban on averaging medians.</p>
         <p><strong>Example:</strong> a user asks about Austin, but our source does not include city boundaries. Returning Travis County's population as Austin's population would sound convincing and still answer the wrong question.</p>
         <p><strong>Our choice:</strong> explain missing coverage and make any substitute explicit. We also restrict queries to the 2020 ACS release. For income, averaging neighborhood medians does not produce the county median, so that shortcut is not a valid substitute.</p>
@@ -529,7 +538,7 @@
       </details>
 
       <details class="tradeoff-card">
-        <summary><h3>7. Search can be so strict that it misses data we have</h3></summary>
+        <summary><h3>8. Search can be so strict that it misses data we have</h3></summary>
         <p><strong>In your app:</strong> <code>search_census_variables</code> uses SQLite FTS5 keyword search and BM25 ranking. Its helper <code>_fts_match_query</code> builds the strict AND search, then an OR search if no rows match. <code>_should_index_variable</code> (<code>src/snapshot.py</code>) excludes margin-of-error and allocation fields when building the index.</p>
         <p><strong>What happened:</strong> searches like “number of households” returned nothing because all words had to appear together in a Census label. The household data existed, but the wording did not match.</p>
         <p><strong>Our choice:</strong> try the strict search first. If it finds nothing, try matching any of the words. Local keyword search keeps the setup simple, without a separate service for matching by meaning.</p>
@@ -538,7 +547,7 @@
       </details>
 
       <details class="tradeoff-card">
-        <summary><h3>8. If the topic checker breaks, should chat stop?</h3></summary>
+        <summary><h3>9. If the topic checker breaks, should chat stop?</h3></summary>
         <p><strong>In your app:</strong> <code>classify_input</code> (<code>src/guardrail.py</code>) calls the classifier and allows requests on errors or timeouts. <code>_ALLOW_VERDICTS</code> includes <code>unknown_subject</code>. Later, <code>run_census_sql</code> raises <code>SqlRejected</code> if <code>validate_sql</code> rejects the query, before opening a Snowflake connection.</p>
         <p><strong>The problem:</strong> a small model first checks whether a question belongs in Census Chat. If that check times out while someone asks a legitimate population question, refusing everything would make a helper component take down the experience.</p>
         <p><strong>Our choice:</strong> let the question continue when the topic check fails. The SQL gate still runs and blocks queries that fail validation. A question about an unknown place also gets a chance to reach data discovery.</p>
@@ -547,7 +556,7 @@
       </details>
 
       <details class="tradeoff-card">
-        <summary><h3>9. How long should the agent keep trying?</h3></summary>
+        <summary><h3>10. How long should the agent keep trying?</h3></summary>
         <p><strong>In your app:</strong> <code>agent_turn</code> counts failed or empty SQL results against <code>MAX_RECOVERY_RETRIES</code>, limits rounds with <code>_MAX_TOOL_LOOP_ITERATIONS</code>, and checks elapsed time before further work. Separately, <code>run_census_sql</code> sets Snowflake’s <code>STATEMENT_TIMEOUT_IN_SECONDS</code> to limit query execution.</p>
         <p><strong>Example:</strong> the model cannot find household data, searches again, rewrites the query, and searches again. Without limits, one question can keep consuming time and paid calls without making progress.</p>
         <p><strong>Our choice:</strong> cap recovery attempts and tool rounds, and stop further tool use when the time budget is exhausted. Explain the failure instead of endlessly retrying.</p>
@@ -556,7 +565,7 @@
       </details>
 
       <details class="tradeoff-card">
-        <summary><h3>10. Keep a useful activity log without building a monitoring platform</h3></summary>
+        <summary><h3>11. Keep a useful activity log without building a monitoring platform</h3></summary>
         <p><strong>In your app:</strong> <code>TraceSpan</code> records each step and <code>TurnTrace</code> groups a turn (<code>src/tracing.py</code>). <code>record_turn_trace</code> saves it to SQLite; <code>get_traces</code> retrieves it. <code>/api/traces</code> feeds the history displayed by the Evidence tab.</p>
         <p><strong>The need:</strong> when an answer fails, we need to see which searches and queries ran, what failed, and how long each step took. The in-app trace view provides that record.</p>
         <p><strong>Our choice:</strong> defer Langfuse, a separate monitoring service, to fit the build budget. Store traces locally in SQLite so deploying a new version does not erase the old evidence.</p>
@@ -565,7 +574,7 @@
       </details>
 
       <details class="tradeoff-card">
-        <summary><h3>11. “Connected at startup” does not mean “connected right now”</h3></summary>
+        <summary><h3>12. “Connected at startup” does not mean “connected right now”</h3></summary>
         <p><strong>In your app:</strong> <code>lifespan</code> (<code>src/app.py</code>) calls <code>check_snowflake_reachability</code> at startup. In <code>src/health.py</code>, <code>health_report</code> and <code>is_degraded</code> read the cached result. The browser’s <code>/api/health</code> request does not perform a new Snowflake connection test.</p>
         <p><strong>Our choice:</strong> test the Snowflake connection when the app starts and remember the result. Reading that saved status is cheaper than opening another database connection on every health check.</p>
         <p><strong>Example:</strong> if Snowflake becomes unavailable an hour later, the saved status may still say healthy. The next real query will expose the problem, but the saved check cannot warn us first.</p>
@@ -574,7 +583,7 @@
       </details>
 
       <details class="tradeoff-card">
-        <summary><h3>12. Use a simple setup that fits the server we already have</h3></summary>
+        <summary><h3>13. Use a simple setup that fits the server we already have</h3></summary>
         <p><strong>In your app:</strong> <code>src/app.py</code> serves <code>static/index.html</code> directly. Its <code>activateTab</code> function switches visible panels. <code>deploy.sh</code> starts the app container, and <code>docker-compose.override.yml</code> publishes it on <code>127.0.0.1:8000</code> for the host’s Caddy server.</p>
         <p><strong>Our choice:</strong> keep the frontend in one HTML file, with no separate build process. Reuse Caddy, the server already handling HTTPS and login protection, instead of starting a competing copy that would disrupt another site.</p>
         <p><strong>Example:</strong> adding this learning tab only needs an HTML edit. But moving the whole app to another machine also requires recreating the existing server configuration; the container alone does not describe everything.</p>
@@ -583,7 +592,7 @@
       </details>
 
       <details class="tradeoff-card">
-        <summary><h3>13. A long test list can look more convincing than it is</h3></summary>
+        <summary><h3>14. A long test list can look more convincing than it is</h3></summary>
         <p><strong>In your app:</strong> <code>evals/scenarios.py</code> holds the active scenarios. <code>evals/run_evals.py</code> writes results into <code>evals/results/</code>. The <code>/api/evals</code> endpoint (<code>src/app.py</code>) supplies recorded results to the Evals tab; opening the tab does not run evaluations.</p>
         <p><strong>What happened:</strong> the evaluation page mixed executed scenarios with a much larger backlog of scenarios that had never run. Readers had to work too hard to understand what was actually verified.</p>
         <p><strong>Our choice:</strong> reduce the active set, preserve historical results, and label the captured but unrun regression as pending. The report is easier to read, but omitted coverage still needs work.</p>
@@ -592,7 +601,7 @@
       </details>
 
       <details class="tradeoff-card">
-        <summary><h3>14. Build one complete answer early enough to learn from it</h3></summary>
+        <summary><h3>15. Build one complete answer early enough to learn from it</h3></summary>
         <p><strong>In your app:</strong> The form in <code>static/index.html</code> posts to <code>/api/chat</code>. <code>agent_turn</code> coordinates <code>search_census_variables</code>, <code>resolve_geography</code>, and <code>run_census_sql</code>, then streams events back to the browser. Exercising that whole path checks how the parts work together.</p>
         <p><strong>What helped:</strong> inspecting the real data before coding uncovered missing city boundaries and invalid ways to combine medians. That prevented us from planning features the dataset could not support.</p>
         <p><strong>What hurt:</strong> the browser interface came late. Offline tests passed, but typing real questions exposed database naming problems that simulated database responses could not catch.</p>

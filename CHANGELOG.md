@@ -2,6 +2,10 @@
 
 ## [2026-10-13]
 
+### Added
+
+- Design Trade-Offs card 5 records the MT-01 table-routing incident: the model derived `2020_CBG_B11012` from an ACS table number, the gate rejected it, and recovery hid the cost until `physical_table` moved the mapping into code (D-024, D-025). Later cards renumber 6 through 15.
+
 ### Changed
 
 - Collapse every Design Trade-Offs item by default so only its title shows; selecting a title opens it, using native `<details>` with no script.
