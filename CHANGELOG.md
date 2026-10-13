@@ -1,5 +1,11 @@
 # Changelog
 
+## [2026-10-13]
+
+### Changed
+
+- Collapse every Design Trade-Offs item by default so only its title shows; selecting a title opens it, using native `<details>` with no script.
+
 ## [2026-10-12]
 
 ### Added
