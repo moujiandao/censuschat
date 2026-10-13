@@ -118,16 +118,73 @@
   #input { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; background: var(--bg); color: var(--fg); font-size: 14.5px; }
   #input:focus { outline: 2px solid var(--primary); }
 
-  .how-flow { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--card); font-weight: 600; overflow-wrap: anywhere; }
-  .how-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 18px 0; }
+  .how-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 0; }
   .how-card, .info-card { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
-  .how-card h2, .info-card h2, .eval-suite h2 { margin: 0 0 7px; font-size: 14px; }
+  .how-card h3, .info-card h2, .eval-suite h2 { margin: 0 0 7px; font-size: 14px; }
   .how-card p, .info-card p, .info-card li { font-size: 12.5px; line-height: 1.5; }
   .info-card { margin-bottom: 12px; }
   .info-card ul { margin: 6px 0 0; padding-left: 18px; }
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
   th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
   th { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+
+  /* How It Works: system flow diagram and sections */
+  .sysflow-head h2 { margin: 0 0 4px; font-size: 20px; letter-spacing: -.01em; }
+  .sysflow-head p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+  .flow-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 12px 0 0; padding: 0; list-style: none; color: var(--muted); font-size: 11.5px; }
+  .flow-legend li { display: inline-flex; align-items: center; gap: 6px; }
+  .flow-legend i { width: 12px; height: 12px; border: 1.5px solid var(--ok); border-radius: 4px; background: color-mix(in srgb, var(--ok) 12%, var(--bg)); }
+  .flow-legend .person i { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, var(--bg)); }
+  .flow-legend .model i { border-color: var(--amber); background: color-mix(in srgb, var(--amber) 14%, var(--bg)); }
+  .flow-legend .gate i { border-color: var(--error); background: color-mix(in srgb, var(--error) 10%, var(--bg)); }
+  .flow-legend .store i { border-color: var(--muted); background: var(--card); }
+  .flow-frame { overflow-x: auto; margin: 10px 0; border: 1px solid var(--border); border-radius: 10px; }
+  .flow { position: relative; width: 866px; height: 616px; }
+  .flow-wires { position: absolute; inset: 0; pointer-events: none; }
+  .flow-wires path { fill: none; stroke: var(--fg); stroke-width: 1.5; }
+  .flow-wires path.dashed { stroke-dasharray: 5 4; stroke-width: 1.2; }
+  .flow-wires marker path { fill: var(--fg); stroke: none; }
+  .flow-wires text { fill: var(--muted); font-size: 10.5px; }
+  .fstep { position: absolute; }
+  .fnode { display: grid; place-content: center; height: 72px; padding: 6px; border: 1.5px solid var(--ok); border-radius: 10px; background: color-mix(in srgb, var(--ok) 12%, var(--bg)); text-align: center; font-size: 14px; font-weight: 600; line-height: 1.15; }
+  .fnode small { display: block; margin-top: 3px; color: var(--muted); font-size: 10.5px; font-weight: 400; }
+  .fstep.person .fnode { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, var(--bg)); }
+  .fstep.model .fnode { border-color: var(--amber); background: color-mix(in srgb, var(--amber) 14%, var(--bg)); }
+  .fstep.gate .fnode { border-color: var(--error); background: color-mix(in srgb, var(--error) 10%, var(--bg)); }
+  .fstep.store .fnode { border-color: var(--muted); background: var(--card); }
+  .fstep.tall .fnode { height: 92px; }
+  .fstep.short .fnode { height: 56px; }
+  .fstep.tool .fnode { height: 36px; font-size: 13px; }
+  .fcap { margin: 6px 0 4px; font-size: 12px; line-height: 1.3; }
+  .fref { display: block; color: var(--muted); font-size: 10px; line-height: 1.35; overflow-wrap: anywhere; }
+  .fgroup { position: absolute; border: 1.5px dashed var(--muted); border-radius: 14px; padding: 9px 12px; font-size: 12px; line-height: 1.35; }
+  .fgroup h3 { margin: 0 0 4px; font-size: 12px; }
+  .fgroup p { margin: 0 0 4px; }
+  .fgroup .tiny { margin: 0; color: var(--muted); font-size: 11px; }
+  .fgroup ul { margin: 0; padding: 0; list-style: none; }
+  .fgroup li { margin-top: 5px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); font-size: 11.5px; }
+  .at-context { left: 238px; top: 14px; width: 272px; height: 120px; }
+  .at-tools { left: 538px; top: 14px; width: 174px; height: 406px; }
+  .at-exits { left: 10px; top: 436px; width: 316px; }
+  .at-question { left: 10px; top: 170px; width: 94px; }
+  .at-history { left: 124px; top: 170px; width: 94px; }
+  .at-guardrail { left: 238px; top: 170px; width: 106px; }
+  .at-agent { left: 364px; top: 160px; width: 118px; }
+  .at-search { left: 548px; top: 44px; width: 154px; }
+  .at-geo { left: 548px; top: 172px; width: 154px; }
+  .at-sql { left: 548px; top: 300px; width: 154px; }
+  .at-snapshot { left: 730px; top: 92px; width: 126px; }
+  .at-gate { left: 730px; top: 290px; width: 126px; }
+  .at-snowflake { left: 730px; top: 462px; width: 126px; }
+  .at-answer { left: 364px; top: 450px; width: 118px; }
+  .at-evidence { left: 538px; top: 450px; width: 154px; }
+  .flow-note { max-width: 96ch; margin: 10px 0 0; font-size: 13px; line-height: 1.55; }
+  .how-section { margin: 28px 0 10px; font-size: 16px; }
+  .how-tablewrap { overflow-x: auto; }
+  .how-files { min-width: 640px; }
+  .how-files td:first-child { white-space: nowrap; }
+  .how-connects { max-width: 96ch; margin: 0; font-size: 13px; line-height: 1.6; }
+  .how-inspected { margin: 26px 0 0; padding-top: 10px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; line-height: 1.5; }
 
   .refresh-row { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 10px; }
   .refresh-row label { color: var(--muted); font-size: 11px; text-transform: uppercase; }
@@ -224,45 +281,126 @@
 
   <section class="panel" id="panel-how" role="tabpanel" aria-labelledby="tab-how" hidden>
     <div class="scroll-area">
-      <p class="how-flow">Question → Guardrail → Local discovery → SQL gate → Snowflake → Normalize → Answer → Evidence</p>
+      <div class="sysflow-head">
+        <h2>How a question becomes an answer</h2>
+        <p>One chat turn, from the message you type to the answer and its saved evidence.</p>
+        <ul class="flow-legend" aria-label="Diagram colors">
+          <li class="person"><i></i>You</li>
+          <li><i></i>Code</li>
+          <li class="model"><i></i>Model call</li>
+          <li class="gate"><i></i>Trust boundary</li>
+          <li class="store"><i></i>Data store</li>
+        </ul>
+      </div>
+      <div class="flow-frame" role="region" aria-label="Request flow diagram, scroll horizontally" tabindex="0"><div class="flow">
+        <svg class="flow-wires" width="866" height="616" viewBox="0 0 866 616" aria-hidden="true">
+          <defs><marker id="flow-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z"/></marker></defs>
+          <g marker-end="url(#flow-arrow)">
+            <path d="M104 206H122"/><path d="M218 206H236"/><path d="M344 206H362"/>
+            <path d="M482 190H536"/><path d="M538 216H484"/>
+            <path d="M482 244H510V432H423V448"/>
+            <path d="M326 478H362"/><path d="M482 478H536"/>
+            <path d="M702 62H721V112H728"/><path d="M702 190H721V132H728"/>
+            <path d="M702 318H728"/><path d="M793 436V460"/>
+          </g>
+          <path class="dashed" d="M423 134V160"/>
+          <text x="510" y="183" text-anchor="middle">tool call</text>
+          <text x="510" y="231" text-anchor="middle">result</text>
+          <text x="504" y="426" text-anchor="end">answer</text>
+        </svg>
+        <div class="fgroup at-context"><h3>What the agent model is given</h3>
+          <p>Its instructions, the conversation, three tool definitions, and this turn's tool results.</p>
+          <p class="tiny">No census variable ids in the prompt. No database connection.</p>
+        </div>
+        <div class="fgroup at-tools"><h3>Three tools</h3></div>
+        <div class="fstep person at-question"><div class="fnode">Question</div><p class="fcap">Post one message, read a stream of events</p>
+          <code class="fref">app.py::<wbr>chat</code></div>
+        <div class="fstep at-history"><div class="fnode">History</div><p class="fcap">Replay earlier turns from local SQLite</p>
+          <code class="fref">sessions.py::<wbr>get_session</code></div>
+        <div class="fstep model at-guardrail"><div class="fnode">Guardrail<small>Guardrail model</small></div><p class="fcap">In scope or not. Allows the turn on its own errors</p>
+          <code class="fref">guardrail.py::<wbr>classify_input</code></div>
+        <div class="fstep model tall at-agent"><div class="fnode">Agent loop<small>Agent model</small></div><p class="fcap">Pick a tool, read the result, repeat, then write the answer</p>
+          <code class="fref">agent.py::<wbr>agent_turn</code></div>
+        <div class="fstep tool at-search"><div class="fnode">Find the variable</div><p class="fcap">Search local variable labels</p>
+          <code class="fref">tools.py::<wbr>search_census_variables</code></div>
+        <div class="fstep tool at-geo"><div class="fnode">Find the place</div><p class="fcap">Rank local geography records</p>
+          <code class="fref">tools.py::<wbr>resolve_geography</code></div>
+        <div class="fstep tool at-sql"><div class="fnode">Run the query</div><p class="fcap">The only request-time path to Snowflake</p>
+          <code class="fref">tools.py::<wbr>run_census_sql</code></div>
+        <div class="fstep store short at-snapshot"><div class="fnode">Local SQLite snapshot</div><p class="fcap">Labels and place ids, no answer values</p>
+          <code class="fref">snapshot.py::<wbr>build_snapshot</code></div>
+        <div class="fstep gate short at-gate"><div class="fnode">SQL gate</div><p class="fcap">One SELECT, approved tables only, LIMIT added</p>
+          <code class="fref">sqlgate.py::<wbr>validate_sql</code></div>
+        <div class="fstep store short at-snowflake"><div class="fnode">Snowflake</div><p class="fcap">2020 ACS tables, run with a statement timeout</p>
+          <code class="fref">snowflake_conn.py::<wbr>connect</code></div>
+        <div class="fgroup at-exits"><h3>Other ways a turn can end</h3>
+          <ul>
+            <li>Refusal: the guardrail judged the question out of scope</li>
+            <li>Clarifying question: the place name matched more than one place</li>
+            <li>Honest stop: two failed or empty queries, or the 50 second watchdog</li>
+          </ul>
+        </div>
+        <div class="fstep short at-answer"><div class="fnode">Answer</div><p class="fcap">Stream the reply, then offer checked follow-up questions</p>
+          <code class="fref">follow_ups.py::<wbr>questions</code></div>
+        <div class="fstep short at-evidence"><div class="fnode">Evidence</div><p class="fcap">Save the turn's steps for the Evidence tab</p>
+          <code class="fref">tracing.py::<wbr>record_turn_trace</code></div>
+      </div></div>
+      <p class="flow-note">The model chooses tools and writes SQL. Code decides whether that SQL runs: every query crosses the SQL gate, and nothing else reaches Snowflake while a question is being answered. All files are under <code>src/</code>, and both models are pinned in <code>model_config.py</code>.</p>
+
+      <h2 class="how-section">What each file does</h2>
+      <div class="how-tablewrap"><table class="how-files">
+        <thead><tr><th>File</th><th>Role</th><th>Responsibility</th></tr></thead>
+        <tbody>
+<tr><td><code>app.py</code></td><td>HTTP and streaming layer</td><td><code>chat</code> accepts one message for a session and returns a stream of events. <code>_stream_turn</code> forwards each event from the agent and guarantees the stream ends in done or error, even if the agent raises.</td></tr>
+<tr><td><code>sessions.py</code></td><td>Conversation memory</td><td><code>get_session</code> replays the session's full history from local SQLite, and <code>append_message</code> adds each user and assistant message to it.</td></tr>
+<tr><td><code>guardrail.py</code></td><td>Scope classifier, a soft layer</td><td><code>classify_input</code> sends the message and the two most recent messages to the guardrail model and returns allow or refuse. On a timeout or any error of its own it allows the turn.</td></tr>
+<tr><td><code>agent.py</code></td><td>The tool loop</td><td><code>agent_turn</code> runs one turn: history, a check that the census data is available, guardrail, then the agent model calling tools until it can answer. It stops with an honest failure after two failed or empty queries, ends tool use at the 50 second watchdog or after eight tool rounds, and records the trace.</td></tr>
+<tr><td><code>tools.py</code></td><td>The three tools</td><td><code>search_census_variables</code> and <code>resolve_geography</code> read only the local snapshot. <code>run_census_sql</code> passes the SQL through the gate, runs the sanitized query, and normalizes directly selected census values as described under Verified normalization.</td></tr>
+<tr><td><code>snapshot.py</code></td><td>Local discovery data</td><td><code>build_snapshot</code> builds the SQLite file of variable labels and geography records from Snowflake metadata on first start, then reuses it.</td></tr>
+<tr><td><code>sqlgate.py</code></td><td>The trust boundary</td><td><code>validate_sql</code> parses the SQL as Snowflake dialect and accepts only a single SELECT over allowlisted tables, with a row LIMIT added when one is missing and lowered when it is above the cap. Anything else is rejected before it reaches Snowflake.</td></tr>
+<tr><td><code>health.py</code></td><td>Startup health</td><td><code>check_snowflake_reachability</code> probes Snowflake once at startup. <code>is_degraded</code> reads that result on each turn, so an app that started without its data says so instead of guessing.</td></tr>
+<tr><td><code>snowflake_conn.py</code></td><td>Database connection</td><td><code>connect</code> opens the key-pair connection that the query tool and the snapshot build use.</td></tr>
+<tr><td><code>follow_ups.py</code></td><td>Suggested next questions</td><td><code>questions</code> returns up to three follow-up questions derived in code from what the finished turn queried. It makes no model call.</td></tr>
+<tr><td><code>tracing.py</code></td><td>Turn record</td><td><code>record_turn_trace</code> saves the turn's guardrail, model and tool steps to SQLite, and <code>get_traces</code> reads them back for the Evidence tab.</td></tr>
+<tr><td><code>model_config.py</code></td><td>Model pins</td><td><code>AGENT_MODEL</code> and <code>CLASSIFIER_MODEL</code> are the only place a model id is named.</td></tr>
+        </tbody>
+      </table></div>
+      <p class="section-lead">Two support files are left out: <code>contracts.py</code> holds the shared types and limits, and <code>us_states.py</code> maps state names to abbreviations.</p>
+
+      <h2 class="how-section">How everything connects</h2>
+      <p class="how-connects"><code>chat</code> hands the message to <code>agent_turn</code>, which loads the conversation with <code>get_session</code> and asks <code>classify_input</code> whether the question is in scope. If it is, the agent model works in a loop: it calls <code>search_census_variables</code> to find the right census variable and <code>resolve_geography</code> to pin down the place, both answered from the local snapshot that <code>build_snapshot</code> prepared, then writes SQL and calls <code>run_census_sql</code>. That tool sends the SQL through <code>validate_sql</code>, and only the sanitized query runs in Snowflake. The rows come back to the model, which writes the answer from them. Before the stream closes, <code>append_message</code> stores the reply, <code>questions</code> may add suggested next questions, and <code>record_turn_trace</code> saves every step for the Evidence tab.</p>
+
+      <h2 class="how-section">What protects the answer</h2>
       <div class="how-grid">
         <article class="how-card">
-          <h2>Code protections</h2>
+          <h3>Code protections</h3>
           <p>SQL is parsed as one SELECT-only Snowflake statement, checked against a table allowlist, given a LIMIT, and run with a statement timeout. User text is never interpolated into SQL.</p>
         </article>
         <article class="how-card">
-          <h2>Model instructions</h2>
+          <h3>Model instructions</h3>
           <p>The model is instructed to ground answer numbers in this turn's query results. The serving path does not independently validate every final answer number.</p>
         </article>
         <article class="how-card">
-          <h2>Evaluation checks</h2>
+          <h3>Evaluation checks</h3>
           <p>Six stable scenarios are regression and eight broader scenarios are capability. Each result is pass, fail, or inconclusive.</p>
         </article>
       </div>
-      <article class="info-card">
-        <h2>Three tools, two data locations</h2>
-        <ul>
-          <li><code>search_census_variables</code> searches a local SQLite FTS snapshot.</li>
-          <li><code>resolve_geography</code> ranks local SQLite geography records.</li>
-          <li><code>run_census_sql</code> is the only request-time path to Snowflake, and every query crosses the SQL gate.</li>
-        </ul>
-      </article>
-      <article class="info-card">
-        <h2>Verified normalization</h2>
-        <table>
-          <thead><tr><th>Query value</th><th>Answer-facing value</th></tr></thead>
-          <tbody>
-            <tr><td>SQL NULL in a directly selected or simply aliased demographic variable</td><td><code>not reported</code></td></tr>
-            <tr><td>A directly selected or simply aliased known top code</td><td>A bounded value, such as “$250,000 or more.”</td></tr>
-            <tr><td>Derived or aggregate projection</td><td>Returned unchanged. Derived and aggregate projections are not normalized.</td></tr>
-          </tbody>
-        </table>
-        <p class="section-lead">No numeric suppression codes were observed or transformed.</p>
-      </article>
-      <article class="info-card">
-        <h2>Source, grain, and vintage</h2>
-        <p>The allowed Snowflake tables come from SafeGraph's Open Census Data share and repackage US Census Bureau data. This app is pinned to the 2020 vintage, the ACS 2016-2020 5-year estimates, at census-block-group grain. State and county counts are computed by aggregating block groups. The local discovery snapshot contains labels and geography identifiers, not answer values.</p>
-      </article>
+
+      <h2 class="how-section">Verified normalization</h2>
+      <table>
+        <thead><tr><th>Query value</th><th>Answer-facing value</th></tr></thead>
+        <tbody>
+          <tr><td>SQL NULL in a directly selected or simply aliased demographic variable</td><td><code>not reported</code></td></tr>
+          <tr><td>A directly selected or simply aliased known top code</td><td>A bounded value, such as “$250,000 or more.”</td></tr>
+          <tr><td>Derived or aggregate projection</td><td>Returned unchanged. Derived and aggregate projections are not normalized.</td></tr>
+        </tbody>
+      </table>
+      <p class="section-lead">No numeric suppression codes were observed or transformed.</p>
+
+      <h2 class="how-section">Source, grain, and vintage</h2>
+      <p class="how-connects">The allowed Snowflake tables come from SafeGraph's Open Census Data share and repackage US Census Bureau data. This app is pinned to the 2020 vintage, the ACS 2016-2020 5-year estimates, at census-block-group grain. State and county counts are computed by aggregating block groups. The local discovery snapshot contains labels and geography identifiers, not answer values.</p>
+
+      <p class="how-inspected">Inspected 2026-10-12. The file and function names above are checked against the code by <code>tests/test_system_flow.py</code>; the descriptions were checked by reading the code on that date. Opening this tab makes no model call and no database query.</p>
     </div>
   </section>
 
