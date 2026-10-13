@@ -1,5 +1,20 @@
 # Changelog
 
+## [2026-10-12]
+
+### Added
+
+- Add a request flow diagram at the top of How It Works, with one `file.py::function` reference per step, a table of what each file does, and a paragraph on how the files connect.
+- Add `tests/test_system_flow.py`, which fails when How It Works names a file or function that is not in `src/`, or prints a model id.
+
+### Changed
+
+- Reorganize How It Works into sections under the diagram, keeping the protection layers, normalization table, and source notes word for word.
+
+### Removed
+
+- Remove the one-line text flow strip and the "Three tools, two data locations" card from How It Works; the diagram and the file table now carry that content.
+
 ## [2026-09-18]
 
 ### Added
