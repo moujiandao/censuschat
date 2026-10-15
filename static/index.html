@@ -184,6 +184,22 @@
   .how-files { min-width: 640px; }
   .how-files td:first-child { white-space: nowrap; }
   .how-connects { max-width: 96ch; margin: 0; font-size: 13px; line-height: 1.6; }
+  .how-steps { max-width: 96ch; margin: 14px 0 0; padding: 0; list-style: none; counter-reset: how-step; }
+  .how-steps > li { position: relative; padding: 0 0 18px 40px; counter-increment: how-step; }
+  .how-steps > li::before {
+    content: counter(how-step);
+    position: absolute; left: 0; top: 0;
+    display: grid; place-items: center;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--primary) 14%, var(--bg));
+    color: var(--primary);
+    font-size: 12.5px; font-weight: 700;
+  }
+  /* A rail joining each number to the next. */
+  .how-steps > li:not(:last-child)::after { content: ""; position: absolute; left: 12px; top: 30px; bottom: 4px; width: 2px; background: var(--border); }
+  .how-steps h3 { margin: 3px 0 6px; font-size: 14px; }
+  .how-steps p { margin: 0; font-size: 13px; line-height: 1.65; }
   .how-inspected { margin: 26px 0 0; padding-top: 10px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; line-height: 1.5; }
 
   .refresh-row { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 10px; }
@@ -393,8 +409,36 @@
       </table></div>
       <p class="section-lead">Two support files are left out: <code>contracts.py</code> holds the shared types and limits, and <code>us_states.py</code> maps state names to abbreviations.</p>
 
-      <h2 class="how-section">How everything connects</h2>
-      <p class="how-connects"><code>chat</code> hands the message to <code>agent_turn</code>, which loads the conversation with <code>get_session</code> and asks <code>classify_input</code> whether the question is in scope. If it is, the agent model works in a loop: it calls <code>search_census_variables</code> to find the right census variable and <code>resolve_geography</code> to pin down the place, both answered from the local snapshot that <code>build_snapshot</code> prepared, then writes SQL and calls <code>run_census_sql</code>. That tool sends the SQL through <code>validate_sql</code>, and only the sanitized query runs in Snowflake. The rows come back to the model, which writes the answer from them. Before the stream closes, <code>append_message</code> stores the reply, <code>questions</code> may add suggested next questions, and <code>record_turn_trace</code> saves every step for the Evidence tab.</p>
+      <h2 class="how-section">How everything connects, step by step</h2>
+      <p class="section-lead">One chat turn in the order the code runs it. Each step names the functions involved, so you can follow it in the table above and in the Evidence tab.</p>
+      <ol class="how-steps" role="list">
+        <li><h3>You send a question</h3>
+          <p>The Chat tab posts your message and your session id to <code>/api/chat</code>, where <code>chat</code> in <code>app.py</code> receives it. The reply is not one block of JSON but a stream of small events, which is how the page can show progress such as "Request check" and the tool steps, and then the answer as it is being written. <code>_stream_turn</code> sits between the browser and the agent: it forwards every event and guarantees the stream ends with a done or an error event, even if something inside the agent raises, so the page is never left waiting on a reply that will not come.</p></li>
+        <li><h3>The conversation is loaded and your message is saved</h3>
+          <p><code>agent_turn</code> in <code>agent.py</code> runs the rest of the turn. It first calls <code>get_session</code>, which reads every earlier message in this session from a local SQLite file, and gives that history to the model, so a follow-up such as "What about households?" is understood as a question about the place you asked about before. Your new message is stored with <code>append_message</code> before anything else happens, which means it stays in the history even if the turn later fails.</p></li>
+        <li><h3>The app checks that its census data is available</h3>
+          <p>Before spending a model call, <code>is_degraded</code> from <code>health.py</code> decides whether the app can answer at all. It reports a problem only when the local snapshot file is missing and Snowflake could not be reached when the app started. The first fact is a file check and the second was recorded at startup by <code>check_snowflake_reachability</code>, so this step makes no network call. If the data is unavailable, the turn ends here with a fixed message that says so, rather than an answer the app cannot back up.</p></li>
+        <li><h3>The guardrail decides whether the question is in scope</h3>
+          <p><code>classify_input</code> sends your message, together with the two most recent messages for context, to the guardrail model with a fixed classification prompt. The model returns a verdict such as on topic, off topic, adversarial or inappropriate, and an off-topic or unsafe verdict ends the turn with a short, polite refusal. This check is deliberately a soft layer: if the guardrail model takes longer than 1.5 seconds or fails, the question is allowed through, because blocking a legitimate question is worse than relying on the SQL gate further down to stop anything harmful.</p></li>
+        <li><h3>The agent model plans its next move</h3>
+          <p>The agent model receives its instructions, the whole conversation, and the definitions of exactly three tools. Each call to the model is one round, in which it either asks for one or more tools or finishes with the answer, and any text it writes in any round streams to your screen as it arrives and becomes part of the reply. The loop allows at most eight rounds and checks the 50 second watchdog before starting each one. The model has no database connection and no list of census variables in its prompt, so everything it learns about the data comes back from the tools in the next steps.</p></li>
+        <li><h3>Find the variable</h3>
+          <p>To turn a phrase such as "median household income" into a census variable, the model calls <code>search_census_variables</code>. It runs a full-text search over the variable labels, universes and field descriptions in the local snapshot, ranked by relevance, first requiring every word to match and only if that finds nothing accepting any of the words. Each hit carries the variable id, its label, and the exact Snowflake table that holds it, so the model never has to guess a table name. This step reads only the local SQLite file and opens no Snowflake connection.</p></li>
+        <li><h3>Find the place</h3>
+          <p><code>resolve_geography</code> looks up a place name such as "Travis County, Texas" in the local geography index and returns every matching state or county with its identifier. When a name matches more than one place, as "Washington County" does, the result is marked ambiguous. If the model then tries to run a query anyway, the loop blocks it and ends the turn with a clarifying question that lists the candidates, because quietly picking one would produce a confident answer about the wrong place.</p></li>
+        <li><h3>Write the SQL and pass the gate</h3>
+          <p>With a variable, its table and a place, the model writes a SQL query and calls <code>run_census_sql</code>. Before anything reaches Snowflake, <code>validate_sql</code> parses the text as Snowflake SQL and accepts it only if it is a single SELECT statement that reads allowlisted tables and uses none of the banned constructs, such as writes or session commands. It adds a row LIMIT when one is missing and lowers any limit above the cap of 200 rows. A rejected query never runs, and the reason goes back to the model as a tool error. This is the trust boundary: the earlier steps guide the model, while this one decides what may run.</p></li>
+        <li><h3>Run the query in Snowflake</h3>
+          <p>Only the sanitized SQL that came out of the gate is executed. <code>run_census_sql</code> opens a connection through <code>connect</code> in <code>snowflake_conn.py</code>, which signs in with a key pair, and sets a 25 second statement timeout on the session so that Snowflake itself cancels a runaway query. The returned rows are cleaned before the model sees them: a missing value in a directly selected census column becomes "not reported", and a known top code becomes a bounded value such as "$250,000 or more", as described under Verified normalization below.</p></li>
+        <li><h3>Recover from a bad result, or stop honestly</h3>
+          <p>The query result, or the error, goes back to the model as the tool's answer, and the next round begins. A query that was rejected, failed in Snowflake or returned zero rows counts as a recovery attempt, and the model gets a chance to search again or rewrite its SQL. After two failed or empty queries the loop stops, and the turn ends with a message explaining what was tried instead of a number. The watchdog works the same way: once 50 seconds have passed, no new round starts, and the turn ends with a partial answer built by code from the rows already collected. If the model is still asking for tools after eight rounds, the reply ends with a note that the turn reached its tool-call limit.</p></li>
+        <li><h3>Write and stream the answer</h3>
+          <p>When the model stops asking for tools, the turn's reply is everything it wrote across the rounds, and it has already streamed to your screen. The model is instructed to take every number from the rows returned in this turn, but no code checks the final answer against those rows. The Evidence tab helps you spot-check it: for each query it keeps the start of the SQL, the row count, the column names and the first row, though not every row. The answer is then saved to the conversation with <code>append_message</code>. If the model finishes without writing any text, the turn ends with an error rather than a blank reply.</p></li>
+        <li><h3>Offer follow-up questions</h3>
+          <p>If the turn finished normally and no place was left ambiguous, <code>questions</code> in <code>follow_ups.py</code> looks at what this turn actually queried and may offer up to three next questions. Today it only does so in one narrow case, a clean comparison of exactly two counties, where it can suggest questions such as comparing renter share, so most answers come with no suggestions. These are chosen by code from the turn's own results, not by a model, and they appear as buttons that fill the input box without sending, so you can edit a question before asking it. If this step fails for any reason, the answer you already have is unaffected.</p></li>
+        <li><h3>Save the evidence and close the stream</h3>
+          <p>Along the way the turn recorded spans with their timing: the data check, the guardrail verdict, each model call with its token counts, and each tool call with a summary of its result. <code>record_turn_trace</code> writes those spans to a SQLite trace store, and <code>get_traces</code> reads them back for the Evidence tab, which is why you can inspect an earlier turn even after the app restarts. The stream then ends with a done event, carrying any follow-up questions, and that event is what tells the page the turn is over.</p></li>
+      </ol>
 
       <h2 class="how-section">What protects the answer</h2>
       <div class="how-grid">
@@ -426,7 +470,7 @@
       <h2 class="how-section">Source, grain, and vintage</h2>
       <p class="how-connects">The allowed Snowflake tables come from SafeGraph's Open Census Data share and repackage US Census Bureau data. This app is pinned to the 2020 vintage, the ACS 2016-2020 5-year estimates, at census-block-group grain. State and county counts are computed by aggregating block groups. The local discovery snapshot contains labels and geography identifiers, not answer values.</p>
 
-      <p class="how-inspected">Inspected 2026-10-12. The file and function names above are checked against the code by <code>tests/test_system_flow.py</code>; the descriptions were checked by reading the code on that date. Opening this tab makes no model call and no database query.</p>
+      <p class="how-inspected">Inspected 2026-10-15. The file and function names above, and the limits the steps quote, are checked against the code by <code>tests/test_system_flow.py</code>; the descriptions were checked by reading the code on that date. Opening this tab makes no model call and no database query.</p>
     </div>
   </section>
 
