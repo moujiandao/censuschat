@@ -2,7 +2,7 @@
 
 Ported from the System flow check in the customs packet review project: every
 `file.py::name` on the diagram, every name in the file table, and every name in
-the connecting paragraph is resolved against `src/`, so a rename fails the suite
+the numbered steps is resolved against `src/`, so a rename fails the suite
 before the page goes stale.
 """
 
@@ -10,8 +10,13 @@ import ast
 import re
 from pathlib import Path
 
-from src import model_config
-from src.contracts import MAX_RECOVERY_RETRIES, TURN_DEADLINE_S
+from src import agent, guardrail, model_config
+from src.contracts import (
+    MAX_RECOVERY_RETRIES,
+    SQL_ROW_LIMIT,
+    SQL_STATEMENT_TIMEOUT_S,
+    TURN_DEADLINE_S,
+)
 
 SRC = Path("src")
 REFERENCE = re.compile(r"(\w+)\.py::([\w.]+)")
@@ -114,12 +119,31 @@ def test_file_table_names_real_files_and_functions():
             assert defined_in(module, name), f"{module}.py does not define {name}"
 
 
-def test_connection_paragraph_only_uses_checked_names():
+def _turn_steps(panel: str) -> list[tuple[str, str]]:
+    steps = _between(panel, '<ol class="how-steps" role="list">', "</ol>")
+    return re.findall(r"<li><h3>(.*?)</h3>\s*<p>(.*?)</p></li>", steps, re.S)
+
+
+def test_numbered_steps_follow_the_file_table_and_read_as_prose():
     panel = _panel()
-    paragraph = _between(panel, '<p class="how-connects">', "</p>")
-    names = re.findall(r"<code>([\w.]+)</code>", paragraph)
+    # The steps sit directly under the file table, before the protection cards.
+    assert panel.index('<table class="how-files">') < panel.index('<ol class="how-steps" role="list">')
+    assert panel.index('<ol class="how-steps" role="list">') < panel.index("Code protections")
+    steps = _turn_steps(panel)
+    assert len(steps) == 13
+    assert _between(panel, '<ol class="how-steps" role="list">', "</ol>").count("<li>") == len(steps)
+    for title, prose in steps:
+        # A paragraph of explanation per step, not a one-line caption.
+        words = len(re.sub(r"<[^>]+>", "", prose).split())
+        assert words >= 50, f"step '{title}' has only {words} words"
+
+
+def test_connection_steps_only_use_checked_names():
+    panel = _panel()
+    steps = _between(panel, '<ol class="how-steps" role="list">', "</ol>")
+    names = re.findall(r"<code>([\w.]+)</code>", steps)
     checked = {name for _, name in STEPS} | {n for _, row in table_rows(panel) for n in row}
-    assert len(names) >= 6
+    assert len(names) >= 12
     for name in names:
         if name.endswith(".py"):
             assert (SRC / name).is_file(), f"{name} is not a file in src/"
@@ -152,7 +176,11 @@ def test_limits_on_the_page_match_the_contract():
     panel = _panel()
     assert f"{int(TURN_DEADLINE_S)} second watchdog" in panel
     assert MAX_RECOVERY_RETRIES == 2
-    assert panel.count("two failed or empty queries") == 2
+    assert "two failed or empty queries" in panel
+    assert f"{SQL_STATEMENT_TIMEOUT_S} second statement timeout" in panel
+    assert f"cap of {SQL_ROW_LIMIT} rows" in panel
+    assert agent._MAX_TOOL_LOOP_ITERATIONS == 8 and "at most eight rounds" in panel
+    assert guardrail._TIMEOUT_S == 1.5 and "1.5 seconds" in panel
 
 
 def test_page_says_how_its_references_are_checked():

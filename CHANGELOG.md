@@ -1,5 +1,12 @@
 # Changelog
 
+## [2026-10-15]
+
+### Changed
+
+- Replace the single "How everything connects" paragraph in How It Works with thirteen numbered steps of one chat turn, each a paragraph naming the functions involved, directly under the file table.
+- Extend `tests/test_system_flow.py` to resolve every name in the numbered steps and tie the quoted timeouts and limits to their constants.
+
 ## [2026-10-13]
 
 ### Changed
