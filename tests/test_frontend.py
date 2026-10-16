@@ -23,7 +23,7 @@ def test_tradeoffs_tab_is_wired_and_complete():
 
     assert 'aria-controls="panel-tradeoffs"' in html
     assert 'tradeoffs: document.getElementById("panel-tradeoffs")' in html
-    assert html.count('class="tradeoff-card"') == 14
+    assert html.count('class="tradeoff-card"') == 15
     assert 'button.setAttribute("aria-selected", String(selected))' in html
     assert 'panels[key].hidden = !selected' in html
     assert 'event.key === "ArrowRight"' in html
@@ -39,10 +39,10 @@ def test_tradeoff_cards_are_collapsed_by_default_with_the_title_showing():
 
     # Native <details> needs no script: closed unless it carries `open`.
     cards = re.findall(r"<details class=\"tradeoff-card\"([^>]*)>\s*<summary><h3>(.*?)</h3></summary>", panel)
-    assert len(cards) == 14
+    assert len(cards) == 15
     assert all("open" not in attributes for attributes, _ in cards)
-    assert [title.split(".")[0] for _, title in cards] == [str(n) for n in range(1, 15)]
-    assert panel.count("</details>") == 14
+    assert [title.split(".")[0] for _, title in cards] == [str(n) for n in range(1, 16)]
+    assert panel.count("</details>") == 15
     assert "<article" not in panel
 
 
