@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-10-21]
+
+### Changed
+
+- Prepare for Caddy asking for the login only on writes (**D-034**): add `src/same_origin.py`, an ASGI guard that refuses cross-site writes with 403, and `tests/test_same_origin.py`, which also pins the route inventory (only `POST /api/chat` writes or calls a model; no WebSockets).
+- Show "needs the site login" when a chat POST gets Caddy's empty-bodied 401, instead of a generic error.
+- `make deploy-status` sends no credentials and checks GET 200 and `POST /api/chat {}` → 401. The repo `Caddyfile` mirrors the new gate. CLAUDE.md gains rule 23: model-calling and data-changing routes never answer GET.
+
 ## [2026-10-15]
 
 ### Changed
@@ -313,5 +321,6 @@ Decisions, recorded in full in [`docs/decisions.md`](docs/decisions.md).
 | `D-031` | GPT-5 nano replaces Haiku for guardrail classification |
 | `D-032` | Haiku 4.5 replaces Sonnet 5 for the agent loop |
 | `D-033` | Design Trade-Offs restores a fifth reviewer surface |
+| `D-034` | Login only for writes, with a same-origin guard |
 
 <!-- END id-reference -->

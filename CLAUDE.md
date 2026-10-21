@@ -34,6 +34,11 @@ entry, flagged inline.
 8. Secrets live only in `.env` / deployment env. The Snowflake private key
    never enters the repo. `.env.example` documents every variable with no
    values.
+23. Model-calling and data-changing routes never answer GET, HEAD, or
+    OPTIONS, and there are no WebSocket routes. Caddy asks for the login
+    only on other methods, so a GET is public. Every write passes the
+    same-origin guard (`src/same_origin.py`) before any route runs.
+    `tests/test_same_origin.py` pins the route inventory. **D-034**.
 
 ## Behavior
 
@@ -103,6 +108,9 @@ historical invariants above.
 
 - Frontend: one static file with Chat, Evidence, Evals, Design Trade-Offs, and
   How It Works (**D-033**, preserving the final position from **D-028**).
+- Auth: Caddy asks for the basic-auth login only on writes (anything but
+  GET/HEAD/OPTIONS); pages, health, evals, and Evidence traces are public
+  reads. `src/same_origin.py` refuses cross-site writes (**D-034**).
 - Tracing: `src/tracing.py` persists local turn spans in
   `data/traces.sqlite3`; Evidence is the sole trace view. This is not
   Langfuse (**D-021**, **D-023**).
@@ -117,6 +125,7 @@ src/
   agent.py        Anthropic tool loop, recovery, ambiguity, soft watchdog
   contracts.py    frozen interfaces
   guardrail.py    fail-open pre-turn classifier
+  same_origin.py  cross-site write guard (ASGI middleware)
   sqlgate.py      code-enforced SQL trust boundary
   tools.py        local discovery and the sole Snowflake query path
   tracing.py      SQLite-backed turn traces
