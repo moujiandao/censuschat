@@ -280,3 +280,43 @@ def test_legacy_history_summary_is_appended_after_latest_benchmark():
     assert 'entries.length > 0 && notPassing.length === 0' in html
     assert "Benchmark shown above" in html
     assert "renderEvalRun(data.latest) + renderLegacyHistory(data.history, data.latest)" in html
+
+
+def _write_failure_message(status, body):
+    html = _html()
+    block = html.split("// BEGIN WRITE FAILURE", 1)[1].split("\n", 1)[1]
+    block = block.split("// END WRITE FAILURE", 1)[0]
+    runner = block + """
+      const [status, body] = JSON.parse(process.argv[1]);
+      process.stdout.write(writeFailureMessage(status, body));
+    """
+    result = subprocess.run(
+        ["node", "-e", runner, json.dumps([status, body])],
+        check=True, capture_output=True, text=True,
+    )
+    return result.stdout
+
+
+def test_caddy_empty_401_says_the_site_login_is_needed():
+    # D-034: cancelling the browser's sign-in prompt leaves Caddy's 401 with
+    # an empty body, which must not surface as a parse error or a generic one.
+    assert "needs the site login" in _write_failure_message(401, "")
+
+
+def test_cross_site_403_is_explained():
+    assert "didn't come from this site" in _write_failure_message(
+        403, '{"detail": "Cross-site request refused."}'
+    )
+
+
+def test_json_detail_still_shown_and_garbage_body_falls_back():
+    assert _write_failure_message(422, '{"detail": "Message cannot be empty"}') == "Message cannot be empty"
+    assert _write_failure_message(502, "<html>Bad Gateway</html>") == "Something went wrong talking to the server."
+
+
+def test_chat_post_failure_path_reads_text_not_json():
+    html = _html()
+    start = html.index('fetch("/api/chat"')
+    failure = html[start : html.index("response.body.getReader()", start)]
+    assert "writeFailureMessage(response.status, bodyText)" in failure
+    assert "response.json()" not in failure

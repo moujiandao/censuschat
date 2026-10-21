@@ -1,5 +1,10 @@
+# Mirror of the intended production gate (D-034). Production does not use
+# this file: Caddy runs natively on the host from /etc/caddy/Caddyfile
+# (D-016). Reads are public; any other method needs the login, and the
+# app's same-origin guard (src/same_origin.py) refuses cross-site writes.
 {$DOMAIN:censuschat.brianmar.com} {
-	basic_auth {
+	@writes not method GET HEAD OPTIONS
+	basic_auth @writes {
 		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
 	}
 

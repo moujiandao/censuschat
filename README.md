@@ -14,15 +14,22 @@ architecture** (start at [Architecture](#architecture)).
 
 **URL:** https://censuschat.brianmar.com
 
-The demo is protected by HTTP Basic Auth. Request access credentials from the
+Reading is public: the page, health, evals, and Evidence traces load with no
+login. Asking a question sends a POST, and Caddy asks for the HTTP basic-auth
+login on any method other than GET, HEAD, and OPTIONS, so your browser prompts
+for it the first time you send one (**D-034**). Request the credentials from the
 project owner rather than storing them in this public repository.
 
-Health check, using the supplied credentials:
-
 ```bash
-curl -u '<username>:<password>' https://censuschat.brianmar.com/api/health
+curl https://censuschat.brianmar.com/api/health
 # {"status":"ok","snapshot":"ok","snowflake":"ok"}
+curl -s -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' \
+  -d '{}' https://censuschat.brianmar.com/api/chat
+# 401 — a write without the login
 ```
+
+Because past chats are readable without the login, don't type anything into
+the chat you wouldn't want public.
 
 `status` is `degraded` — never a crash — when the local snapshot is missing
 or Snowflake is unreachable.
@@ -96,7 +103,7 @@ SQLite-backed turn traces, including failed and recovery steps.
 
 ```mermaid
 flowchart TD
-    A["Browser<br/>static/index.html"] -->|"POST /api/chat — SSE"| B["Caddy on EC2<br/>TLS + basic auth"]
+    A["Browser<br/>static/index.html"] -->|"POST /api/chat — SSE"| B["Caddy on EC2<br/>TLS + login for writes"]
     B -->|"127.0.0.1:8000"| C["FastAPI<br/>src/app.py"]
     C --> D["agent_turn<br/>src/agent.py"]
     D --> E{"Degraded?"}
@@ -363,7 +370,7 @@ and review. The committed benchmark artifacts still contain 14 scenarios.
 
 ## Deploying
 
-Single container on EC2 behind Caddy (TLS + basic auth). From that host, with
+Single container on EC2 behind Caddy (TLS, and basic auth on writes only). From that host, with
 `.env` populated:
 
 ```bash
@@ -379,6 +386,26 @@ which the host's existing Caddyfile already reverse-proxies to with
 the app is unreachable except through Caddy, so basic auth can't be bypassed
 by hitting the port directly. This deviates from rule 18 and is recorded as
 **D-016**.
+
+The host's site block gates only writes:
+
+```caddyfile
+censuschat.brianmar.com {
+	@writes not method GET HEAD OPTIONS
+	basic_auth @writes {
+		<user> <bcrypt hash>
+	}
+	reverse_proxy 127.0.0.1:8000 {
+		flush_interval -1
+	}
+}
+```
+
+A browser re-sends a saved login on requests other sites trigger, so the app
+refuses cross-site writes itself (`src/same_origin.py`, 403). Model-calling and
+data-changing routes must never answer GET (CLAUDE.md rule 23). `make deploy`
+ends with `make deploy-status`, which sends no credentials and expects GET 200
+and `POST /api/chat` with `{}` to return 401.
 
 Two things are deliberately absent from git and must exist on the host:
 `.env`, and the Snowflake private key. The key must be readable by the
@@ -430,5 +457,6 @@ Decisions, recorded in full in [`docs/decisions.md`](docs/decisions.md).
 | `D-031` | GPT-5 nano replaces Haiku for guardrail classification |
 | `D-032` | Haiku 4.5 replaces Sonnet 5 for the agent loop |
 | `D-033` | Design Trade-Offs restores a fifth reviewer surface |
+| `D-034` | Login only for writes, with a same-origin guard |
 
 <!-- END id-reference -->

@@ -41,17 +41,32 @@ deploy:
 # What is actually live right now, read through Caddy rather than from the
 # host, so it exercises the same path a reviewer's browser takes.
 #
+# No credentials: Caddy asks for the login only on writes (D-034), so reads
+# are public and the probe below checks that a write still needs it. The
+# POST sends an empty body, so even with the gate missing it fails
+# validation (422) and writes nothing. Before the gate is switched on, the
+# GETs return 401 and print as unreachable; that is expected.
+#
 # NOTE: the sha below is the commit the EVAL RUN was recorded at, read out of
 # the committed artifact — NOT the commit the container was built from. It
 # only advances when evals are re-run, so it will legitimately trail main.
 # There is no deployed-code version endpoint; the honest signal that a
 # rebuild took is content that changed with it (row count, UI).
+SITE := https://censuschat.brianmar.com
+
 deploy-status:
 	@echo "--- deployed ---"
-	@curl -s -u snowflake:census --max-time 15 https://censuschat.brianmar.com/api/health || echo "(health unreachable)"
+	@curl -sf --max-time 15 $(SITE)/api/health || echo "(health unreachable)"
 	@echo
-	@curl -s -u snowflake:census --max-time 15 https://censuschat.brianmar.com/api/evals \
-		| python3 -c "import sys,json; l=(json.load(sys.stdin).get('latest') or {}); print('eval artifact sha:', l.get('git_sha'), '| eval rows:', len(l.get('results',[])))" \
+	@curl -sf --max-time 15 $(SITE)/api/evals \
+		| python3 -c "import sys,json; l=(json.load(sys.stdin).get('latest') or {}); print('eval artifact sha:', l.get('git_sha'), '| eval rows:', len(l.get('results',[])))" 2>/dev/null \
 		|| echo "(evals unreachable)"
+	@echo "--- login only for writes (D-034) ---"
+	@get=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 $(SITE)/api/health); \
+	post=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST -H 'Content-Type: application/json' -d '{}' $(SITE)/api/chat); \
+	echo "GET  /api/health, no login: $$get (200 once the gate is on, 401 before)"; \
+	echo "POST /api/chat {}, no login: $$post (must be 401)"; \
+	if [ "$$post" = 000 ]; then echo "ERROR: site unreachable"; exit 1; fi; \
+	test "$$post" = 401 || { echo "ERROR: a write answered without the login"; exit 1; }
 	@echo "--- local main ---"
 	@git log --oneline -1

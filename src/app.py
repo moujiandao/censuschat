@@ -32,6 +32,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from src.agent import agent_turn
 from src.contracts import ChatEvent, EventType, SnapshotError
 from src.health import check_snowflake_reachability, health_report
+from src.same_origin import SameOriginWriteGuard
 from src.snapshot import build_snapshot
 from src.tracing import TurnTrace, get_traces, list_recent_sessions, record_turn_trace
 
@@ -51,6 +52,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+# Caddy gates only writes behind the login (D-034); this refuses the writes
+# another website could trigger with a visitor's saved login. Model-calling
+# and data-changing routes must never answer GET (CLAUDE.md rule 23).
+app.add_middleware(SameOriginWriteGuard)
 
 _TERMINAL_EVENTS = {EventType.DONE, EventType.ERROR}
 

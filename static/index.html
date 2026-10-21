@@ -957,6 +957,26 @@
   }
   // END PROGRESS MODEL
 
+  // BEGIN WRITE FAILURE (also executed by tests/test_frontend.py)
+  // Caddy asks for the site login only on writes (D-034). If the visitor
+  // cancels the browser's sign-in prompt, fetch resolves with Caddy's 401
+  // and an empty body, so the body is read as text and parsed only if it
+  // is JSON. 403 is the app's own cross-site guard.
+  function writeFailureMessage(status, bodyText) {
+    if (status === 401) {
+      return "Asking a question needs the site login. Reload the page and sign in when your browser asks, then try again.";
+    }
+    if (status === 403) {
+      return "This request was refused because it didn't come from this site. Reload the page and try again.";
+    }
+    try {
+      const failure = JSON.parse(bodyText);
+      if (failure && typeof failure.detail === "string") return failure.detail;
+    } catch (_) { /* Keep the generic message for a non-JSON response. */ }
+    return "Something went wrong talking to the server.";
+  }
+  // END WRITE FAILURE
+
   function spanStepName(span) {
     const meta = span.meta || {};
     if (typeof meta.display_name === "string" && meta.display_name) return meta.display_name;
@@ -1298,13 +1318,14 @@
       renderChatProgress(chatSteps, progress);
       clearPending(assistantBubble);
       assistantBubble.classList.add("error");
-      let detail = "Something went wrong talking to the server.";
-      try {
-        const failure = await response.json();
-        if (typeof failure.detail === "string") detail = failure.detail;
-      } catch (_) { /* Keep the generic message for a non-JSON response. */ }
-      assistantBubble.textContent = detail;
-      addEvidenceStep(evidenceSteps, "Server error (" + response.status + ")", "fail");
+      let bodyText = "";
+      try { bodyText = await response.text(); } catch (_) { /* Treated as an empty body. */ }
+      assistantBubble.textContent = writeFailureMessage(response.status, bodyText);
+      addEvidenceStep(
+        evidenceSteps,
+        response.status === 401 ? "Site login needed (401)" : "Server error (" + response.status + ")",
+        "fail"
+      );
       setBusy(false);
       statusEl.textContent = "";
       return;
